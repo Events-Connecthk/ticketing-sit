@@ -1,26 +1,70 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
-}
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  /* White Gold Luxe Theme */
+  --bg: #FAF8F5;
+  --surface: #FFFFFF;
+  --gold: #C5A26E;
+  --gold-light: #E8D5B7;
+  --gold-dark: #A68A5B;
+  --text: #2C2520;
+  --text-muted: #6B5E50;
+  --border: #EDE4D3;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-geist-sans);
+  background-color: var(--bg);
+  color: var(--text);
+}
+
+/* Professional subtle enhancements */
+input, button, select, textarea {
+  font-family: inherit;
+}
+
+table {
+  font-feature-settings: "tnum";
+}
+
+/* White Gold Gradient Theme */
+.gold-gradient {
+  background: linear-gradient(135deg, var(--gold-light) 0%, var(--gold) 100%);
+}
+
+.gold-gradient-dark {
+  background: linear-gradient(135deg, var(--gold) 0%, var(--gold-dark) 100%);
+}
+
+.btn-gold {
+  background: linear-gradient(135deg, var(--gold) 0%, var(--gold-dark) 100%);
+  color: white;
+  transition: all 0.2s ease;
+}
+
+.btn-gold:hover {
+  filter: brightness(1.05);
+  box-shadow: 0 4px 12px rgba(197, 162, 110, 0.35);
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+
+.section-header {
+  position: relative;
+}
+
+.section-header:after {
+  content: '';
+  position: absolute;
+  bottom: -4px;
+  left: 0;
+  height: 2px;
+  width: 48px;
+  background: linear-gradient(to right, var(--gold), var(--gold-light));
 }
