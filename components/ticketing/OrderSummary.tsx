@@ -53,6 +53,11 @@ export function OrderSummary({ cart, event, compact = false }: OrderSummaryProps
             {cart.currency} {cart.totalAmount}
           </span>
         </div>
+        {cart.appliedDiscountCode && cart.discountAmount && (
+          <div className="text-xs text-emerald-600 text-right -mt-1">
+            {cart.appliedDiscountCode} applied (-{cart.discountAmount})
+          </div>
+        )}
       </div>
 
       {!compact && (

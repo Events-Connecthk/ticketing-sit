@@ -18,20 +18,59 @@ export interface TicketType {
   currency: string; // e.g. "HKD"
   maxPerOrder?: number;
   enabled?: boolean; // defaults to true if omitted
+  discounts?: DiscountRule[]; // customizable discounts
+  redemptionLimit?: number; // how many times this ticket can be redeemed (e.g. 1 = single day, 3 = 3-day access)
+}
+
+export interface DiscountRule {
+  id: string;
+  name: string; // e.g. "Early Bird", "Student Discount", "Group of 5"
+  type: 'early_bird' | 'student' | 'group' | 'custom';
+  value: number; // discount percent, e.g. 20 = 20% off
+  validUntil?: string; // ISO date string, for early_bird etc.
+  minQuantity?: number; // for group discounts
+}
+
+// Independent promo/discount codes (event-level, entered at checkout)
+export interface DiscountCode {
+  id: string;
+  code: string;          // uppercase promo code e.g. "SUMMER20"
+  percent: number;       // e.g. 15 for 15% off
+  maxUses?: number;
+  description?: string;
 }
 
 export interface EventConfig {
   slug: string;
   name: string;
   description: string;
-  date: string; // ISO date or human readable - stored as string for simplicity
+  date: string; // start date
+  endDate?: string; // sales end date / event end
   time?: string;
   location: string;
   image?: string; // optional hero image path (public/)
   ticketTypes: TicketType[];
   enabled?: boolean; // whether the event is publicly available
-  // Optional metadata for future extensibility (WP site link etc.)
+  // Custom buyer form fields per event
+  buyerFormFields?: BuyerFormField[];
+  // Independent discount/promo codes (usable at checkout, not tied to specific ticket types)
+  discountCodes?: DiscountCode[];
+  // Whether this event requires payment (false = free registration only)
+  paymentEnabled?: boolean;
+  // Custom ticket template PDF path (e.g. /ticket-templates/my-event.pdf)
+  // The dynamic text/QR will be overlaid at the same positions as the default template
+  ticketTemplate?: string;
+  // Optional metadata for future extensibility
   metadata?: Record<string, unknown>;
+}
+
+export interface BuyerFormField {
+  id: string;
+  label: string;
+  type: 'text' | 'email' | 'tel' | 'select' | 'textarea';
+  required?: boolean;
+  placeholder?: string;
+  options?: string[]; // for select
 }
 
 // ============================================
@@ -42,6 +81,8 @@ export interface BuyerInfo {
   name: string;
   phone: string;
   email: string;
+  // Custom fields from event-specific form
+  customFields?: Record<string, string>;
 }
 
 export interface TicketSelection {
@@ -56,6 +97,9 @@ export interface OrderCart {
   buyer: BuyerInfo;
   totalAmount: number;
   currency: string;
+  // Applied event-level promo code (independent of ticket types)
+  appliedDiscountCode?: string;
+  discountAmount?: number;
 }
 
 // ============================================
@@ -69,14 +113,21 @@ export interface PurchaseRecord {
   phone: string;
   email: string;
   number_of_tickets: number; // total quantity
-  payment_method: string; // e.g. "wonder", "credit_card"
+  payment_method: string; // e.g. "kpay", "credit_card"
   amount: number;
   currency?: string;
   event_slug: string;
   // Optional rich data for future reporting
   ticket_breakdown?: TicketSelection[];
-  order_reference?: string; // From WooCommerce or internal
-  payment_reference?: string; // From Wonder
+  order_reference?: string; // From external system or internal
+  payment_reference?: string; // From KPay or internal
+  redeemed_at?: string; // Timestamp when QR was scanned/used (legacy, for single redemption)
+  redemptions?: string[]; // Array of redemption timestamps (for multi-day / multi-access tickets)
+  // Applied discount code (if any)
+  applied_discount_code?: string;
+  discount_amount?: number;
+  // Custom buyer answers
+  customBuyerInfo?: Record<string, string>;
 }
 
 // ============================================
@@ -107,33 +158,9 @@ export interface EmailSendResult {
 
 export interface TicketPdfResult {
   success: boolean;
-  pdfBuffer?: Buffer;
+  pdfBuffer?: Uint8Array;
   filename?: string;
   error?: string;
 }
 
-// ============================================
-// WOO / EXTERNAL ORDER PAYLOAD
-// (internal to woocommerce service)
-// ============================================
-
-export interface WooOrderPayload {
-  payment_method: string;
-  payment_method_title: string;
-  set_paid: boolean;
-  billing: {
-    first_name: string;
-    last_name?: string;
-    email: string;
-    phone: string;
-  };
-  line_items: Array<{
-    name: string;
-    quantity: number;
-    total: string; // string to avoid floating point issues
-  }>;
-  meta_data?: Array<{
-    key: string;
-    value: string | number;
-  }>;
-}
+// (Legacy WooCommerce payload interface removed - no longer used)

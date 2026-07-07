@@ -38,11 +38,32 @@ export const AT_THE_PEAK: EventConfig = {
   description:
     "An unforgettable evening at the summit. Experience breathtaking views, world-class performances, and a celebration under the stars. Join us for a night of inspiration, connection, and magic.",
   date: "2026-07-18",
+  endDate: "2026-07-15",
   time: "18:30 – 23:00",
   location: "Victoria Peak, Hong Kong",
   image: undefined,
   enabled: true,
-  ticketTypes: [generalAdmission, vipTicket],
+  paymentEnabled: true,
+  ticketTemplate: undefined,
+  ticketTypes: [
+    {
+      ...generalAdmission,
+      discounts: [
+        { id: 'eb', name: 'Early Bird', type: 'early_bird', value: 15, validUntil: '2026-06-30' },
+        { id: 'grp', name: 'Group 5+', type: 'group', value: 10, minQuantity: 5 },
+      ]
+    },
+    {
+      ...vipTicket,
+      discounts: [
+        { id: 'stu', name: 'Student', type: 'student', value: 20 },
+      ]
+    }
+  ],
+  buyerFormFields: [
+    { id: 'studentId', label: 'Student ID (if applicable)', type: 'text', required: false },
+    { id: 'dietary', label: 'Dietary Requirements', type: 'select', options: ['None', 'Vegetarian', 'Vegan', 'Gluten-free'] },
+  ],
   metadata: {
     wpEventId: "123",
     organizer: "SIT Events",
@@ -60,6 +81,57 @@ export function getAllEvents(): EventConfig[] {
 
 /** Helper for admin "Seed Demo" button - does not auto-run on page loads */
 export const getDefaultDemoEvent = () => AT_THE_PEAK;
+
+// ============================================
+// Discount & Pricing Helpers
+// ============================================
+
+/**
+ * Calculate effective price for a ticket, applying active discounts.
+ * Discounts are applied customizably per ticket type (early bird by date, group by qty, etc.).
+ */
+export function getEffectivePrice(
+  ticket: TicketType,
+  currentDate: Date = new Date(),
+  quantity: number = 1
+): { original: number; discounted: number; appliedDiscountName?: string } {
+  const original = ticket.price;
+  if (!ticket.discounts || ticket.discounts.length === 0) {
+    return { original, discounted: original };
+  }
+
+  let bestDiscount = 0;
+  let appliedName: string | undefined;
+
+  const today = currentDate.toISOString().split('T')[0]; // YYYY-MM-DD
+
+  for (const d of ticket.discounts) {
+    let applies = true;
+
+    // Time-based (early bird etc.)
+    if (d.validUntil && today > d.validUntil) {
+      applies = false;
+    }
+
+    // Group / min quantity
+    if (d.minQuantity && quantity < d.minQuantity) {
+      applies = false;
+    }
+
+    // student/custom: currently always if present (can extend with form field check later)
+    if (applies && d.value > bestDiscount) {
+      bestDiscount = d.value;
+      appliedName = d.name;
+    }
+  }
+
+  const discounted = Math.max(0, Math.round(original * (1 - bestDiscount / 100) * 100) / 100);
+  return {
+    original,
+    discounted: bestDiscount > 0 ? discounted : original,
+    appliedDiscountName: appliedName,
+  };
+}
 
 // ============================================
 // DB-backed loaders (preferred when Supabase configured)

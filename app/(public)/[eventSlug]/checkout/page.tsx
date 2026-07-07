@@ -14,11 +14,10 @@ import { ArrowLeft, CreditCard } from "lucide-react";
  * Current state:
  * - Reads cart from sessionStorage (set by event page)
  * - Shows clean order summary
- * - Has a "Pay with Wonder" button that currently simulates success
+ * - Has a "Pay with KPay" button that currently simulates success
  * 
  * When payment integration is built:
  * - startCheckoutFlow will return a real redirectUrl
- * - User will be redirected to Wonder
  * - On return / webhook, finalizeAfterPayment will be called
  */
 
@@ -67,15 +66,15 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
     loadEventBySlug(eventSlug).then(setEvent);
   }, [eventSlug]);
 
-  // Handle the case where user returns from simulated Wonder redirect with a session param
+  // Handle the case where user returns from simulated KPay redirect with a session param
   useEffect(() => {
     const session = searchParams.get("session");
     if (session && cart && !isProcessing) {
-      // Auto-finalize simulation
-      handlePaymentSuccess(session);
+      // Auto-finalize simulation - pass cart to avoid TDZ
+      handlePaymentSuccess(session, cart);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchParams, cart]);
+  }, [searchParams, cart, isProcessing]);
 
   if (!eventSlug || !event || !cart) {
     return (
@@ -89,15 +88,17 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
   // We assign to a const with explicit type so all handlers and JSX below
   // have a clean non-nullable reference (avoids TS narrowing issues with state).
   const currentCart: OrderCart = cart;
+  const isFreeEvent = !event.paymentEnabled;
 
-  async function handlePaymentSuccess(paymentReference?: string) {
+  async function handlePaymentSuccess(paymentReference?: string, passedCart?: OrderCart) {
+    const usedCart = passedCart || currentCart;
     setIsProcessing(true);
     setError(null);
 
     try {
       console.log("[Checkout] Starting payment finalization for", paymentReference);
-      // In real flow this would be called after Wonder redirects back + verifies
-      const result = await finalizeAfterPayment(paymentReference || "SIM-" + Date.now(), currentCart);
+      // In real flow this would be called after KPay redirects back + verifies
+      const result = await finalizeAfterPayment(paymentReference || "SIM-" + Date.now(), usedCart);
 
       // Clean up temp cart
       sessionStorage.removeItem("pendingCart");
@@ -108,10 +109,10 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
         // Pass minimal data to success page
         const successParams = new URLSearchParams({
           ref: result.orderReference || paymentReference || "",
-          amount: currentCart.totalAmount.toString(),
+          amount: usedCart.totalAmount.toString(),
         });
         console.log("[Checkout] Redirecting to success");
-        router.push(`/${currentCart.eventSlug}/success?${successParams.toString()}`);
+        router.push(`/${usedCart.eventSlug}/success?${successParams.toString()}`);
       } else {
         setError(result.error || "Payment processing failed");
       }
@@ -123,9 +124,17 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
     }
   }
 
-  async function handlePayWithWonder() {
+  async function handlePayWithKpay() {
     setIsProcessing(true);
     setError(null);
+
+    if (isFreeEvent) {
+      console.log("[Checkout] Free registration");
+      const freeCart = { ...currentCart, totalAmount: 0 };
+      await handlePaymentSuccess("FREE-" + Date.now(), freeCart);
+      setIsProcessing(false);
+      return;
+    }
 
     console.log("[Checkout] Starting simulated payment");
     const result = await startCheckoutFlow(currentCart);
@@ -136,12 +145,9 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
       return;
     }
 
-    // For current development:
-    // We simulate the Wonder flow by redirecting within the same app to the same page with a session param.
-    // When real integration exists, use result.checkoutUrl instead.
-    const checkoutUrl = `/${currentCart.eventSlug}/checkout?session=${result.sessionId}`;
-    console.log("[Checkout] Redirecting to simulation with session", result.sessionId);
-    router.push(checkoutUrl);
+    // For current development: directly process the simulation (no extra redirect)
+    // This avoids re-initialization issues and makes it less "stuck"
+    await handlePaymentSuccess(result.sessionId, currentCart);
   }
 
   return (
@@ -168,8 +174,8 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
                 <CreditCard className="h-4 w-4 text-emerald-600" />
               </div>
               <div>
-                <div className="font-medium">Pay with Wonder</div>
-                <div className="text-xs" style={{ color: '#6B5E50' }}>Secure payment processing</div>
+                <div className="font-medium">{isFreeEvent ? "Free Registration" : "Pay with KPay"}</div>
+                <div className="text-xs" style={{ color: '#6B5E50' }}>{isFreeEvent ? "No payment required" : "Secure payment processing"}</div>
               </div>
             </div>
 
@@ -180,15 +186,15 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
             )}
 
             <button
-              onClick={handlePayWithWonder}
+              onClick={handlePayWithKpay}
               disabled={isProcessing}
               className="btn-gold w-full rounded-xl py-4 font-medium text-lg disabled:opacity-60"
             >
-              {isProcessing ? "Processing payment..." : `Pay ${currentCart.currency} ${currentCart.totalAmount} with Wonder`}
+              {isProcessing ? (isFreeEvent ? "Registering..." : "Processing payment...") : (isFreeEvent ? "Register for Free" : `Pay ${currentCart.currency} ${currentCart.totalAmount} with KPay`)}
             </button>
 
             <p className="text-center text-xs text-zinc-500 mt-3">
-              This is a simulated checkout. Real Wonder integration can be enabled on request.
+              {isFreeEvent ? "Free registration flow. No payment required." : "This is a simulated checkout. Real KPay integration can be enabled on request."}
             </p>
           </div>
         </div>

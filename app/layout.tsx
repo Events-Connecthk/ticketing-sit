@@ -15,7 +15,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "Ticketing System SIT | Professional Event Ticketing",
-  description: "Secure, modular ticketing platform. Buy tickets for events and receive PDF tickets via email.",
+  description: "Professional event ticketing platform. Browse events and purchase tickets with ease.",
   icons: {
     icon: "/favicon.ico",
   },
@@ -29,21 +29,27 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      className={`${geistSans.variable} ${geistMono.variable} antialiased`}
     >
-      <body className="min-h-full flex flex-col bg-white text-zinc-950">
+      <body className="min-h-screen flex flex-col bg-white text-zinc-950">
         {/* Simple top nav for the standalone platform - White Gold Theme */}
         <header className="border-b bg-white/95 backdrop-blur z-50 sticky top-0 border-[#EDE4D3]">
           <div className="max-w-5xl mx-auto px-6 h-14 flex items-center justify-between text-sm">
             <a href="/" className="font-semibold tracking-tight text-[#2C2520]">Ticketing System SIT</a>
             <nav className="flex items-center gap-5 text-[#6B5E50]">
-              <a href="/admin" className="hover:text-[#2C2520] transition-colors">Admin</a>
               <a href="/events" className="hover:text-[#2C2520] transition-colors">Events</a>
             </nav>
           </div>
         </header>
 
         <main className="flex-1">{children}</main>
+
+        <footer className="border-t py-8 text-center text-sm" style={{ borderColor: '#EDE4D3', color: '#6B5E50' }}>
+          <div className="max-w-5xl mx-auto px-6">
+            <p>© {new Date().getFullYear()} Ticketing System SIT. All rights reserved.</p>
+            <p className="mt-1 text-xs">Professional event ticketing platform.</p>
+          </div>
+        </footer>
 
         <Toaster position="top-center" richColors closeButton />
       </body>

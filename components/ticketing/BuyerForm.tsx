@@ -35,7 +35,7 @@ export function BuyerForm({
   onSubmit,
   onBack,
   isSubmitting = false,
-  submitLabel = "Continue to Checkout",
+  submitLabel = "Proceed to Checkout",
 }: BuyerFormProps) {
   const {
     register,

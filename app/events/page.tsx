@@ -46,9 +46,7 @@ export default function EventsCatalogue() {
             <p className="text-xs mt-1" style={{ color: '#6B5E50' }}>
               {usingSupabase ? "Events are stored in Supabase." : "Currently using in-memory storage (set Supabase keys + restart to persist)."}
             </p>
-            <Link href="/admin" className="mt-4 inline-block text-sm underline" style={{ color: '#C5A26E' }}>
-              Go to Admin to add events
-            </Link>
+            <p className="mt-2 text-xs">Contact the event organizer to add events.</p>
           </div>
         )}
 
@@ -57,29 +55,36 @@ export default function EventsCatalogue() {
             <Link
               key={event.slug}
               href={`/${event.slug}`}
-              className="block rounded-2xl border card p-6 hover:shadow-md transition-shadow"
+              className="block rounded-2xl border card overflow-hidden hover:shadow-md transition-shadow"
               style={{ borderColor: '#EDE4D3' }}
             >
-              <h3 className="text-xl font-semibold mb-2 text-[#2C2520]">{event.name}</h3>
-
-              <div className="flex items-center gap-2 text-sm mb-1" style={{ color: '#3A2F23' }}>
-                <Calendar className="h-4 w-4" />
-                <span>{event.date}{event.time ? ` • ${event.time}` : ""}</span>
-              </div>
-
-              <div className="flex items-center gap-2 text-sm mb-4" style={{ color: '#3A2F23' }}>
-                <MapPin className="h-4 w-4" />
-                <span>{event.location}</span>
-              </div>
-
-              {event.description && (
-                <p className="text-sm line-clamp-3" style={{ color: '#6B5E50' }}>
-                  {event.description}
-                </p>
+              {event.image && (
+                <div className="w-full h-28 overflow-hidden">
+                  <img src={event.image} alt="" className="w-full h-full object-cover" />
+                </div>
               )}
+              <div className="p-6">
+                <h3 className="text-xl font-semibold mb-2 text-[#2C2520]">{event.name}</h3>
 
-              <div className="mt-4 text-sm font-medium" style={{ color: '#C5A26E' }}>
-                View tickets →
+                <div className="flex items-center gap-2 text-sm mb-1" style={{ color: '#3A2F23' }}>
+                  <Calendar className="h-4 w-4" />
+                  <span>{event.date}{event.time ? ` • ${event.time}` : ""}</span>
+                </div>
+
+                <div className="flex items-center gap-2 text-sm mb-4" style={{ color: '#3A2F23' }}>
+                  <MapPin className="h-4 w-4" />
+                  <span>{event.location}</span>
+                </div>
+
+                {event.description && (
+                  <p className="text-sm line-clamp-3" style={{ color: '#6B5E50' }}>
+                    {event.description}
+                  </p>
+                )}
+
+                <div className="mt-4 text-sm font-medium" style={{ color: '#C5A26E' }}>
+                  View tickets →
+                </div>
               </div>
             </Link>
           ))}

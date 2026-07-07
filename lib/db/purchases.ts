@@ -36,45 +36,120 @@ export { getSupabase };
 // In-memory fallback store (resets on server restart)
 const memoryStore: PurchaseRecord[] = [];
 
-interface SavePurchaseInput extends Omit<PurchaseRecord, "id"> {}
+interface SavePurchaseInput extends Partial<Omit<PurchaseRecord, "id">> {
+  id?: string | number; // allow passing id for update operations (e.g. marking redeemed)
+}
 
 export async function savePurchase(input: SavePurchaseInput): Promise<PurchaseRecord> {
   const client = getSupabase();
 
   const record: PurchaseRecord = {
-    ...input,
+    ...(input as any),
     bought_at: input.bought_at || new Date().toISOString(),
-  };
+  } as PurchaseRecord;
 
   if (client) {
-    const { data, error } = await client
-      .from("purchases")
-      .insert(record)
-      .select()
-      .single();
+    const hasExistingId = record.id != null;
 
-    if (error) {
-      console.error("[DB] Supabase insert failed for purchase:", error);
-      console.warn("[DB] Purchase saved to memory only (check RLS on 'purchases' table).");
-      // Continue to memory fallback
-    } else if (data) {
-      // Also keep in memory for the merge logic (helps if some queries have issues)
-      const withId: PurchaseRecord = { ...data, id: data.id ?? memoryStore.length + 1 } as PurchaseRecord;
-      // avoid dups in memory
-      if (!memoryStore.some(m => m.email === withId.email && m.bought_at === withId.bought_at)) {
-        memoryStore.push(withId);
+    if (hasExistingId) {
+      // This is an update (e.g. marking as redeemed via Scanner)
+      const { id, ...updateData } = record as any;
+
+      const { data, error } = await client
+        .from("purchases")
+        .update(updateData)
+        .eq("id", id)
+        .select()
+        .single();
+
+      if (error) {
+        console.error("[DB] Supabase update failed for purchase:", error);
+        console.warn("[DB] Purchase updated in memory only.");
+      } else if (data) {
+        // Update in memory too
+        const idx = memoryStore.findIndex(m => m.id === id || (m.email === data.email && m.bought_at === data.bought_at));
+        if (idx >= 0) {
+          memoryStore[idx] = { ...data, id: data.id } as PurchaseRecord;
+        } else {
+          memoryStore.push({ ...data, id: data.id } as PurchaseRecord);
+        }
+        return data as PurchaseRecord;
       }
-      return data as PurchaseRecord;
+    } else {
+      // Normal insert for new purchases (no id)
+      // Strip any accidental id
+      const { redeemed_at, id: _ignoreId, ...baseRecord } = record as any;
+      const insertPayload: any = { ...baseRecord };
+      delete insertPayload.id; // never send id on insert (let DB generate)
+
+      let { data, error } = await client
+        .from("purchases")
+        .insert(insertPayload)
+        .select()
+        .single();
+
+      if (error && error.code === 'PGRST204' && (error.message || '').includes('column')) {
+        // Graceful fallback for missing columns like applied_discount_code
+        console.warn("[DB] Supabase schema missing new purchase columns (applied_discount_code etc). Retrying without them. Run ALTER from supabase-schema.sql.");
+        const safePayload = { ...insertPayload };
+        delete safePayload.applied_discount_code;
+        delete safePayload.discount_amount;
+
+        const retry = await client
+          .from("purchases")
+          .insert(safePayload)
+          .select()
+          .single();
+
+        data = retry.data;
+        error = retry.error;
+
+        // Merge the discount fields back for memory (they won't be in DB until column added)
+        if (data && (insertPayload.applied_discount_code || insertPayload.discount_amount)) {
+          data = {
+            ...data,
+            applied_discount_code: insertPayload.applied_discount_code,
+            discount_amount: insertPayload.discount_amount,
+          };
+        }
+      }
+
+      if (error) {
+        console.error("[DB] Supabase insert failed for purchase:", error);
+        console.warn("[DB] Purchase saved to memory only (check RLS on 'purchases' table).");
+      } else if (data) {
+        // Always keep a copy in memory as backup for fetch issues
+        const withId: PurchaseRecord = { ...data, id: data.id ?? memoryStore.length + 1 } as PurchaseRecord;
+        if (!memoryStore.some(m => m.email === withId.email && m.bought_at === withId.bought_at)) {
+          memoryStore.push(withId);
+        }
+        return data as PurchaseRecord;
+      }
     }
   }
 
-  // Memory path
-  const withId: PurchaseRecord = {
-    ...record,
-    id: memoryStore.length + 1,
-  };
-  memoryStore.push(withId);
-  return withId;
+  // Memory path (or fallback) - support both insert and update
+  const existingIndex = memoryStore.findIndex(m =>
+    (record.id != null && m.id === record.id) ||
+    (m.email === record.email && m.bought_at === record.bought_at)
+  );
+
+  if (existingIndex >= 0) {
+    // Update existing memory record (e.g. redeem)
+    memoryStore[existingIndex] = {
+      ...memoryStore[existingIndex],
+      ...record,
+      id: memoryStore[existingIndex].id, // preserve original id
+    };
+    return memoryStore[existingIndex];
+  } else {
+    const withId: PurchaseRecord = {
+      ...record,
+      id: memoryStore.length + 1,
+    };
+    memoryStore.push(withId);
+    return withId;
+  }
 }
 
 /**
@@ -87,6 +162,7 @@ export async function getAllPurchases(filters?: {
 }): Promise<PurchaseRecord[]> {
   const client = getSupabase();
 
+  let supabaseResults: PurchaseRecord[] = [];
   if (client) {
     let query = client.from("purchases").select("*").order("bought_at", { ascending: false });
 
@@ -97,71 +173,55 @@ export async function getAllPurchases(filters?: {
       query = query.ilike("email", `%${filters.email}%`);
     }
     if (filters?.search) {
-      // Search across name / email / phone
+      // Search across name / email / phone / order_reference / payment_reference
       const s = filters.search;
-      query = query.or(`name.ilike.%${s}%,email.ilike.%${s}%,phone.ilike.%${s}%`);
+      query = query.or(
+        `name.ilike.%${s}%,email.ilike.%${s}%,phone.ilike.%${s}%,order_reference.ilike.%${s}%,payment_reference.ilike.%${s}%`
+      );
     }
 
-    const { data, error } = await query;
-    if (error) {
-      console.error("[DB] Supabase fetch error:", error);
-    } else if (data) {
-      const supabaseResults = data as PurchaseRecord[];
-      // Merge memory purchases (e.g. ones that failed to insert due to RLS or config issues)
-      // so they still appear until the table is properly set up
-      const memoryToAdd = memoryStore.filter(mem =>
-        !supabaseResults.some(s => s.email === mem.email && s.bought_at === mem.bought_at)
-      );
-      let combined = [...supabaseResults, ...memoryToAdd];
-
-      // re-apply filters
-      if (filters?.eventSlug) {
-        combined = combined.filter((p) => p.event_slug === filters.eventSlug);
+    try {
+      const { data, error } = await query;
+      if (error) {
+        console.error("[DB] Supabase fetch error:", error);
+      } else if (data) {
+        supabaseResults = data as PurchaseRecord[];
       }
-      if (filters?.email) {
-        combined = combined.filter((p) => p.email.toLowerCase().includes(filters.email!.toLowerCase()));
-      }
-      if (filters?.search) {
-        const s = filters.search.toLowerCase();
-        combined = combined.filter(
-          (p) =>
-            p.name.toLowerCase().includes(s) ||
-            p.email.toLowerCase().includes(s) ||
-            p.phone.toLowerCase().includes(s)
-        );
-      }
-
-      // re-sort
-      combined.sort((a, b) =>
-        (b.bought_at || "").localeCompare(a.bought_at || "")
-      );
-
-      return combined;
+    } catch (e) {
+      console.error("[DB] Supabase fetch error:", e);
     }
   }
 
-  // Memory fallback with filtering (when no Supabase client)
-  let results = [...memoryStore].sort((a, b) =>
-    (b.bought_at || "").localeCompare(a.bought_at || "")
+  const memoryToAdd = memoryStore.filter(mem =>
+    !supabaseResults.some(s => s.email === mem.email && s.bought_at === mem.bought_at)
   );
+  let combined = [...supabaseResults, ...memoryToAdd];
 
+  // re-apply filters
   if (filters?.eventSlug) {
-    results = results.filter((p) => p.event_slug === filters.eventSlug);
+    combined = combined.filter((p) => p.event_slug === filters.eventSlug);
   }
   if (filters?.email) {
-    results = results.filter((p) => p.email.toLowerCase().includes(filters.email!.toLowerCase()));
+    combined = combined.filter((p) => p.email.toLowerCase().includes(filters.email!.toLowerCase()));
   }
   if (filters?.search) {
     const s = filters.search.toLowerCase();
-    results = results.filter(
+    combined = combined.filter(
       (p) =>
         p.name.toLowerCase().includes(s) ||
         p.email.toLowerCase().includes(s) ||
-        p.phone.toLowerCase().includes(s)
+        p.phone.toLowerCase().includes(s) ||
+        (p.order_reference || "").toLowerCase().includes(s) ||
+        (p.payment_reference || "").toLowerCase().includes(s)
     );
   }
 
-  return results;
+  // re-sort
+  combined.sort((a, b) =>
+    (b.bought_at || "").localeCompare(a.bought_at || "")
+  );
+
+  return combined;
 }
 
 /**

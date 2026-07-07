@@ -1,19 +1,18 @@
 /**
  * PDF Ticket Generator
  *
- * Uses @react-pdf/renderer for clean, professional, print-ready tickets.
- * The ticket is self-contained with all important details + a simple
- * "barcode-like" reference for entry scanning (can be upgraded to QR later).
+ * Uses pdf-lib to create tickets with optional full-page background
+ * (uploaded image or PDF). Dynamic text + QR are overlaid at fixed positions.
  *
- * Why PDF on server:
- * - Reliable visual result independent of client
- * - Can be emailed as attachment
- * - Consistent branding
+ * Supports:
+ * - No template → plain white
+ * - Image template → stretched as background
+ * - PDF template → first page copied as background (best fidelity)
  */
 
 import { EventConfig, BuyerInfo, TicketSelection } from "@/types";
-import { Document, Page, Text, View, StyleSheet, pdf } from "@react-pdf/renderer";
-import React from "react";
+import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
+import QRCode from 'qrcode';
 
 interface GenerateTicketParams {
   event: EventConfig;
@@ -23,173 +22,201 @@ interface GenerateTicketParams {
   purchaseId?: string;
   amount: number;
   currency: string;
-}
-
-const styles = StyleSheet.create({
-  page: {
-    padding: 40,
-    backgroundColor: "#ffffff",
-    fontFamily: "Helvetica",
-  },
-  header: {
-    marginBottom: 24,
-    borderBottom: "2px solid #111",
-    paddingBottom: 12,
-  },
-  title: {
-    fontSize: 28,
-    fontWeight: "bold",
-    color: "#111111",
-    marginBottom: 4,
-  },
-  subtitle: {
-    fontSize: 14,
-    color: "#555",
-  },
-  section: {
-    marginBottom: 16,
-  },
-  label: {
-    fontSize: 10,
-    color: "#666",
-    marginBottom: 2,
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
-  },
-  value: {
-    fontSize: 16,
-    color: "#111",
-    marginBottom: 12,
-  },
-  row: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginBottom: 8,
-  },
-  ticketBox: {
-    border: "1px solid #ddd",
-    padding: 16,
-    marginBottom: 12,
-    backgroundColor: "#fafafa",
-  },
-  reference: {
-    fontSize: 22,
-    fontFamily: "Courier",
-    letterSpacing: 3,
-    marginTop: 8,
-    backgroundColor: "#111",
-    color: "#fff",
-    padding: "10px 14px",
-    alignSelf: "flex-start",
-  },
-  footer: {
-    marginTop: 32,
-    fontSize: 9,
-    color: "#888",
-    textAlign: "center",
-  },
-  total: {
-    fontSize: 18,
-    fontWeight: "bold",
-  },
-});
-
-function TicketDocument({
-  event,
-  buyer,
-  tickets,
-  orderReference,
-  amount,
-  currency,
-}: Omit<GenerateTicketParams, "purchaseId">) {
-  const totalTickets = tickets.reduce((sum, t) => sum + t.quantity, 0);
-
-  return (
-    <Document>
-      <Page size="A4" style={styles.page}>
-        {/* Header */}
-        <View style={styles.header}>
-          <Text style={styles.title}>{event.name}</Text>
-          <Text style={styles.subtitle}>Official Ticket</Text>
-        </View>
-
-        {/* Event Info */}
-        <View style={styles.section}>
-          <Text style={styles.label}>Event Details</Text>
-          <Text style={styles.value}>
-            {event.date} {event.time ? `• ${event.time}` : ""}
-          </Text>
-          <Text style={styles.value}>{event.location}</Text>
-        </View>
-
-        {/* Buyer */}
-        <View style={styles.section}>
-          <Text style={styles.label}>Attendee</Text>
-          <Text style={styles.value}>{buyer.name}</Text>
-          <Text style={{ ...styles.value, fontSize: 14 }}>{buyer.email}</Text>
-          <Text style={{ ...styles.value, fontSize: 14 }}>{buyer.phone}</Text>
-        </View>
-
-        {/* Tickets */}
-        <View style={styles.section}>
-          <Text style={styles.label}>Tickets</Text>
-          {tickets.map((t, idx) => (
-            <View key={idx} style={styles.ticketBox}>
-              <Text style={{ fontSize: 15, marginBottom: 4 }}>
-                Ticket Type: {t.ticketTypeId.toUpperCase()} × {t.quantity}
-              </Text>
-            </View>
-          ))}
-          <Text style={{ marginTop: 8, fontSize: 13 }}>Total Tickets: {totalTickets}</Text>
-        </View>
-
-        {/* Amount */}
-        <View style={styles.section}>
-          <Text style={styles.label}>Amount Paid</Text>
-          <Text style={styles.total}>
-            {currency} {amount}
-          </Text>
-        </View>
-
-        {/* Order Reference - critical for entry */}
-        <View style={styles.section}>
-          <Text style={styles.label}>Order Reference (Present at Entry)</Text>
-          <Text style={styles.reference}>{orderReference}</Text>
-        </View>
-
-        <Text style={styles.footer}>
-          This is your official ticket. Please keep this document safe. Non-transferable unless otherwise stated.
-        </Text>
-      </Page>
-    </Document>
-  );
+  purchaseDate?: string; // ISO date for "Date of purchase"
+  ticketSerial?: string; // unique per ticket, e.g. KPY-xxx-001
 }
 
 export async function generateTicketPdf(
   params: GenerateTicketParams
-): Promise<{ success: boolean; pdfBuffer?: Buffer; filename?: string; error?: string }> {
+): Promise<{ success: boolean; pdfBuffer?: Uint8Array; filename?: string; error?: string }> {
   try {
-    const filename = `ticket-${params.event.slug}-${params.orderReference}.pdf`;
+    const idForFile = params.ticketSerial || params.orderReference;
+    const filename = `ticket-${params.event.slug}-${idForFile}.pdf`;
 
-    // Render the PDF to a Buffer (JSX component passed directly)
-    const blob = await pdf(
-      <TicketDocument
-        event={params.event}
-        buyer={params.buyer}
-        tickets={params.tickets}
-        orderReference={params.orderReference}
-        amount={params.amount}
-        currency={params.currency}
-      />
-    ).toBlob();
+    // Create page with white background (or custom image/PDF bg if provided)
+    // Dynamic overlays (type, ID, QR, date) are drawn on top at fixed positions.
+    let pdfDoc = await PDFDocument.create();
+    let page;
 
-    // Convert blob -> buffer (Node compatible)
-    const arrayBuffer = await blob.arrayBuffer();
-    const pdfBuffer = Buffer.from(arrayBuffer);
+    const templateFile = params.event.ticketTemplate;
+    if (templateFile) {
+      try {
+        let templateBytes: ArrayBuffer | null = null;
+
+        if (typeof window === 'undefined') {
+          // Server
+          const fsMod = await import('fs');
+          const pathMod = await import('path');
+          const fs = fsMod.default || fsMod;
+          const path = pathMod.default || pathMod;
+          const templatePath = path.join(process.cwd(), 'public', templateFile.replace(/^\//, ''));
+          const buf = fs.readFileSync(templatePath);
+          templateBytes = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer;
+        } else {
+          // Browser
+          const res = await fetch(templateFile);
+          if (res.ok) {
+            templateBytes = await res.arrayBuffer();
+          }
+        }
+
+        if (templateBytes) {
+          const isPdf = templateFile.toLowerCase().endsWith(".pdf");
+
+          if (isPdf) {
+            // Use uploaded PDF as the base page (preserves vector design)
+            const templatePdf = await PDFDocument.load(templateBytes);
+            const [copiedPage] = await pdfDoc.copyPages(templatePdf, [0]);
+            // Standardize to our overlay coordinate system
+            copiedPage.setSize(842, 1190);
+            pdfDoc.addPage(copiedPage);
+            page = copiedPage;
+          } else {
+            // Image background (stretch to fill like before)
+            page = pdfDoc.addPage([842, 1190]);
+            let bgImage;
+            try {
+              bgImage = await pdfDoc.embedPng(templateBytes);
+            } catch {
+              bgImage = await pdfDoc.embedJpg(templateBytes);
+            }
+            page.drawImage(bgImage, {
+              x: 0,
+              y: 0,
+              width: 842,
+              height: 1190,
+            });
+          }
+        }
+      } catch (e) {
+        // fallback to plain white page
+      }
+    }
+
+    // Ensure we have a page (plain white fallback)
+    if (!page) {
+      page = pdfDoc.addPage([842, 1190]);
+    }
+
+    // Generate QR code that links to the public ticket check page.
+    // Public scan is now READ-ONLY (shows status only).
+    // Actual redemption / check-in is done exclusively from /sit-admin → Ticket Scanner (admin password required).
+    // For production, replace localhost with your actual domain.
+    const refForQr = params.ticketSerial || params.orderReference || 'TICKET';
+    const scanUrl = `${typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000'}/scan?ref=${encodeURIComponent(refForQr)}`;
+    const qrDataUrl = await QRCode.toDataURL(scanUrl, { width: 100 });
+    const qrBytes = Uint8Array.from(atob(qrDataUrl.split(',')[1]), c => c.charCodeAt(0));
+    const qrImage = await pdfDoc.embedPng(qrBytes);
+
+    // Embed font for text (for the dynamic overlays)
+    const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+    let boldFont;
+    try {
+      boldFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+    } catch {
+      boldFont = font; // fallback if bold not available
+    }
+
+    // =====================================================
+    // DYNAMIC OVERLAYS — drawn on top of the uploaded template (image or PDF)
+    // 
+    // BEST APPROACH:
+    // 1. Design/export your ticket background in Canva (or similar) as PDF or image.
+    // 2. Recommended page size: 842 x 1190 points.
+    // 3. Upload via /sit-admin → Event form (Ticket Template Background).
+    // 4. We draw the live data (ticket type, ID/serial, QR, date) on top.
+    //
+    // White rectangles are drawn behind text for contrast.
+    // Tweak the x/y numbers below to perfectly align with your Canva layout.
+    // =====================================================
+
+    const darkText = rgb(0.1, 0.1, 0.1);
+
+    // Resolve the ticket type name(s) from the order
+    const ticketNames = params.tickets.map(sel => {
+      const t = params.event.ticketTypes?.find(tt => tt.id === sel.ticketTypeId);
+      return t ? t.name : sel.ticketTypeId;
+    });
+    const ticketTypeDisplay = ticketNames.length > 1 
+      ? ticketNames.join(' + ') 
+      : (ticketNames[0] || 'General Admission');
+
+    // =====================================================
+    // DYNAMIC OVERLAYS on the template (or fallback)
+    // - All value text is CENTERED on its own line (using getCenteredX)
+    // - Larger sizes, tighter vertical spacing (congested), shifted a bit higher
+    // - QR below ID text, above the date
+    // - White rects cover any template placeholder text in the value areas
+    // =====================================================
+
+    const textSizeType = 48;  // h1 - way bigger
+    const textSizeId   = 38;  // h2
+    const textSizeDate = 22;  // subtitle
+
+    // True center for 842pt wide page. Text will be centered around this.
+    const textCenterX = 421;
+
+    // Helper to center text on its line (approximate width for Helvetica)
+    // IMPORTANT: only ONE definition. Cursor effectively starts at center of line.
+    function getCenteredX(text: string, size: number, centerX: number) {
+      const approxCharWidth = size * 0.5;
+      const approxWidth = text.length * approxCharWidth;
+      return centerX - approxWidth / 2;
+    }
+
+    // Ticket Type (h1) - a little lower
+    page.drawRectangle({ x: 121, y: 588, width: 600, height: 52, color: rgb(1,1,1) });
+    const typeX = getCenteredX(ticketTypeDisplay, textSizeType, textCenterX);
+    page.drawText(ticketTypeDisplay, { 
+      x: typeX, y: 600, size: textSizeType, font: boldFont, color: darkText 
+    });
+
+    // Ticket ID (h2) - a bit more gap from ticket type
+    // Use ticketSerial for unique ID in multi-ticket orders
+    const ticketId = params.ticketSerial || params.orderReference;
+    page.drawRectangle({ x: 171, y: 537, width: 500, height: 44, color: rgb(1,1,1) });
+    const idX = getCenteredX(ticketId, textSizeId, textCenterX);
+    page.drawText(ticketId, { 
+      x: idX, y: 548, size: textSizeId, font: boldFont, color: darkText 
+    });
+
+    // QR code - a bit bigger (position adjusted to keep reasonable gap after ID)
+    const qrSize = 230;
+    const qrCenterX = 421;
+    const qrCenterY = 402;
+    page.drawRectangle({ 
+      x: qrCenterX - qrSize / 2 - 15, 
+      y: qrCenterY - qrSize / 2 - 8, 
+      width: qrSize + 30, 
+      height: qrSize + 16, 
+      color: rgb(1,1,1) 
+    });
+    page.drawImage(qrImage, { 
+      x: qrCenterX - qrSize / 2, 
+      y: qrCenterY - qrSize / 2, 
+      width: qrSize, 
+      height: qrSize 
+    });
+
+    // Date of purchase (subtitle) - below QR
+    const purchaseDateStr = params.purchaseDate 
+      ? new Date(params.purchaseDate).toLocaleDateString('en-GB', { 
+          day: 'numeric', month: 'long', year: 'numeric' 
+        }) 
+      : new Date().toLocaleDateString('en-GB', { 
+          day: 'numeric', month: 'long', year: 'numeric' 
+        });
+    page.drawRectangle({ x: 171, y: 268, width: 500, height: 34, color: rgb(1,1,1) });
+    const dateX = getCenteredX(purchaseDateStr, textSizeDate, textCenterX);
+    page.drawText(purchaseDateStr, { 
+      x: dateX, y: 278, size: textSizeDate, font, color: darkText 
+    });
+
+    const pdfBytes = await pdfDoc.save();
 
     return {
       success: true,
-      pdfBuffer,
+      pdfBuffer: pdfBytes,
       filename,
     };
   } catch (error) {

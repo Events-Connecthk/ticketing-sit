@@ -6,32 +6,28 @@
  * Responsibilities:
  * 1. Accept a clean "cart" object (event + buyer + tickets).
  * 2. Coordinate the full post-checkout flow:
- *    - Initiate / confirm payment (Wonder)
- *    - Create order in external WooCommerce
+ *    - Initiate / confirm payment (KPay)
  *    - Persist record in our database
  *    - Generate PDF ticket
  *    - Send confirmation email
  *
  * Why this design?
- * - The rest of the app (pages/components) never talks directly to Woo, Wonder, DB, or Email.
- * - To support a completely different WordPress site, just swap the implementations in the called services.
+ * - The rest of the app never talks directly to the payment provider, DB, or Email.
+ * - Easy to swap payment providers (KPay, Stripe, etc.).
  * - Easy to unit test each step in isolation.
- * - Future providers (Stripe instead of Wonder, different email, etc.) only require changing the injected services.
  *
- * Current implementation: Uses the lower-level services (wonder, woocommerce, db, email, pdf).
- * Payment step is intentionally stubbed per the task instructions.
+ * Current implementation uses abstraction layers for payment, database, email, and PDF.
  */
 
 import { OrderCart, PurchaseRecord, OrderCreationResult } from "@/types";
-import { createWooCommerceOrder } from "./woocommerce";
-import { initiateWonderPayment, confirmWonderPayment } from "./wonder";
+import { initiateKpayPayment, confirmKpayPayment } from "./kpay";
 import { savePurchase } from "../db/purchases";
 import { generateTicketPdf } from "../pdf/generate-ticket";
 import { sendConfirmationEmail } from "./email";
 import { loadEventBySlug } from "../config/events";
 
 /**
- * Main entry point after a successful Wonder payment.
+ * Main entry point after a successful KPay payment.
  * Call this from the success callback / webhook handler.
  */
 export async function processSuccessfulPurchase(
@@ -49,82 +45,65 @@ export async function processSuccessfulPurchase(
     // 1. Calculate total tickets
     const totalTickets = cart.tickets.reduce((sum, t) => sum + t.quantity, 0);
 
-    // 2. Create order in WooCommerce (the external system of record for the WP site)
-    const wooResult = await createWooCommerceOrder({
-      cart,
-      eventName: event.name,
-      paymentReference,
-    });
+    // 2. Persist our own purchase record (for admin dashboard, reporting, exports)
+    const orderReference = `KPY-${Date.now()}`;
 
-    if (!wooResult.success) {
-      // Important: log and potentially retry or compensate.
-      console.error("[OrderService] WooCommerce order creation failed", wooResult.error);
-      // We still proceed in some flows to ensure buyer gets ticket (configurable).
-    }
-
-    // 3. Persist our own purchase record (for admin dashboard, reporting, exports)
     const purchaseRecord: Omit<PurchaseRecord, "id"> = {
       bought_at: new Date().toISOString(),
       name: cart.buyer.name,
       phone: cart.buyer.phone,
       email: cart.buyer.email,
       number_of_tickets: totalTickets,
-      payment_method: "wonder",
+      payment_method: paymentReference.startsWith("FREE") ? "free" : "kpay",
       amount: cart.totalAmount,
       currency: cart.currency,
       event_slug: cart.eventSlug,
       ticket_breakdown: cart.tickets,
-      order_reference: wooResult.orderReference,
+      order_reference: orderReference,
       payment_reference: paymentReference,
+      applied_discount_code: cart.appliedDiscountCode,
+      discount_amount: cart.discountAmount,
     };
 
     console.log("[OrderService] Saving purchase to DB...");
     const savedRecord = await savePurchase(purchaseRecord);
     console.log("[OrderService] Purchase saved:", savedRecord.id);
 
-    // 4. Generate beautiful PDF ticket
-    console.log("[OrderService] Generating PDF ticket...");
-    const pdfResult = await generateTicketPdf({
-      event,
-      buyer: cart.buyer,
-      tickets: cart.tickets,
-      orderReference: wooResult.orderReference || paymentReference,
-      purchaseId: savedRecord.id?.toString(),
-      amount: cart.totalAmount,
-      currency: cart.currency,
-    });
-    console.log("[OrderService] PDF result:", pdfResult.success);
-
-    // 5. Send confirmation email with PDF attached
-    console.log("[OrderService] Sending confirmation email...");
-    const emailResult = await sendConfirmationEmail({
-      to: cart.buyer.email,
-      buyerName: cart.buyer.name,
-      event,
-      orderReference: wooResult.orderReference || paymentReference,
-      totalAmount: cart.totalAmount,
-      currency: cart.currency,
-      ticketCount: totalTickets,
-      pdfBuffer: pdfResult.pdfBuffer,
-      pdfFilename: pdfResult.filename,
-    });
-    console.log("[OrderService] Email result:", emailResult.success);
-
-    if (!emailResult.success) {
-      console.error("[OrderService] Email failed to send", emailResult.error);
-      // Non-fatal for the purchase in most cases
-    }
-
-    return {
+    // Return success immediately so checkout can redirect to success page
+    const successResult = {
       success: true,
-      orderId: wooResult.orderId,
-      orderReference: wooResult.orderReference || paymentReference,
+      orderReference,
       metadata: {
         purchaseId: savedRecord.id,
-        emailSent: emailResult.success,
-        pdfGenerated: pdfResult.success,
+        emailSent: false,
+        pdfGenerated: false,
       },
     };
+
+    // Fire and forget the heavy parts (PDF + email) so redirect isn't blocked
+    (async () => {
+      try {
+        const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://connecthk.org';
+        const downloadUrl = cart.totalAmount > 0 ? `${baseUrl}/${event.slug}/success?ref=${orderReference}` : undefined;
+
+        console.log("[OrderService] Sending confirmation email (background)...");
+        const emailResult = await sendConfirmationEmail({
+          to: cart.buyer.email,
+          buyerName: cart.buyer.name,
+          event,
+          orderReference: paymentReference,
+          totalAmount: cart.totalAmount,
+          currency: cart.currency,
+          ticketCount: totalTickets,
+          downloadUrl,
+        });
+        console.log("[OrderService] Email result (background):", emailResult.success);
+      } catch (bgError) {
+        console.error("[OrderService] Background email error (non-blocking):", bgError);
+      }
+    })();
+
+    return successResult;
   } catch (error) {
     console.error("[OrderService] Unexpected error during purchase processing", error);
     return {
@@ -135,9 +114,7 @@ export async function processSuccessfulPurchase(
 }
 
 /**
- * Initiates the payment flow using Wonder.app
- * This is intentionally a thin wrapper for now.
- * DO NOT implement the actual Wonder integration until explicitly asked.
+ * Initiates the payment flow using KPay.
  */
 export async function startCheckoutFlow(cart: OrderCart): Promise<{
   success: boolean;
@@ -145,12 +122,7 @@ export async function startCheckoutFlow(cart: OrderCart): Promise<{
   sessionId?: string;
   error?: string;
 }> {
-  // In a real implementation we would:
-  // 1. Call Wonder to create a payment session / link
-  // 2. Return a redirect URL that the client follows
-  // For now we return a placeholder that the checkout page will use.
-
-  const result = await initiateWonderPayment(cart);
+  const result = await initiateKpayPayment(cart);
 
   if (!result.success) {
     return { success: false, error: result.error };
@@ -170,7 +142,7 @@ export async function finalizeAfterPayment(
   sessionId: string,
   cart: OrderCart
 ): Promise<OrderCreationResult> {
-  const confirmation = await confirmWonderPayment(sessionId);
+  const confirmation = await confirmKpayPayment(sessionId);
 
   if (!confirmation.success || !confirmation.paymentReference) {
     return {

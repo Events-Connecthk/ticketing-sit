@@ -3,9 +3,8 @@
 import React, { useState } from "react";
 import { useRouter } from "next/navigation";
 import { TicketSelector } from "@/components/ticketing";
-import { BuyerForm } from "@/components/ticketing";
-import { loadEventBySlug } from "@/lib/config/events";
-import { EventConfig, TicketSelection, BuyerInfo, OrderCart } from "@/types";
+import { loadEventBySlug, getEffectivePrice } from "@/lib/config/events";
+import { EventConfig, TicketSelection, BuyerInfo, OrderCart, BuyerFormField } from "@/types";
 import { Calendar, MapPin, Users } from "lucide-react";
 
 /**
@@ -43,13 +42,31 @@ export default function EventPage({ params }: EventPageProps) {
     loadEventBySlug(eventSlug).then((loaded) => {
       setEvent(loaded);
       setEventLoading(false);
+      if (loaded) {
+        const hasTickets = loaded.ticketTypes && loaded.ticketTypes.length > 0;
+        const needsTicketSelection = hasTickets && loaded.paymentEnabled !== false;
+        setStep(needsTicketSelection ? "tickets" : "details");
+      }
     });
   }, [eventSlug]);
 
-  const [step, setStep] = useState<"tickets" | "details">("tickets");
+  const [step, setStep] = useState<"tickets" | "details">("details");
   const [selections, setSelections] = useState<TicketSelection[]>([]);
   const [buyer, setBuyer] = useState<BuyerInfo | null>(null);
+  const [customBuyerValues, setCustomBuyerValues] = useState<Record<string, string>>({});
+  const [discountCodeInput, setDiscountCodeInput] = useState("");
+  const [appliedDiscount, setAppliedDiscount] = useState<{ code: string; percent: number } | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+
+  React.useEffect(() => {
+    if (event) {
+      const has = event.ticketTypes && event.ticketTypes.length > 0;
+      const needs = has && event.paymentEnabled !== false;
+      if (!needs && step === "tickets") {
+        setStep("details");
+      }
+    }
+  }, [event, step]);
 
   if (!eventSlug || eventLoading) {
     return <div className="min-h-[60vh] flex items-center justify-center">Loading event...</div>;
@@ -79,12 +96,20 @@ export default function EventPage({ params }: EventPageProps) {
 
   const currency = availableTicketTypes[0]?.currency || "HKD";
 
-  const totalAmount = selections.reduce((sum, sel) => {
+  // Apply customizable discounts (early bird by date, group, student etc.)
+  const effectiveSelections = selections.map(sel => {
     const t = availableTicketTypes.find((tt) => tt.id === sel.ticketTypeId);
-    return sum + (t ? t.price * sel.quantity : 0);
-  }, 0);
+    if (!t) return { ...sel, effectivePrice: 0 };
+    const eff = getEffectivePrice(t, new Date(), sel.quantity);
+    return { ...sel, effectivePrice: eff.discounted, originalPrice: eff.original, discountName: eff.appliedDiscountName };
+  });
 
+  const totalAmount = effectiveSelections.reduce((sum, sel) => sum + (sel.effectivePrice || 0) * sel.quantity, 0);
   const totalTickets = selections.reduce((s, sel) => s + sel.quantity, 0);
+
+  // Order-level discount code (independent of ticket type)
+  const discountAmount = appliedDiscount ? Math.round(totalAmount * (appliedDiscount.percent / 100)) : 0;
+  const finalTotal = Math.max(0, totalAmount - discountAmount);
 
   const handleTicketChange = (newSelections: TicketSelection[]) => {
     setSelections(newSelections);
@@ -92,11 +117,12 @@ export default function EventPage({ params }: EventPageProps) {
 
   const handleBuyerSubmit = (data: BuyerInfo) => {
     setBuyer(data);
-    // Proceed to checkout immediately using the submitted data.
-    // This records the cart (in sessionStorage) and navigates to the checkout page.
-    // Note: We do NOT redirect back to the events/catalogue page here — that's for browsing.
-    // The purchase is recorded only after successful payment on the checkout page.
-    proceedToCheckout(data);
+    const hasTickets = event.ticketTypes && event.ticketTypes.length > 0;
+    if (hasTickets && event.paymentEnabled !== false) {
+      proceedToCheckout(data);
+    } else {
+      handleFreeRegistration(data);
+    }
   };
 
   const proceedToCheckout = async (buyerData?: BuyerInfo) => {
@@ -107,8 +133,10 @@ export default function EventPage({ params }: EventPageProps) {
       eventSlug: event.slug,
       tickets: selections,
       buyer: finalBuyer,
-      totalAmount,
+      totalAmount: event.paymentEnabled ? finalTotal : 0,
       currency,
+      appliedDiscountCode: appliedDiscount?.code,
+      discountAmount: discountAmount || undefined,
     };
 
     // Persist cart temporarily (checkout page will read it)
@@ -123,12 +151,52 @@ export default function EventPage({ params }: EventPageProps) {
     router.push(`/${event.slug}/checkout`);
   };
 
+  async function handleFreeRegistration(buyerData: BuyerInfo) {
+    const freeCart: OrderCart = {
+      eventSlug: event.slug,
+      tickets: selections,
+      buyer: buyerData,
+      totalAmount: 0,
+      currency: "FREE",
+    };
+
+    if (typeof window !== "undefined") {
+      sessionStorage.setItem("pendingCart", JSON.stringify(freeCart));
+    }
+
+    setIsLoading(true);
+
+    try {
+      // Process free registration directly
+      const { finalizeAfterPayment } = await import("@/lib/integrations/order.service");
+      const result = await finalizeAfterPayment("FREE-" + Date.now(), freeCart);
+      const ref = result.orderReference || "FREE-" + Date.now();
+      router.push(`/${event.slug}/success?ref=${ref}&amount=0`);
+    } catch (e) {
+      console.error(e);
+      alert("Registration failed. Please try again.");
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
   const goBackToTickets = () => {
     setStep("tickets");
   };
 
   return (
     <div className="min-h-screen" style={{ background: '#FAF8F5' }}>
+      {/* Optional Event Banner Image */}
+      {event.image && (
+        <div className="w-full overflow-hidden">
+          <img
+            src={event.image}
+            alt={`${event.name} banner`}
+            className="w-full h-48 md:h-64 lg:h-72 object-cover"
+          />
+        </div>
+      )}
+
       {/* Hero / Event Header - White Gold */}
       <div className="bg-white border-b border-[#EDE4D3]">
         <div className="max-w-4xl mx-auto px-6 pt-14 pb-10">
@@ -174,7 +242,7 @@ export default function EventPage({ params }: EventPageProps) {
                   currency={currency}
                 />
 
-                <div className="mt-8">
+                <div className="mt-6">
                   <button
                     onClick={() => {
                       if (totalTickets > 0) setStep("details");
@@ -182,7 +250,7 @@ export default function EventPage({ params }: EventPageProps) {
                     disabled={totalTickets === 0}
                     className="btn-gold w-full rounded-xl py-4 font-medium text-lg disabled:opacity-60 disabled:cursor-not-allowed"
                   >
-                    {totalTickets > 0 ? `Continue with ${totalTickets} ticket${totalTickets > 1 ? "s" : ""}` : "Select tickets to continue"}
+                    {totalTickets > 0 ? (event.paymentEnabled ? "Proceed to Checkout" : "Register for Free") : "Select tickets to continue"}
                   </button>
                 </div>
               </>
@@ -194,12 +262,107 @@ export default function EventPage({ params }: EventPageProps) {
                 </div>
 
                 <div className="rounded-2xl border bg-white p-6">
-                  <BuyerForm
-                    defaultValues={buyer || undefined}
-                    onSubmit={handleBuyerSubmit}
-                    onBack={goBackToTickets}
-                    submitLabel="Review & Continue to Payment"
-                  />
+                  <form onSubmit={(e) => {
+                    e.preventDefault();
+                    const base: BuyerInfo = {
+                      name: (document.getElementById('buyer-name') as HTMLInputElement)?.value || '',
+                      phone: (document.getElementById('buyer-phone') as HTMLInputElement)?.value || '',
+                      email: (document.getElementById('buyer-email') as HTMLInputElement)?.value || '',
+                      customFields: { ...customBuyerValues },
+                    };
+                    handleBuyerSubmit(base);
+                  }} className="space-y-5">
+                    {/* Always include core fields */}
+                    <div>
+                      <label className="block text-sm font-medium mb-1">Full Name</label>
+                      <input id="buyer-name" type="text" required className="w-full border rounded-lg px-3 py-2" defaultValue={buyer?.name} />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-1">Phone</label>
+                      <input id="buyer-phone" type="tel" required className="w-full border rounded-lg px-3 py-2" defaultValue={buyer?.phone} />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-1">Email</label>
+                      <input id="buyer-email" type="email" required className="w-full border rounded-lg px-3 py-2" defaultValue={buyer?.email} />
+                    </div>
+
+                    {/* Custom per-event fields from admin */}
+                    {(event.buyerFormFields || []).map(field => (
+                      <div key={field.id}>
+                        <label className="block text-sm font-medium mb-1">{field.label} {field.required && '*'}</label>
+                        {field.type === 'select' ? (
+                          <select
+                            className="w-full border rounded-lg px-3 py-2"
+                            required={field.required}
+                            value={customBuyerValues[field.id] || ''}
+                            onChange={e => setCustomBuyerValues(prev => ({...prev, [field.id]: e.target.value}))}
+                          >
+                            <option value="">Select...</option>
+                            {(field.options || []).map(opt => <option key={opt} value={opt}>{opt}</option>)}
+                          </select>
+                        ) : field.type === 'textarea' ? (
+                          <textarea
+                            className="w-full border rounded-lg px-3 py-2"
+                            required={field.required}
+                            placeholder={field.placeholder}
+                            value={customBuyerValues[field.id] || ''}
+                            onChange={e => setCustomBuyerValues(prev => ({...prev, [field.id]: e.target.value}))}
+                          />
+                        ) : (
+                          <input
+                            type={field.type === 'email' ? 'email' : field.type === 'tel' ? 'tel' : 'text'}
+                            className="w-full border rounded-lg px-3 py-2"
+                            required={field.required}
+                            placeholder={field.placeholder}
+                            value={customBuyerValues[field.id] || ''}
+                            onChange={e => setCustomBuyerValues(prev => ({...prev, [field.id]: e.target.value}))}
+                          />
+                        )}
+                      </div>
+                    ))}
+
+                    {/* Promo / Discount Code (event level) */}
+                    {event.discountCodes && event.discountCodes.length > 0 && (
+                      <div className="pt-2 border-t">
+                        <label className="block text-sm font-medium mb-1">Discount Code (optional)</label>
+                        <div className="flex gap-2">
+                          <input
+                            value={discountCodeInput}
+                            onChange={(e) => setDiscountCodeInput(e.target.value.toUpperCase())}
+                            placeholder="e.g. SUMMER20"
+                            className="flex-1 border rounded-lg px-3 py-2 font-mono text-sm"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const code = discountCodeInput.trim().toUpperCase();
+                              if (!code) return;
+                              const match = (event.discountCodes || []).find(dc => dc.code.toUpperCase() === code);
+                              if (match) {
+                                setAppliedDiscount({ code: match.code, percent: match.percent });
+                              } else {
+                                alert("Invalid or expired discount code.");
+                              }
+                            }}
+                            className="px-4 py-2 border rounded-lg text-sm hover:bg-white"
+                          >
+                            Apply
+                          </button>
+                        </div>
+                        {appliedDiscount && (
+                          <div className="mt-1 text-xs text-emerald-600">
+                            ✓ {appliedDiscount.code} applied (-{appliedDiscount.percent}%)
+                            <button className="ml-2 text-zinc-500 underline" onClick={() => { setAppliedDiscount(null); setDiscountCodeInput(""); }}>Remove</button>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    <div className="flex gap-3 pt-2">
+                      <button type="button" onClick={goBackToTickets} className="flex-1 rounded-lg border py-3 font-medium">Back</button>
+                      <button type="submit" className="btn-gold flex-1 rounded-lg py-3 font-medium">{event.paymentEnabled ? "Proceed to Checkout" : "Register for Free"}</button>
+                    </div>
+                  </form>
                 </div>
               </>
             )}
@@ -213,22 +376,29 @@ export default function EventPage({ params }: EventPageProps) {
 
                 {totalTickets > 0 ? (
                   <div className="space-y-2 text-sm">
-                    {selections.map((sel, idx) => {
+                    {effectiveSelections.map((sel: any, idx) => {
                       const type = availableTicketTypes.find((t) => t.id === sel.ticketTypeId);
                       if (!type) return null;
+                      const isDiscounted = sel.effectivePrice && sel.effectivePrice < (sel.originalPrice || type.price);
                       return (
                         <div key={idx} className="flex justify-between">
-                          <span>{type.name} × {sel.quantity}</span>
+                          <span>{type.name} × {sel.quantity}{sel.discountName ? ` (${sel.discountName})` : ''}</span>
                           <span className="font-medium tabular-nums">
-                            {currency} {type.price * sel.quantity}
+                            {isDiscounted && <span className="line-through text-xs text-zinc-400 mr-1">{currency} {sel.originalPrice! * sel.quantity}</span>}
+                            {currency} {sel.effectivePrice! * sel.quantity}
                           </span>
                         </div>
                       );
                     })}
                     <div className="border-t pt-3 mt-2 flex justify-between font-semibold">
                       <span>Total</span>
-                      <span>{currency} {totalAmount}</span>
+                      <span>{currency} {event.paymentEnabled ? finalTotal : 0}</span>
                     </div>
+                    {appliedDiscount && (
+                      <div className="text-xs text-emerald-600 text-right">
+                        {appliedDiscount.code} (-{appliedDiscount.percent}%)
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <p className="text-sm text-zinc-500">No tickets selected yet.</p>
@@ -245,7 +415,7 @@ export default function EventPage({ params }: EventPageProps) {
               )}
 
               <div className="text-xs text-zinc-500 px-1">
-                Secure checkout powered by Wonder. All sales final unless otherwise stated.
+                Secure checkout powered by KPay. All sales final unless otherwise stated.
               </div>
             </div>
           </div>

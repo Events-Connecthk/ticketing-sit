@@ -1,15 +1,15 @@
 # Ticketing System SIT
 
-Professional, production-ready, highly modular ticketing platform built with Next.js 15, TypeScript, and Tailwind.
+Professional event ticketing platform built with Next.js 15, TypeScript, and Tailwind CSS.
 
-**Standalone first.** A button on any WordPress (or other) site can simply redirect users here to complete their purchase. Optional integration exists to push the resulting order back into WooCommerce.
+A clean, standalone solution for selling and managing event tickets.
 
 ## Key Principles
 
 - **Standalone by default**: Core ticketing flow works with zero external dependencies.
 - **Modular by design**: All external integrations (payment, orders, email, DB) are abstracted.
 - **Configuration driven**: Events are fully managed in the Admin UI. Environment variables drive integrations.
-- **No vendor lock-in**: Can support different WordPress sites or replace Wonder with another provider.
+- **No vendor lock-in**: Can support different payment providers (currently using KPay).
 
 ## Demo Event
 
@@ -19,7 +19,7 @@ It can be fully edited or deleted in the Admin → Manage Events tab. You can st
 
 ## Core User Flow (Standalone)
 
-Users typically arrive via a redirect from your WordPress "Buy Ticket" button.
+Users arrive directly via the event catalogue.
 
 1. `/{eventSlug}` (e.g. `/at-the-peak`)
    - Event details loaded from DB (or demo fallback)
@@ -29,10 +29,9 @@ Users typically arrive via a redirect from your WordPress "Buy Ticket" button.
 
 2. `/[eventSlug]/checkout`
    - Order summary
-   - "Pay with Wonder" button (currently simulated)
+   - "Pay with KPay" button (currently simulated)
 
 3. Simulated payment → full post-payment pipeline runs:
-   - (Optional) Create order in WooCommerce (if WP keys configured)
    - Save purchase record (Supabase or in-memory)
    - Generate PDF ticket (via @react-pdf/renderer)
    - Send confirmation email with PDF (Resend or console sim)
@@ -40,12 +39,12 @@ Users typically arrive via a redirect from your WordPress "Buy Ticket" button.
 
 4. `/[eventSlug]/success` — Shows confirmation + order ref. PDF can be re-downloaded.
 
-5. Admin (`/admin`, password-protected)
+5. Admin (`/sit-admin`, password-protected)
    - Purchases tab: view, search, export (Excel/CSV)
    - Manage Events tab: full CRUD + per-event enable/disable + per-ticket-type enable/disable
    - "At The Peak" (or any event) can be completely deleted
 
-The entire platform runs independently. WooCommerce sync is purely optional.
+The entire platform runs independently.
 
 ## Folder Structure (as specified)
 
@@ -62,8 +61,7 @@ components/
 lib/
   integrations/
     order.service.ts     ← Core orchestration
-    woocommerce.ts
-    wonder.ts            ← Stubbed (see note below)
+    kpay.ts              ← Stubbed (see note below)
     email.ts
   config/
     events.ts
@@ -95,24 +93,19 @@ See `.env.example`. Most integrations gracefully degrade when keys are missing (
 
 ## Important Notes About Integrations
 
-**Wonder.app Payment Integration**
+**KPay Payment Integration**
 
-The actual payment integration with Wonder.app is **intentionally stubbed**.
+The actual payment integration with KPay is currently stubbed for development.
 
-The current checkout page has a "Simulate Successful Payment" flow that:
-- Calls the stub in `lib/integrations/wonder.ts`
+The current checkout page has a simulation flow that:
+- Calls the stub in `lib/integrations/kpay.ts`
 - Runs the full post-payment pipeline via `order.service.ts`
 
-To enable the real integration:
-- Ask the developer to implement the real Wonder flow
-- Provide the real API keys and any required webhook endpoints
+To enable the real KPay integration:
+- Provide the KPay API key / merchant ID
+- We can implement the real flow (redirect + confirmation) when ready.
 
-**WooCommerce (Optional)**
-
-When `WP_SITE_URL`, `WC_CONSUMER_KEY`, and `WC_CONSUMER_SECRET` are set, real orders are created in your external WordPress site after payment.
-If the keys are missing, a simulated `DEV-` order reference is used so the rest of the flow (PDF, email, purchase record) can still be tested.
-
-The platform is designed to be used standalone. WP is only needed if you want order data mirrored back into your original site.
+The platform is designed to be fully standalone. No external order syncing is required.
 
 **Database**
 
@@ -141,15 +134,53 @@ EVENTS[newEvent.slug] = newEvent;
 
 Create any additional pages or customizations under `app/(public)/[new-slug]`.
 
+## Remaining Tasks / TODOs
+
+### Core Features
+- [x] Full checkout → payment sim → success + PDF download flow
+- [x] Background PDF/email processing (immediate redirect, no stuck UI)
+- [x] QR codes on tickets linking to safe public check page
+- [x] Admin-only redemption via scanner (camera + manual) that updates DB + admin + exports
+- [ ] Implement real KPay payment integration (currently simulation only)
+- [ ] Finish Canva-designed PDF template (place your exported PDF at public/ticket-template.pdf)
+
+### Reliability & Data
+- [x] Purchases always backup to memory + merge (appear even on Supabase errors)
+- [x] Scanner redemptions persist via proper update (no more duplicate keys)
+- [ ] Fix Supabase "Failed to fetch" errors in the browser (check your NEXT_PUBLIC_ keys + full restart)
+- [ ] Resolve any lingering "Multiple GoTrueClient instances" Supabase warnings
+- [x] Removed all legacy WooCommerce code/files
+
+### Admin & Security
+- [x] Public QR scan is read-only (safe for anyone)
+- [x] Redemption gated behind admin password (server-side verification)
+- [x] Basic security headers added
+- [ ] Replace simple password gate with proper authentication (NextAuth, Supabase Auth, etc.)
+- [ ] Implement proper Supabase Row Level Security (RLS) policies
+- [ ] Add more loading states, error toasts, and better UX in admin/scanner
+
+### Production Readiness
+- [ ] Set up real email sending with Resend (currently simulated)
+- [ ] Add rate limiting / abuse protection
+- [ ] Proper logging / monitoring (e.g. Sentry)
+- [ ] Full production deployment prep (env, domain, etc.)
+
+### Polish & UX
+- [x] Scanner tab with live camera QR scanning
+- [ ] Make PDF generation more robust / move to server route if client issues appear
+- [ ] Improve empty states, disabled events handling, better loading spinners
+- [ ] Update documentation / README (in progress)
+
 ## Production Checklist
 
-- [ ] Replace simple admin auth with proper authentication
-- [ ] Configure real Wonder.app integration + webhooks
-- [ ] Set up Supabase table + Row Level Security (or equivalent)
-- [ ] Configure production email domain + Resend
-- [ ] Add rate limiting / CSRF on sensitive routes
-- [ ] Set proper CORS / allowed origins for WordPress redirects
-- [ ] Add logging / error monitoring (Sentry, etc.)
+- [ ] Replace simple admin password with proper auth (middleware + sessions or Supabase Auth)
+- [ ] Implement real KPay + webhooks (when you have the keys)
+- [ ] Enable + test Supabase RLS policies
+- [ ] Configure real Resend + verified sending domain
+- [ ] Add rate limiting, better input validation, CSRF where needed
+- [ ] Add logging / observability
+- [ ] Complete Canva ticket template
+- [ ] Production build + deployment testing
 
 ## License
 
