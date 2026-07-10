@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { getPurchaseByReference } from "@/app/sit-admin/actions";
+import { formatHkDateTime } from "@/lib/time/hk";
 
 interface ScanClientProps {
   searchParams: Promise<{ ref?: string }>;
@@ -59,7 +60,6 @@ export default function ScanClient({ searchParams }: ScanClientProps) {
           const count = p.redemptions?.length || (p.redeemed_at ? 1 : 0);
           if (count > 0) {
             const latest = (p.redemptions?.[p.redemptions.length - 1] || p.redeemed_at) as string;
-            const { formatHkDateTime } = await import("@/lib/time/hk");
             setMessage(
               `Order redeemed ${count} time${count > 1 ? "s" : ""} (last: ${formatHkDateTime(latest)} HK)`
             );
