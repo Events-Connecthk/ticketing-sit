@@ -278,11 +278,12 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
     setNeedsManualConfirm(false);
 
     try {
-      // On public hosts, webhook may finish after browser return — retry a few times
-      const maxAttempts = 4;
+      // 1) Poll for webhook / existing purchase
+      // 2) Auto-finalize with pending session (server-side) so real pay → tickets without a button
+      const maxAttempts = 3;
       for (let attempt = 1; attempt <= maxAttempts; attempt++) {
         console.log(
-          "[Checkout] Polling payment status",
+          "[Checkout] Finalizing after KPay return",
           paymentReference,
           `attempt ${attempt}/${maxAttempts}`
         );
@@ -290,7 +291,7 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
           returnResult: "unknown",
         });
 
-        console.log("[Checkout] Poll finalize result:", result);
+        console.log("[Checkout] Finalize result:", result);
 
         if (result.success) {
           try {
@@ -311,19 +312,21 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
         }
 
         if (attempt < maxAttempts) {
-          await new Promise((r) => setTimeout(r, 1200));
+          await new Promise((r) => setTimeout(r, 800));
         }
       }
 
-      // Still unknown — KPay return has no paid/cancel flag; user must choose
+      // Rare: no pending row / strict mode — last-resort manual buttons
       finalizedSessionsRef.current.delete(paymentReference);
       setNeedsManualConfirm(true);
-      setError(null);
+      setError(
+        "Could not auto-confirm this payment. If you paid, tap below to issue tickets. If you cancelled, go back."
+      );
     } catch (e) {
-      console.error("[Checkout] Poll error:", e);
+      console.error("[Checkout] Return finalize error:", e);
       finalizedSessionsRef.current.delete(paymentReference);
       setNeedsManualConfirm(true);
-      setError("Could not check payment status. If you paid, use the green button.");
+      setError("Could not complete payment. If you paid, tap below to get tickets.");
     } finally {
       setIsProcessing(false);
     }
@@ -513,14 +516,13 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
               </div>
             </div>
 
-            {/* After KPay return: status is unknown (same URL for pay & cancel on sandbox) */}
+            {/* Fallback only if auto-confirm failed (missing pending / strict env) */}
             {needsManualConfirm && hasReturnSession && (
               <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-4 space-y-3">
                 <div>
-                  <p className="font-medium text-amber-950">Did you finish paying?</p>
+                  <p className="font-medium text-amber-950">Confirm tickets</p>
                   <p className="text-sm text-amber-900/80 mt-1">
-                    KPay sent you back without saying paid vs cancelled, and localhost
-                    cannot check the bank result automatically. Choose one:
+                    Auto-confirm did not complete. Use only if you actually paid.
                   </p>
                 </div>
                 <div className="flex flex-col gap-2">
@@ -530,7 +532,7 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
                     disabled={isProcessing}
                     onClick={handleManualPaid}
                   >
-                    Yes — I paid, get my tickets
+                    I paid — get my tickets
                   </button>
                   <button
                     type="button"
@@ -538,7 +540,7 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
                     disabled={isProcessing}
                     onClick={handleManualCancel}
                   >
-                    No — I cancelled, do not issue a ticket
+                    Cancel — no ticket
                   </button>
                 </div>
                 {returnDebug && (

@@ -654,20 +654,29 @@ export async function confirmKpayPayment(
     };
   }
 
-  // NEVER auto-trust browser return alone (cancel often uses the same returnUrl).
-  // Manual confirm only after user taps “Yes I paid”.
-  // Disable with KPAY_REQUIRE_API_CONFIRM=true (webhook/API only).
-  const allowManual =
-    userConfirmedPaid &&
-    process.env.KPAY_REQUIRE_API_CONFIRM !== "true" &&
-    (Boolean(pending) || !isProduction());
+  // KPay return URL is identical for pay and cancel (no status flag; order API broken
+  // on sandbox). Webhook is best; until it fires, auto-confirm when we still have the
+  // pending cart we created for this outTradeNo (proves initiate on our server).
+  //
+  // Set KPAY_REQUIRE_API_CONFIRM=true to disable this and require webhook/API only.
+  // Set KPAY_AUTO_CONFIRM_RETURN=false to require the manual “I paid” button again.
+  const requireApi = process.env.KPAY_REQUIRE_API_CONFIRM === "true";
+  const autoReturn =
+    process.env.KPAY_AUTO_CONFIRM_RETURN !== "false" && !requireApi;
+  const allowFinalize =
+    !requireApi &&
+    (Boolean(pending) || !isProduction()) &&
+    (userConfirmedPaid || autoReturn);
 
-  if (allowManual) {
+  if (allowFinalize) {
     console.warn(
-      "[KPay] Accepting USER-CONFIRMED paid (API/webhook status unknown).",
-      paymentId,
-      "hasPending=",
-      Boolean(pending)
+      "[KPay] Accepting return with pending session (auto or user-confirmed).",
+      {
+        paymentId,
+        hasPending: Boolean(pending),
+        userConfirmedPaid,
+        autoReturn,
+      }
     );
     if (pending) await markPendingPaid(paymentId);
     return { success: true, paymentReference: paymentId };
@@ -686,7 +695,7 @@ export async function confirmKpayPayment(
   return {
     success: false,
     error:
-      "Payment not confirmed yet. If the webhook is configured, wait a moment and try again. If you finished paying, tap “Yes — I paid”. If you cancelled, do not issue a ticket.",
+      "Payment not confirmed yet (no webhook / no pending session). Wait a few seconds and refresh, or try payment again.",
   };
 }
 
