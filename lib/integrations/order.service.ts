@@ -127,7 +127,13 @@ export async function processSuccessfulPurchase(
     // Fire and forget the heavy parts (PDF + email) so redirect isn't blocked
     (async () => {
       try {
-        const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000';
+        const baseUrl = (
+          process.env.NEXT_PUBLIC_SITE_URL ||
+          (process.env.VERCEL_PROJECT_PRODUCTION_URL
+            ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL.replace(/^https?:\/\//, "")}`
+            : "") ||
+          "http://localhost:3000"
+        ).replace(/\/$/, "");
         const downloadUrl = cart.totalAmount > 0 
           ? `${baseUrl}/${event.slug}/success?ref=${orderReference}&amount=${cart.totalAmount}` 
           : undefined;

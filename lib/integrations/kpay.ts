@@ -108,12 +108,22 @@ function hasCredentials(): boolean {
 
 /**
  * Public site origin for returnUrl / notifyUrl / email links.
- * Vercel: set NEXT_PUBLIC_SITE_URL=https://your-app.vercel.app (preferred).
- * Falls back to https://$VERCEL_URL when not set.
+ * Prefer stable production domain — never the random per-deploy URL if we can avoid it.
+ *
+ * Priority:
+ * 1) NEXT_PUBLIC_SITE_URL (set in Vercel env, then Redeploy)
+ * 2) VERCEL_PROJECT_PRODUCTION_URL (e.g. ticketing-sit.vercel.app)
+ * 3) VERCEL_URL (deployment-specific; last resort)
  */
 function siteOrigin(): string {
   const explicit = (process.env.NEXT_PUBLIC_SITE_URL || "").trim();
   if (explicit) return explicit.replace(/\/$/, "");
+
+  const prodHost = (process.env.VERCEL_PROJECT_PRODUCTION_URL || "").trim();
+  if (prodHost) {
+    const host = prodHost.replace(/^https?:\/\//, "").replace(/\/$/, "");
+    return `https://${host}`;
+  }
 
   const vercel = (process.env.VERCEL_URL || "").trim();
   if (vercel) {
