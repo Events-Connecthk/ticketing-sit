@@ -148,8 +148,18 @@ function buildOutTradeNo(): string {
 async function kpayRequest<T = any>(
   method: "GET" | "POST",
   path: string,
-  body?: Record<string, unknown>
-): Promise<{ ok: boolean; status: number; data: T | null; raw: string; error?: string }> {
+  body?: Record<string, unknown>,
+  opts?: { logFullExchange?: boolean }
+): Promise<{
+  ok: boolean;
+  status: number;
+  data: T | null;
+  raw: string;
+  error?: string;
+  requestUrl?: string;
+  requestHeaders?: Record<string, string>;
+  requestBody?: string;
+}> {
   const url = `${API_BASE}${path.startsWith("/") ? path : `/${path}`}`;
   const rawBody = body ? JSON.stringify(body) : "";
   const timestamp = Date.now().toString();
@@ -202,7 +212,48 @@ async function kpayRequest<T = any>(
       // non-JSON
     }
 
-    return { ok: res.ok, status: res.status, data, raw };
+    if (opts?.logFullExchange) {
+      // Full evidence pack for KPay support (signature is not a private key)
+      console.log(
+        "[KPay] FULL REQUEST/RESPONSE for support\n" +
+          JSON.stringify(
+            {
+              request: {
+                method,
+                url,
+                headers: {
+                  ...headers,
+                  // Keep signature so KPay can match the call; do not log private key
+                  "K-Signature": headers["K-Signature"]
+                    ? `${headers["K-Signature"].slice(0, 24)}…(len=${headers["K-Signature"].length})`
+                    : undefined,
+                },
+                // Full signature in separate field if they need to verify exact call
+                headersFull: headers,
+                body: body ?? null,
+                bodyRaw: rawBody,
+              },
+              response: {
+                httpStatus: res.status,
+                bodyRaw: raw,
+                bodyJson: data,
+              },
+            },
+            null,
+            2
+          )
+      );
+    }
+
+    return {
+      ok: res.ok,
+      status: res.status,
+      data,
+      raw,
+      requestUrl: url,
+      requestHeaders: headers,
+      requestBody: rawBody,
+    };
   } catch (err) {
     console.error("[KPay] request error:", err);
     return {
@@ -413,28 +464,35 @@ export async function initiateKpayPayment(
         orderNo?: string;
         [k: string]: unknown;
       };
-    }>("POST", "/v1/payment/web/managed", body);
+    }>("POST", "/v1/payment/web/managed", body, { logFullExchange: true });
 
     const code = Number((result.data as any)?.code);
     const paymentUrl = (result.data as any)?.data?.paymentUrl as
       | string
       | undefined;
+    const managedOrderNo = String(
+      (result.data as any)?.data?.managedOrderNo ||
+        (result.data as any)?.data?.orderNo ||
+        ""
+    );
 
     if (code === SUCCESS_CODE && paymentUrl) {
       await savePendingPayment(outTradeNo, cart, {
         paymentUrl,
-        managedOrderNo: String(
-          (result.data as any)?.data?.managedOrderNo ||
-            (result.data as any)?.data?.orderNo ||
-            ""
-        ),
+        managedOrderNo,
       });
 
-      console.log("[KPay] Payment created", {
+      console.log("[KPay] Payment created (share with KPay support)", {
         outTradeNo,
+        managedOrderNo: managedOrderNo || null,
         returnUrl: body.returnUrl,
         notifyUrl: body.notifyUrl,
-        origin: origin,
+        origin,
+        responseCode: code,
+        // KPay often indexes by managedOrderNo / orderNo, not only merchant outTradeNo
+        responseDataKeys: result.data
+          ? Object.keys((result.data as any).data || {})
+          : [],
       });
 
       return {

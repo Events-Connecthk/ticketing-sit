@@ -280,16 +280,29 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
 
     try {
       // Wait for webhook (only real paid proof). Cancel never gets a paid webhook → no tickets.
-      console.log("[Checkout] Checking payment / webhook for", paymentReference);
+      // Intermediate page: wait for notifyUrl (KPay recommended flow)
+      setError(null);
+      console.log(
+        "[Checkout] Waiting for transaction result / webhook for",
+        paymentReference
+      );
       try {
         const dbg = await getKpaySessionDebug(paymentReference);
         console.log("[Checkout] Session debug:", dbg);
       } catch (e) {
         console.warn("[Checkout] Session debug failed", e);
       }
-      const result = await finalizeAfterPayment(paymentReference, usedCart, {
+
+      // Poll several times — do not treat return URL alone as paid
+      let result = await finalizeAfterPayment(paymentReference, usedCart, {
         returnResult: "unknown",
       });
+      for (let i = 0; i < 4 && !result.success; i++) {
+        await new Promise((r) => setTimeout(r, 2000));
+        result = await finalizeAfterPayment(paymentReference, usedCart, {
+          returnResult: "unknown",
+        });
+      }
 
       console.log("[Checkout] Finalize result:", JSON.stringify(result));
 
