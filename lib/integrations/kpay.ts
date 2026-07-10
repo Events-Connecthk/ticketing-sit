@@ -678,41 +678,23 @@ export async function confirmKpayPayment(
 
   const requireApi = process.env.KPAY_REQUIRE_API_CONFIRM === "true";
 
-  // 1) User tapped “I paid” — always allow (client has cart). Production bug before:
-  //    required pending row which often missing → green button did nothing useful.
+  // ONLY safe non-webhook path: user explicitly tapped “I paid”.
+  // Never auto-trust bare return — KPay cancel and success share the same URL
+  // (?session=…&language=en_US), so auto-finalize issues free tickets on cancel.
   if (userConfirmedPaid && !requireApi) {
     console.warn("[KPay] USER confirmed paid — finalizing", paymentId);
     if (pending) await markPendingPaid(paymentId);
     return { success: true, paymentReference: paymentId };
   }
 
-  // 2) Explicit env force
+  // Explicit opt-in only (not default) — will free-ticket on cancel
   if (process.env.KPAY_AUTO_CONFIRM_RETURN === "true" && !requireApi) {
-    console.warn("[KPay] KPAY_AUTO_CONFIRM_RETURN — finalizing", paymentId);
+    console.warn("[KPay] KPAY_AUTO_CONFIRM_RETURN=true — finalizing", paymentId);
     if (pending) await markPendingPaid(paymentId);
     return { success: true, paymentReference: paymentId };
   }
 
-  // 3) Sandbox Day-1: KPay rarely delivers webhooks; return URL has no status.
-  //    If we still have the pending order we created, accept return as paid so
-  //    test-card success can complete. Cancel may false-positive if same URL.
-  //    Disable: KPAY_SANDBOX_TRUST_RETURN=false
-  const sandboxTrust =
-    isSandboxApi() &&
-    process.env.KPAY_SANDBOX_TRUST_RETURN !== "false" &&
-    !requireApi &&
-    Boolean(pending);
-
-  if (sandboxTrust) {
-    console.warn(
-      "[KPay] Sandbox trust return (pending exists, no webhook). Finalizing",
-      paymentId
-    );
-    await markPendingPaid(paymentId);
-    return { success: true, paymentReference: paymentId };
-  }
-
-  console.warn("[KPay] Refusing finalize", {
+  console.warn("[KPay] Refusing finalize (need webhook or user confirm)", {
     paymentId,
     returnResult,
     userConfirmedPaid,
@@ -722,7 +704,7 @@ export async function confirmKpayPayment(
   return {
     success: false,
     error:
-      "Payment not confirmed (no webhook). If you paid with the test card, tap “I paid — get my tickets”. If you cancelled, tap “I cancelled”.",
+      "Payment not confirmed (KPay did not notify paid vs cancel). If you completed payment, tap “I paid — get my tickets”. If you cancelled, tap “I cancelled — no ticket”.",
   };
 }
 

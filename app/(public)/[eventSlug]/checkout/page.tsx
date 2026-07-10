@@ -515,11 +515,11 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
             {needsManualConfirm && hasReturnSession && (
               <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-4 space-y-3">
                 <div>
-                  <p className="font-medium text-amber-950">Payment status unknown</p>
+                  <p className="font-medium text-amber-950">Confirm payment result</p>
                   <p className="text-sm text-amber-900/80 mt-1">
-                    KPay does not tell us paid vs cancelled on return. Real pays should
-                    auto-confirm via webhook. If you paid and nothing happened, use green.
-                    If you cancelled, use grey — do not issue a ticket.
+                    KPay returned without a paid/cancel flag and did not send a usable
+                    webhook status. This is expected on their sandbox until notify/status
+                    APIs work. Choose correctly:
                   </p>
                 </div>
                 <div className="flex flex-col gap-2">
