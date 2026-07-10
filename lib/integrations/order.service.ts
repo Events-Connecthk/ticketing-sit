@@ -183,6 +183,19 @@ export async function startCheckoutFlow(cart: OrderCart): Promise<{
 }
 
 /**
+ * Recover cart after KPay return when sessionStorage is empty
+ * (new tab, cleared storage, or mobile browser). Uses durable pending row.
+ */
+export async function getPendingCartForSession(
+  sessionId: string
+): Promise<OrderCart | null> {
+  if (!sessionId) return null;
+  const { getPendingPayment } = await import("./pending-payments");
+  const pending = await getPendingPayment(sessionId);
+  return pending?.cart || null;
+}
+
+/**
  * Helper used after redirect from KPay (or webhook).
  * Calls confirmKpayPayment then runs the full success pipeline (save purchase, email, PDF).
  */

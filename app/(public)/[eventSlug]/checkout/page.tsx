@@ -5,7 +5,11 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { OrderSummary } from "@/components/ticketing";
 import { OrderCart } from "@/types";
 import { loadEventBySlug } from "@/lib/config/events";
-import { startCheckoutFlow, finalizeAfterPayment } from "@/lib/integrations/order.service";
+import {
+  startCheckoutFlow,
+  finalizeAfterPayment,
+  getPendingCartForSession,
+} from "@/lib/integrations/order.service";
 import { ArrowLeft, CreditCard } from "lucide-react";
 
 /**
@@ -74,6 +78,9 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
 
   const [cart, setCart] = useState<OrderCart | null>(null);
   const [event, setEvent] = useState<any>(null);
+  const [cartLoadState, setCartLoadState] = useState<"loading" | "ready" | "missing">(
+    "loading"
+  );
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   /** After return from KPay when status is unknown — show confirm/cancel buttons */
@@ -86,41 +93,89 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
     params.then((p) => setEventSlug(p.eventSlug));
   }, [params]);
 
-  // Load cart from storage (including KPay return keyed by outTradeNo)
+  // Load cart: sessionStorage first, then durable server pending (Vercel return)
   useEffect(() => {
     if (!eventSlug) return;
 
-    const session =
-      searchParams.get("session") ||
-      searchParams.get("outTradeNo") ||
-      searchParams.get("out_trade_no");
+    let cancelled = false;
 
-    const candidates = [
-      session ? sessionStorage.getItem(`kpay_cart_${session}`) : null,
-      sessionStorage.getItem("pendingCart"),
-    ];
+    async function loadCart() {
+      const session =
+        searchParams.get("session") ||
+        searchParams.get("outTradeNo") ||
+        searchParams.get("out_trade_no");
 
-    for (const stored of candidates) {
-      if (!stored) continue;
-      try {
-        const parsed = JSON.parse(stored) as OrderCart;
-        if (parsed.eventSlug === eventSlug) {
-          setCart(parsed);
-          return;
+      const candidates = [
+        session ? sessionStorage.getItem(`kpay_cart_${session}`) : null,
+        sessionStorage.getItem("pendingCart"),
+      ];
+
+      for (const stored of candidates) {
+        if (!stored) continue;
+        try {
+          const parsed = JSON.parse(stored) as OrderCart;
+          if (parsed.eventSlug === eventSlug) {
+            if (!cancelled) {
+              setCart(parsed);
+              setCartLoadState("ready");
+            }
+            return;
+          }
+        } catch {
+          // ignore
         }
-      } catch {
-        // ignore
+      }
+
+      // Returning from KPay with session but storage empty → recover from Supabase pending
+      if (session) {
+        try {
+          const recovered = await getPendingCartForSession(session);
+          if (cancelled) return;
+          if (recovered && recovered.eventSlug === eventSlug) {
+            setCart(recovered);
+            setCartLoadState("ready");
+            try {
+              sessionStorage.setItem(`kpay_cart_${session}`, JSON.stringify(recovered));
+              sessionStorage.setItem("pendingCart", JSON.stringify(recovered));
+            } catch {
+              /* ignore */
+            }
+            return;
+          }
+        } catch (e) {
+          console.warn("[Checkout] Server cart recover failed:", e);
+        }
+        if (!cancelled) setCartLoadState("missing");
+        return;
+      }
+
+      // Fresh visit, no cart → back to event
+      if (!cancelled) {
+        setCartLoadState("missing");
+        router.replace(`/${eventSlug}`);
       }
     }
 
-    if (!session) {
-      router.replace(`/${eventSlug}`);
-    }
+    void loadCart();
+    return () => {
+      cancelled = true;
+    };
   }, [eventSlug, router, searchParams]);
+
+  const [eventLoadFailed, setEventLoadFailed] = useState(false);
 
   useEffect(() => {
     if (!eventSlug) return;
-    loadEventBySlug(eventSlug).then(setEvent);
+    setEventLoadFailed(false);
+    loadEventBySlug(eventSlug)
+      .then((ev) => {
+        if (ev) setEvent(ev);
+        else setEventLoadFailed(true);
+      })
+      .catch((e) => {
+        console.error("[Checkout] loadEvent failed:", e);
+        setEventLoadFailed(true);
+      });
   }, [eventSlug]);
 
   // Handle return from KPay
@@ -172,10 +227,44 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams, cart]);
 
-  if (!eventSlug || !event || !cart) {
+  if (eventSlug && (cartLoadState === "missing" || eventLoadFailed)) {
+    const session =
+      searchParams.get("session") || searchParams.get("outTradeNo") || "";
     return (
-      <div className="min-h-[60vh] flex items-center justify-center">
-        Loading checkout...
+      <div className="min-h-[60vh] flex items-center justify-center px-6">
+        <div className="max-w-md w-full rounded-2xl border bg-white p-6 space-y-4 text-center">
+          <h1 className="text-xl font-semibold">
+            {eventLoadFailed ? "Event not found" : "Payment returned"}
+          </h1>
+          <p className="text-sm text-zinc-600">
+            {eventLoadFailed
+              ? `Could not load event “${eventSlug}”. Check the URL or admin events.`
+              : session
+                ? "We could not restore your cart for this session. If you cancelled, no ticket was issued. If you paid, check your email or try again from the event page."
+                : "No cart found for checkout."}
+          </p>
+          {session && (
+            <p className="text-xs font-mono text-zinc-400 break-all">session={session}</p>
+          )}
+          <button
+            type="button"
+            className="btn-gold w-full rounded-xl py-3 font-medium"
+            onClick={() => router.replace(eventLoadFailed ? "/events" : `/${eventSlug}`)}
+          >
+            {eventLoadFailed ? "Browse events" : "Back to event"}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (!eventSlug || !event || !cart || cartLoadState === "loading") {
+    return (
+      <div className="min-h-[60vh] flex flex-col items-center justify-center gap-2 text-zinc-600">
+        <p>Loading checkout...</p>
+        <p className="text-xs text-zinc-400">
+          {!eventSlug ? "slug…" : !event ? "event…" : "cart…"}
+        </p>
       </div>
     );
   }
