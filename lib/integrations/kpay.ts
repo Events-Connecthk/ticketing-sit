@@ -219,10 +219,7 @@ async function kpayRequest<T = any>(
 function cartToItemList(cart: OrderCart) {
   // Hosted checkout requires productId + productIcon on every line.
   // Sandbox demo catalog uses productId 1/2/3; real MID may allow any positive id.
-  const unit =
-    cart.tickets.reduce((sum, t) => sum + t.quantity, 0) || 1;
-  // Prefer a single aggregated line (simpler for events)
-  const name = `Tickets – ${cart.eventSlug}`;
+  const name = `Tickets - ${cart.eventSlug}`.replace(/[^\x20-\x7E]/g, " ");
   const price = roundMoney(cart.totalAmount);
   return [
     {
@@ -233,6 +230,21 @@ function cartToItemList(cart: OrderCart) {
       productQuantity: 1,
     },
   ];
+}
+
+function formatKpayUserError(code: number, msg: string): string {
+  const m = (msg || "").trim();
+  if (m.includes("未知錯誤") || code === 50001) {
+    return (
+      `KPay error ${code || ""}: Unknown error (未知錯誤). `.trim() +
+      "Usually a request/field issue or temporary sandbox problem. " +
+      "Try again in a minute. If it keeps failing, export Vercel logs and send to KPay with your outTradeNo."
+    );
+  }
+  if (m.includes("請求方式錯誤") || code === 50002) {
+    return `KPay error ${code}: Wrong request method (請求方式錯誤).`;
+  }
+  return m || `KPay error (code ${code || "unknown"})`;
 }
 
 /**
@@ -269,33 +281,29 @@ export async function initiateKpayPayment(
       return { success: false, error: "Invalid pay amount" };
     }
 
-    // NOTE: Do NOT bake kpay_result=success into returnUrl — KPay often reuses
-    // returnUrl on cancel too, which would falsely issue tickets.
+    // Minimal body only — extra fields (buyer*, successUrl, cancelUrl) can trigger
+    // sandbox "未知錯誤" (50001) on some Merchant Mode configs.
     const returnUrl = `${origin}/${cart.eventSlug}/checkout?session=${encodeURIComponent(outTradeNo)}`;
-    const cancelUrl = `${origin}/${cart.eventSlug}/checkout?session=${encodeURIComponent(outTradeNo)}&kpay_result=cancel`;
     const notifyUrl = `${origin}/api/webhooks/kpay`;
+    const currency =
+      !cart.currency || cart.currency === "FREE" ? "HKD" : cart.currency;
 
     const body: Record<string, unknown> = {
       outTradeNo,
       orderType: "SALES",
       browserType: "WEB",
       payAmount,
-      currency: cart.currency || "HKD",
+      currency,
       itemList: cartToItemList(cart),
       returnUrl,
       notifyUrl,
-      successUrl: returnUrl,
-      cancelUrl,
     };
-
-    // Optional buyer metadata if gateway accepts free-form fields
-    body.buyerEmail = cart.buyer.email;
-    body.buyerName = cart.buyer.name;
-    body.buyerPhone = cart.buyer.phone;
 
     console.log("[KPay] Creating web managed payment", {
       outTradeNo,
       payAmount,
+      currency,
+      itemList: body.itemList,
       apiBase: API_BASE,
       merchant: MERCHANT_CODE.slice(0, 6) + "…",
       hasPrivateKey: Boolean(PRIVATE_KEY),
@@ -344,7 +352,6 @@ export async function initiateKpayPayment(
       };
     }
 
-    // Helpful error surface
     const msg =
       (result.data as any)?.message ||
       result.error ||
@@ -355,6 +362,10 @@ export async function initiateKpayPayment(
       status: result.status,
       code,
       msg: String(msg).slice(0, 500),
+      raw: String(result.raw || "").slice(0, 400),
+      outTradeNo,
+      payAmount,
+      currency,
     });
 
     // In non-production, allow falling back to sim if API rejects
@@ -367,7 +378,7 @@ export async function initiateKpayPayment(
 
     return {
       success: false,
-      error: typeof msg === "string" ? msg : "Failed to create KPay payment",
+      error: formatKpayUserError(code, String(msg)),
     };
   } catch (error) {
     console.error("[KPay] initiateKpayPayment error:", error);
