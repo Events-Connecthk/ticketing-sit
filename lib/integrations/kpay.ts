@@ -202,6 +202,7 @@ async function kpayRequest<T = any>(
   }
 
   if (PRIVATE_KEY && (rawBody || method === "GET")) {
+    const pathOnly = path.startsWith("/") ? path : `/${path}`;
     const payload = buildSignPayload({
       mode: signMode,
       timestamp,
@@ -209,6 +210,8 @@ async function kpayRequest<T = any>(
       merchantCode: MERCHANT_CODE,
       rawBody: method === "GET" ? "" : rawBody,
       bodyObject: body,
+      method,
+      path: pathOnly,
     });
     headers["K-Signature"] = signWithPrivateKey(payload, PRIVATE_KEY);
   }
@@ -322,7 +325,7 @@ async function cartToItemList(cart: OrderCart) {
     (sel) => (Number(sel.quantity) || 0) > 0
   );
 
-  const lines = selections.map((sel) => {
+  let lines = selections.map((sel) => {
     const meta = typeMap.get(sel.ticketTypeId);
     const qty = Math.max(1, Number(sel.quantity) || 1);
     const unit = roundMoney(meta?.price ?? 0);
@@ -335,23 +338,45 @@ async function cartToItemList(cart: OrderCart) {
       itemName: name || sel.ticketTypeId,
       itemIcon: icon,
       price: unit > 0 ? unit : roundMoney(cart.totalAmount / qty),
-      priceCurrency: "HKD",
+      priceCurrency: "HKD" as const,
       quantity: qty,
     };
   });
 
-  if (lines.length > 0) return lines;
+  if (lines.length === 0) {
+    lines = [
+      {
+        itemNo: "tickets",
+        itemName: clean(`Tickets (${cart.eventSlug})`).slice(0, 128),
+        itemIcon: icon,
+        price: roundMoney(cart.totalAmount),
+        priceCurrency: "HKD" as const,
+        quantity: 1,
+      },
+    ];
+  }
 
-  return [
-    {
-      itemNo: "tickets",
-      itemName: clean(`Tickets (${cart.eventSlug})`).slice(0, 128),
-      itemIcon: icon,
-      price: roundMoney(cart.totalAmount),
-      priceCurrency: "HKD",
-      quantity: 1,
-    },
-  ];
+  // payAmount must match sum(price * quantity) - discount (docs BigDecimal)
+  const listTotal = roundMoney(
+    lines.reduce((s, l) => s + l.price * l.quantity, 0)
+  );
+  const pay = roundMoney(cart.totalAmount);
+  if (listTotal > 0 && Math.abs(listTotal - pay) > 0.02) {
+    // Scale unit prices so line totals match cart total (promo / early bird)
+    const scale = pay / listTotal;
+    let running = 0;
+    for (let i = 0; i < lines.length; i++) {
+      if (i === lines.length - 1) {
+        const lastLine = roundMoney(pay - running);
+        lines[i].price = roundMoney(lastLine / lines[i].quantity);
+      } else {
+        lines[i].price = roundMoney(lines[i].price * scale);
+        running = roundMoney(running + lines[i].price * lines[i].quantity);
+      }
+    }
+  }
+
+  return lines;
 }
 
 /** Build signed GET checkout URL after create returns managedOrderNo */

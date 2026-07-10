@@ -51,6 +51,8 @@ export function buildSignPayload(opts: {
   merchantCode: string;
   rawBody: string;
   bodyObject?: Record<string, unknown>;
+  method?: string;
+  path?: string;
 }): string {
   const mode = (opts.mode || process.env.KPAY_SIGN_PAYLOAD || "timestamp_nonce_body").toLowerCase();
 
@@ -68,6 +70,20 @@ export function buildSignPayload(opts: {
 
   if (mode === "merchant_timestamp_nonce_body") {
     return `${opts.merchantCode}\n${opts.timestamp}\n${opts.nonce}\n${opts.rawBody}`;
+  }
+
+  // method + path + timestamp + nonce + body (some gateways)
+  if (mode === "method_path_timestamp_nonce_body" && opts.method && opts.path) {
+    return `${opts.method}\n${opts.path}\n${opts.timestamp}\n${opts.nonce}\n${opts.rawBody}`;
+  }
+
+  if (mode === "path_timestamp_nonce_body" && opts.path) {
+    return `${opts.path}\n${opts.timestamp}\n${opts.nonce}\n${opts.rawBody}`;
+  }
+
+  // only timestamp\nnonce (empty body even for POST) — rare
+  if (mode === "timestamp_nonce_only") {
+    return `${opts.timestamp}\n${opts.nonce}\n`;
   }
 
   if (mode === "sorted_params") {
@@ -100,6 +116,9 @@ export const KPAY_SIGN_MODES = [
   "timestamp_nonce_body_crlf",
   "merchant_timestamp_nonce_body",
   "sorted_params",
+  "method_path_timestamp_nonce_body",
+  "path_timestamp_nonce_body",
+  "timestamp_nonce_only",
 ] as const;
 
 export function signWithPrivateKey(payload: string, privateKeyPem: string): string {
