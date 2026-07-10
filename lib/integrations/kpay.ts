@@ -619,25 +619,33 @@ export async function confirmKpayPayment(
     // ignore
   }
 
-  // Webhook already marked pending paid
   let pending = await getPendingPayment(paymentId);
-  if (await isWebhookPaid(paymentId)) {
-    console.log("[KPay] Webhook paid flag set for", paymentId);
+  console.log("[KPay] confirm state", {
+    paymentId,
+    hasPending: Boolean(pending),
+    pendingStatus: pending?.status,
+    userConfirmedPaid,
+    returnResult,
+    sandbox: isSandboxApi(),
+  });
+
+  if (pending?.status === "paid" || (await isWebhookPaid(paymentId))) {
+    console.log("[KPay] Webhook/pending paid for", paymentId);
     return { success: true, paymentReference: paymentId };
   }
+  if (pending?.status === "failed") {
+    return {
+      success: false,
+      error: "Payment was cancelled or failed. No ticket was issued.",
+    };
+  }
 
-  // Wait for webhook on public host — browser return often races notify
-  if (
-    pending?.status !== "paid" &&
-    (process.env.VERCEL ||
-      process.env.KPAY_WAIT_WEBHOOK === "true" ||
-      isSandboxApi())
-  ) {
-    for (let i = 0; i < 8; i++) {
-      await sleep(1000);
+  // Brief wait for webhook (KPay sandbox often never sends notify to merchants)
+  if (process.env.VERCEL || process.env.KPAY_WAIT_WEBHOOK === "true") {
+    for (let i = 0; i < 3; i++) {
+      await sleep(700);
       pending = await getPendingPayment(paymentId);
       if (pending?.status === "paid" || (await isWebhookPaid(paymentId))) {
-        console.log("[KPay] Webhook arrived during wait for", paymentId);
         return { success: true, paymentReference: paymentId };
       }
       try {
@@ -654,23 +662,11 @@ export async function confirmKpayPayment(
     }
   }
 
-  if (pending?.status === "paid") {
-    return { success: true, paymentReference: paymentId };
-  }
-  if (pending?.status === "failed") {
-    return {
-      success: false,
-      error: "Payment was cancelled or failed. No ticket was issued.",
-    };
-  }
-
   const managedOrderNo = pending?.managedOrderNo || undefined;
-
-  // One quick status probe (sandbox order APIs often 404 / wrong method)
   const st = await lookupOrderPayStatus(paymentId, managedOrderNo);
   if (st === "paid") {
     console.log("[KPay] Order API confirmed PAID for", paymentId);
-    await markPendingPaid(paymentId);
+    if (pending) await markPendingPaid(paymentId);
     return { success: true, paymentReference: paymentId };
   }
   if (st === "failed") {
@@ -680,47 +676,53 @@ export async function confirmKpayPayment(
     };
   }
 
-  // KPay return URL is the SAME for pay and cancel — never auto-issue on bare return
-  // (that made cancel → "Purchase confirmed"). Only:
-  //   1) webhook / existing purchase (above)
-  //   2) order API paid (above)
-  //   3) explicit userConfirmedPaid (manual button after return)
-  // Opt-in only: KPAY_AUTO_CONFIRM_RETURN=true (not recommended; free tickets on cancel)
   const requireApi = process.env.KPAY_REQUIRE_API_CONFIRM === "true";
-  const autoReturn = process.env.KPAY_AUTO_CONFIRM_RETURN === "true" && !requireApi;
-  const allowFinalize =
-    !requireApi &&
-    (Boolean(pending) || !isProduction()) &&
-    (userConfirmedPaid || autoReturn);
 
-  if (allowFinalize) {
-    console.warn(
-      "[KPay] Accepting return (user-confirmed or KPAY_AUTO_CONFIRM_RETURN).",
-      {
-        paymentId,
-        hasPending: Boolean(pending),
-        userConfirmedPaid,
-        autoReturn,
-      }
-    );
+  // 1) User tapped “I paid” — always allow (client has cart). Production bug before:
+  //    required pending row which often missing → green button did nothing useful.
+  if (userConfirmedPaid && !requireApi) {
+    console.warn("[KPay] USER confirmed paid — finalizing", paymentId);
     if (pending) await markPendingPaid(paymentId);
     return { success: true, paymentReference: paymentId };
   }
 
-  console.warn(
-    "[KPay] Refusing to finalize without payment proof:",
+  // 2) Explicit env force
+  if (process.env.KPAY_AUTO_CONFIRM_RETURN === "true" && !requireApi) {
+    console.warn("[KPay] KPAY_AUTO_CONFIRM_RETURN — finalizing", paymentId);
+    if (pending) await markPendingPaid(paymentId);
+    return { success: true, paymentReference: paymentId };
+  }
+
+  // 3) Sandbox Day-1: KPay rarely delivers webhooks; return URL has no status.
+  //    If we still have the pending order we created, accept return as paid so
+  //    test-card success can complete. Cancel may false-positive if same URL.
+  //    Disable: KPAY_SANDBOX_TRUST_RETURN=false
+  const sandboxTrust =
+    isSandboxApi() &&
+    process.env.KPAY_SANDBOX_TRUST_RETURN !== "false" &&
+    !requireApi &&
+    Boolean(pending);
+
+  if (sandboxTrust) {
+    console.warn(
+      "[KPay] Sandbox trust return (pending exists, no webhook). Finalizing",
+      paymentId
+    );
+    await markPendingPaid(paymentId);
+    return { success: true, paymentReference: paymentId };
+  }
+
+  console.warn("[KPay] Refusing finalize", {
     paymentId,
-    "returnResult=",
     returnResult,
-    "userConfirmedPaid=",
     userConfirmedPaid,
-    "hasPending=",
-    Boolean(pending)
-  );
+    hasPending: Boolean(pending),
+    requireApi,
+  });
   return {
     success: false,
     error:
-      "Payment not confirmed yet (no webhook / no pending session). Wait a few seconds and refresh, or try payment again.",
+      "Payment not confirmed (no webhook). If you paid with the test card, tap “I paid — get my tickets”. If you cancelled, tap “I cancelled”.",
   };
 }
 

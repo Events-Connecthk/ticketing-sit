@@ -198,7 +198,35 @@ export async function getPendingCartForSession(
   if (!sessionId) return null;
   const { getPendingPayment } = await import("./pending-payments");
   const pending = await getPendingPayment(sessionId);
-  return pending?.cart || null;
+  if (!pending?.cart?.eventSlug) return null;
+  return pending.cart;
+}
+
+/** Debug: pending / webhook / purchase state for a session (admin troubleshooting). */
+export async function getKpaySessionDebug(sessionId: string): Promise<{
+  sessionId: string;
+  hasPending: boolean;
+  pendingStatus?: string;
+  hasCart: boolean;
+  hasPurchase: boolean;
+  orderReference?: string;
+  siteUrl?: string;
+}> {
+  const { getPendingPayment } = await import("./pending-payments");
+  const { getPurchaseByPaymentReference } = await import("../db/purchases");
+  const pending = sessionId ? await getPendingPayment(sessionId) : null;
+  const purchase = sessionId
+    ? await getPurchaseByPaymentReference(sessionId)
+    : null;
+  return {
+    sessionId,
+    hasPending: Boolean(pending),
+    pendingStatus: pending?.status,
+    hasCart: Boolean(pending?.cart?.eventSlug),
+    hasPurchase: Boolean(purchase),
+    orderReference: purchase?.order_reference,
+    siteUrl: process.env.NEXT_PUBLIC_SITE_URL,
+  };
 }
 
 /**

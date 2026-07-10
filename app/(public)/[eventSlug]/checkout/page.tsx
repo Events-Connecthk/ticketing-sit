@@ -9,6 +9,7 @@ import {
   startCheckoutFlow,
   finalizeAfterPayment,
   getPendingCartForSession,
+  getKpaySessionDebug,
 } from "@/lib/integrations/order.service";
 import { ArrowLeft, CreditCard } from "lucide-react";
 
@@ -280,11 +281,17 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
     try {
       // Wait for webhook (only real paid proof). Cancel never gets a paid webhook → no tickets.
       console.log("[Checkout] Checking payment / webhook for", paymentReference);
+      try {
+        const dbg = await getKpaySessionDebug(paymentReference);
+        console.log("[Checkout] Session debug:", dbg);
+      } catch (e) {
+        console.warn("[Checkout] Session debug failed", e);
+      }
       const result = await finalizeAfterPayment(paymentReference, usedCart, {
         returnResult: "unknown",
       });
 
-      console.log("[Checkout] Finalize result:", result);
+      console.log("[Checkout] Finalize result:", JSON.stringify(result));
 
       if (result.success) {
         try {
