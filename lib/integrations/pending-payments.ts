@@ -239,6 +239,34 @@ export async function markPendingPaid(
   return rec;
 }
 
+/**
+ * Record that KPay notify said this outTradeNo is paid — even if cart row is missing.
+ * Return URL can then finalize using the browser cart.
+ */
+export async function recordWebhookPaid(outTradeNo: string): Promise<void> {
+  if (!outTradeNo) return;
+  const existing = await getPendingPayment(outTradeNo);
+  if (existing) {
+    await markPendingPaid(outTradeNo);
+    return;
+  }
+  // Placeholder cart — real cart comes from client session on return
+  const emptyCart = {
+    eventSlug: "",
+    tickets: [],
+    buyer: { name: "", email: "", phone: "" },
+    totalAmount: 0,
+    currency: "HKD",
+  } as OrderCart;
+  await savePendingPayment(outTradeNo, emptyCart, { status: "paid" });
+  console.log("[PendingPayments] Webhook paid recorded (no prior cart):", outTradeNo);
+}
+
+export async function isWebhookPaid(outTradeNo: string): Promise<boolean> {
+  const rec = await getPendingPayment(outTradeNo);
+  return rec?.status === "paid";
+}
+
 export async function deletePendingPayment(outTradeNo: string): Promise<void> {
   hydrateLocal();
   store.delete(outTradeNo);
