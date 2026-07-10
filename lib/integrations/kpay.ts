@@ -222,22 +222,84 @@ function productIconUrl(): string {
   return `${origin}/images/ticket-product-icon.svg`;
 }
 
-function cartToItemList(cart: OrderCart) {
-  // Hosted checkout requires productId + productIcon on every line.
+/**
+ * One KPay line per ticket type: "General Admission x2", unit price, quantity.
+ * Loads event config for human-readable names.
+ */
+async function cartToItemList(cart: OrderCart) {
+  const icon = productIconUrl();
+  let typeMap = new Map<
+    string,
+    { name: string; price: number; productId: number }
+  >();
+
+  try {
+    const { loadEventBySlug } = await import("@/lib/config/events");
+    const event = await loadEventBySlug(cart.eventSlug);
+    if (event?.ticketTypes?.length) {
+      event.ticketTypes.forEach((t, i) => {
+        typeMap.set(t.id, {
+          name: t.name || t.id,
+          price: Number(t.price) || 0,
+          productId: DEFAULT_PRODUCT_ID + i,
+        });
+      });
+    }
+  } catch (e) {
+    console.warn("[KPay] Could not load event for item names:", e);
+  }
+
+  const lines = (cart.tickets || [])
+    .filter((sel) => (Number(sel.quantity) || 0) > 0)
+    .map((sel) => {
+      const meta = typeMap.get(sel.ticketTypeId);
+      const qty = Math.max(1, Number(sel.quantity) || 1);
+      const unitPrice = roundMoney(meta?.price ?? 0);
+      const label = (meta?.name || sel.ticketTypeId).replace(/[^\x20-\x7E]/g, " ");
+      return {
+        productId: meta?.productId ?? DEFAULT_PRODUCT_ID,
+        productName: label.slice(0, 120),
+        productIcon: icon,
+        productPrice: unitPrice > 0 ? unitPrice : roundMoney(cart.totalAmount / qty),
+        productQuantity: qty,
+      };
+    });
+
+  if (lines.length > 0) {
+    // If discounted cart total differs from sum of list prices, keep one summary line
+    // so KPay payAmount still matches (gateway is picky about totals).
+    const listTotal = roundMoney(
+      lines.reduce((s, l) => s + l.productPrice * l.productQuantity, 0)
+    );
+    const pay = roundMoney(cart.totalAmount);
+    if (listTotal > 0 && Math.abs(listTotal - pay) > 0.02) {
+      // Single line with exact pay amount + full ticket breakdown in the name
+      const detail = lines
+        .map((l) => `${l.productName} x${l.productQuantity}`)
+        .join(", ")
+        .slice(0, 110);
+      return [
+        {
+          productId: DEFAULT_PRODUCT_ID,
+          productName: detail || "Event tickets",
+          productIcon: icon,
+          productPrice: pay,
+          productQuantity: 1,
+        },
+      ];
+    }
+    return lines;
+  }
+
+  // Fallback
   const count =
     cart.tickets.reduce((sum, t) => sum + (Number(t.quantity) || 0), 0) || 1;
-  const name = (
-    count === 1
-      ? `Event ticket (${cart.eventSlug})`
-      : `${count} event tickets (${cart.eventSlug})`
-  ).replace(/[^\x20-\x7E]/g, " ");
-  const price = roundMoney(cart.totalAmount);
   return [
     {
       productId: DEFAULT_PRODUCT_ID,
-      productName: name.slice(0, 120),
-      productIcon: productIconUrl(),
-      productPrice: price,
+      productName: `${count} event tickets (${cart.eventSlug})`.slice(0, 120),
+      productIcon: icon,
+      productPrice: roundMoney(cart.totalAmount),
       productQuantity: 1,
     },
   ];
@@ -299,13 +361,15 @@ export async function initiateKpayPayment(
     const currency =
       !cart.currency || cart.currency === "FREE" ? "HKD" : cart.currency;
 
+    const itemList = await cartToItemList(cart);
+
     const body: Record<string, unknown> = {
       outTradeNo,
       orderType: "SALES",
       browserType: "WEB",
       payAmount,
       currency,
-      itemList: cartToItemList(cart),
+      itemList,
       returnUrl,
       notifyUrl,
     };
