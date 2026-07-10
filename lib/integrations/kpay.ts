@@ -106,13 +106,14 @@ const MANAGED_STATE = {
   CLOSED: 5,
 } as const;
 
-/** transactionState from async notify */
+/** transactionState / payment order result (docs) */
 const TX_STATE = {
   PENDING: 1,
   SUCCESS: 2,
   FAILED: 3,
   REFUNDED: 4,
   CANCELLED: 5,
+  CLOSED: 6,
 } as const;
 
 function isProduction(): boolean {
