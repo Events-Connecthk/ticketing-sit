@@ -30,6 +30,11 @@ function extractSignature(request: NextRequest, body: any): string {
   );
 }
 
+/**
+ * Official notify payload (docs):
+ *   managedOutTradeNo, managedOrderNo, outTradeNo, orderNo
+ *   transactionState: 1 Pending, 2 Success, 3 Failed, 4 Refunded, 5 Cancelled
+ */
 function extractPaymentFields(body: any): {
   outTradeNo?: string;
   paymentId?: string;
@@ -38,71 +43,51 @@ function extractPaymentFields(body: any): {
   failed: boolean;
 } {
   const data = body?.data ?? body ?? {};
-  const outTradeNo = String(
-    data.outTradeNo ||
-      data.out_trade_no ||
-      body?.outTradeNo ||
-      body?.out_trade_no ||
-      data.merchantOrderNo ||
-      data.merchant_order_no ||
-      ""
-  ).trim() || undefined;
 
-  const paymentId = String(
-    data.managedOrderNo ||
-      data.orderNo ||
-      data.order_no ||
-      data.paymentId ||
-      data.transactionId ||
-      data.tradeNo ||
-      outTradeNo ||
-      ""
-  ).trim() || undefined;
+  // Prefer merchant managed out-trade-no (our SIT… session id)
+  const outTradeNo =
+    String(
+      data.managedOutTradeNo ||
+        body?.managedOutTradeNo ||
+        data.outTradeNo ||
+        body?.outTradeNo ||
+        ""
+    ).trim() || undefined;
 
+  const paymentId =
+    String(
+      data.managedOrderNo ||
+        body?.managedOrderNo ||
+        data.orderNo ||
+        body?.orderNo ||
+        outTradeNo ||
+        ""
+    ).trim() || undefined;
+
+  const txState = Number(
+    data.transactionState ?? body?.transactionState ?? data.result ?? NaN
+  );
   const status = String(
-    data.status ||
-      data.orderStatus ||
-      data.payStatus ||
-      data.tradeStatus ||
-      body?.status ||
+    data.transactionStateDesc ||
+      data.status ||
+      body?.eventType ||
       body?.type ||
-      body?.event ||
+      txState ||
       ""
-  ).toUpperCase();
+  );
 
-  const type = String(body?.type || body?.event || body?.notifyType || "").toLowerCase();
-  const code = Number(body?.code ?? data?.code);
+  // Docs: 2 = Successfully Processed
+  const success = txState === 2;
+  // Docs: 3 Failed, 5 Cancelled (and 4 Refunded is not a new paid)
+  const failed = txState === 3 || txState === 5 || txState === 4;
 
-  const failed =
-    type.includes("fail") ||
-    type.includes("cancel") ||
-    status.includes("FAIL") ||
-    status.includes("CANCEL") ||
-    status.includes("CLOSE") ||
-    status.includes("VOID") ||
-    status.includes("REFUND");
-
-  // KPay usually only POSTs notify on success; accept broad success signals
-  const success =
-    !failed &&
-    (type.includes("success") ||
-      type.includes("paid") ||
-      type.includes("complete") ||
-      type.includes("notify") ||
-      status.includes("SUCCESS") ||
-      status.includes("PAID") ||
-      status.includes("COMPLETE") ||
-      status.includes("SETTLE") ||
-      status === "2" ||
-      status === "S" ||
-      status === "1" ||
-      code === 10000 ||
-      data.success === true ||
-      body?.success === true ||
-      // Notify with an order id and no fail flag → treat as paid
-      Boolean(outTradeNo || paymentId));
-
-  return { outTradeNo, paymentId, status, success, failed };
+  return {
+    outTradeNo,
+    paymentId,
+    status,
+    success: success && !failed,
+    failed,
+  };
 }
 
 export async function POST(request: NextRequest) {

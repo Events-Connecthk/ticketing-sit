@@ -3,19 +3,15 @@
 /**
  * KPay Online Payment Gateway (Merchant Mode) — All Hosted Checkout
  *
- * Official UAT base (per KPay support):
- *   https://payment.uat.kpay-group.com
+ * Official docs (UAT):
+ *   Base: https://payment.uat.kpay-group.com
+ *   Create: POST /v1/managed/order/add
+ *     → code 10000 + data.managedOrderNo
+ *   Open page: GET /v1/web/managed/order?managedOrderNo=...&K-Merchant-Code=...&...
+ *   Query:    GET /v1/managed/order/result?managedOutTradeNo=...
+ *     managedOrderState: 1 Pending, 2 Paid, 3 Expired, 4 Refunded, 5 Closed
  *
- * Create path candidates (first success wins; override with KPAY_CREATE_PATH):
- *   POST /v1/web/managed
- *   POST /v1/payment/web/managed
- *
- * Success: code 10000 → data.paymentUrl (often hosts payment.uat.kpay-group.com)
- *
- * Auth headers:
- *   K-Nonce-Str, K-Merchant-Code, K-Signature, K-Timestamp, K-Language
- *
- * Simulation only when NODE_ENV !== "production" AND credentials missing.
+ * Auth headers: K-Nonce-Str, K-Merchant-Code, K-Signature, K-Timestamp, K-Language
  */
 
 import { readFileSync, existsSync } from "fs";
@@ -82,27 +78,42 @@ const PLATFORM_PUBLIC_KEY = loadKeyMaterial(
 );
 const APP_ID = process.env.KPAY_APP_ID || "";
 
-// Official UAT host per KPay (not online-sandbox…/api)
+// Official UAT / PROD base per KPay docs
 const API_BASE = (
   process.env.KPAY_API_BASE_URL ||
   "https://payment.uat.kpay-group.com"
 ).replace(/\/$/, "");
 
-/** Override exact create path if KPay docs specify one */
-const CREATE_PATH_CANDIDATES = [
-  process.env.KPAY_CREATE_PATH,
-  "/v1/web/managed",
-  "/v1/payment/web/managed",
-  "/api/v1/payment/web/managed",
-].filter((p): p is string => Boolean(p && p.trim()));
+const CREATE_PATH = process.env.KPAY_CREATE_PATH || "/v1/managed/order/add";
+const WEB_CHECKOUT_PATH =
+  process.env.KPAY_WEB_CHECKOUT_PATH || "/v1/web/managed/order";
+const ORDER_RESULT_PATH =
+  process.env.KPAY_ORDER_RESULT_PATH || "/v1/managed/order/result";
 
 const LANGUAGE = process.env.KPAY_LANGUAGE || "en_US";
 
-const DEFAULT_PRODUCT_ID = Number(process.env.KPAY_DEFAULT_PRODUCT_ID || "1");
-/** Override with any public HTTPS image URL for KPay hosted checkout product art */
+/** Override with any public HTTPS image URL for item icons */
 const DEFAULT_PRODUCT_ICON = process.env.KPAY_DEFAULT_PRODUCT_ICON || "";
 
 const SUCCESS_CODE = 10000;
+
+/** managedOrderState from query API */
+const MANAGED_STATE = {
+  PENDING: 1,
+  PAID: 2,
+  EXPIRED: 3,
+  REFUNDED: 4,
+  CLOSED: 5,
+} as const;
+
+/** transactionState from async notify */
+const TX_STATE = {
+  PENDING: 1,
+  SUCCESS: 2,
+  FAILED: 3,
+  REFUNDED: 4,
+  CANCELLED: 5,
+} as const;
 
 function isProduction(): boolean {
   return process.env.NODE_ENV === "production";
@@ -173,7 +184,7 @@ async function kpayRequest<T = any>(
   const nonce = randomNonce(32);
 
   const headers: Record<string, string> = {
-    "Content-Type": "application/json;charset=UTF-8",
+    "Content-Type": "application/json",
     "K-Merchant-Code": MERCHANT_CODE,
     "K-Timestamp": timestamp,
     "K-Nonce-Str": nonce,
@@ -281,103 +292,86 @@ function productIconUrl(): string {
 }
 
 /**
- * Mirror platform OrderSummary for KPay hosted checkout.
- * OrderSummary shows:
- *   {ticketType.name} × {qty}     {currency} {(price * qty)}
- *   Total (N tickets)             {currency} {totalAmount}
+ * Official itemList fields (docs):
+ *   itemNo, itemName, itemIcon, price, priceCurrency, quantity
+ * Labels match platform Order Summary: "{name} × {qty}"
  */
 async function cartToItemList(cart: OrderCart) {
   const icon = productIconUrl();
-  // Keep readable punctuation used in OrderSummary (×)
   const clean = (s: string) =>
     s
       .replace(/[^\x20-\x7E\u00D7]/g, " ")
       .replace(/\s+/g, " ")
       .trim();
 
-  let eventName = cart.eventSlug;
-  let typeMap = new Map<string, { name: string; price: number; idx: number }>();
-
+  let typeMap = new Map<string, { name: string; price: number }>();
   try {
     const { loadEventBySlug } = await import("@/lib/config/events");
     const event = await loadEventBySlug(cart.eventSlug);
-    if (event) {
-      eventName = event.name || cart.eventSlug;
-      (event.ticketTypes || []).forEach((t, i) => {
-        typeMap.set(t.id, {
-          name: t.name || t.id,
-          price: Number(t.price) || 0,
-          idx: i,
-        });
-      });
-    }
+    (event?.ticketTypes || []).forEach((t) => {
+      typeMap.set(t.id, { name: t.name || t.id, price: Number(t.price) || 0 });
+    });
   } catch (e) {
-    console.warn("[KPay] Could not load event for order summary lines:", e);
+    console.warn("[KPay] Could not load event for item names:", e);
   }
 
   const selections = (cart.tickets || []).filter(
     (sel) => (Number(sel.quantity) || 0) > 0
   );
 
-  // Same left/right as OrderSummary rows
-  const lines = selections.map((sel, i) => {
+  const lines = selections.map((sel) => {
     const meta = typeMap.get(sel.ticketTypeId);
     const qty = Math.max(1, Number(sel.quantity) || 1);
     const unit = roundMoney(meta?.price ?? 0);
-    const lineTotal = roundMoney(unit * qty);
-    // Exact OrderSummary label: "General Admission × 2"
-    const summaryLabel = `${meta?.name || sel.ticketTypeId} × ${qty}`;
-
+    const name = clean(`${meta?.name || sel.ticketTypeId} × ${qty}`).slice(
+      0,
+      128
+    );
     return {
-      productId: DEFAULT_PRODUCT_ID + (meta?.idx ?? i),
-      productName: clean(summaryLabel).slice(0, 120),
-      productIcon: icon,
-      productPrice: lineTotal > 0 ? lineTotal : roundMoney(cart.totalAmount),
-      productQuantity: 1,
+      itemNo: String(sel.ticketTypeId).slice(0, 64),
+      itemName: name || sel.ticketTypeId,
+      itemIcon: icon,
+      price: unit > 0 ? unit : roundMoney(cart.totalAmount / qty),
+      priceCurrency: "HKD",
+      quantity: qty,
     };
   });
 
-  if (lines.length === 0) {
-    return [
-      {
-        productId: DEFAULT_PRODUCT_ID,
-        productName: clean(`${eventName} tickets`).slice(0, 120),
-        productIcon: icon,
-        productPrice: roundMoney(cart.totalAmount),
-        productQuantity: 1,
-      },
-    ];
-  }
+  if (lines.length > 0) return lines;
 
-  // If promo makes cart.totalAmount lower than sum of lines, scale line prices
-  // so KPay payAmount still matches (same lines, adjusted amounts).
-  const listTotal = roundMoney(
-    lines.reduce((s, l) => s + l.productPrice * l.productQuantity, 0)
-  );
-  const pay = roundMoney(cart.totalAmount);
-  if (listTotal > 0 && Math.abs(listTotal - pay) > 0.02) {
-    const scale = pay / listTotal;
-    let running = 0;
-    for (let i = 0; i < lines.length; i++) {
-      if (i === lines.length - 1) {
-        lines[i].productPrice = roundMoney(Math.max(0.01, pay - running));
-      } else {
-        lines[i].productPrice = roundMoney(
-          Math.max(0.01, lines[i].productPrice * scale)
-        );
-        running = roundMoney(running + lines[i].productPrice);
-      }
-    }
-    if (cart.appliedDiscountCode) {
-      // Append discount note as zero-impact name suffix on first line if space
-      const note = ` (${cart.appliedDiscountCode})`;
-      if (lines[0].productName.length + note.length <= 120) {
-        lines[0].productName = clean(lines[0].productName + note).slice(0, 120);
-      }
-    }
-  }
+  return [
+    {
+      itemNo: "tickets",
+      itemName: clean(`Tickets (${cart.eventSlug})`).slice(0, 128),
+      itemIcon: icon,
+      price: roundMoney(cart.totalAmount),
+      priceCurrency: "HKD",
+      quantity: 1,
+    },
+  ];
+}
 
-  return lines;
+/** Build signed GET checkout URL after create returns managedOrderNo */
+function buildWebCheckoutUrl(managedOrderNo: string): string {
+  const timestamp = Date.now().toString();
+  const nonce = randomNonce(32);
+  const payload = buildSignPayload({
+    timestamp,
+    nonce,
+    merchantCode: MERCHANT_CODE,
+    rawBody: "",
+  });
+  const signature = signWithPrivateKey(payload, PRIVATE_KEY);
+  const qs = new URLSearchParams({
+    managedOrderNo,
+    language: LANGUAGE,
+    "K-Merchant-Code": MERCHANT_CODE,
+    "K-Nonce-Str": nonce,
+    "K-Timestamp": timestamp,
+    "K-Signature": signature,
+  });
+  if (APP_ID) qs.set("K-App-Id", APP_ID);
+  return `${API_BASE}${WEB_CHECKOUT_PATH}?${qs.toString()}`;
 }
 
 function formatKpayUserError(code: number, msg: string): string {
@@ -429,119 +423,67 @@ export async function initiateKpayPayment(
       return { success: false, error: "Invalid pay amount" };
     }
 
-    // Minimal body only — extra fields (buyer*, successUrl, cancelUrl) can trigger
-    // sandbox "未知錯誤" (50001) on some Merchant Mode configs.
+    // Official create body (POST /v1/managed/order/add)
     const returnUrl = `${origin}/${cart.eventSlug}/checkout?session=${encodeURIComponent(outTradeNo)}`;
     const notifyUrl = `${origin}/api/webhooks/kpay`;
-    const currency =
-      !cart.currency || cart.currency === "FREE" ? "HKD" : cart.currency;
-
     const itemList = await cartToItemList(cart);
 
     const body: Record<string, unknown> = {
-      outTradeNo,
-      orderType: "SALES",
-      browserType: "WEB",
+      managedOutTradeNo: outTradeNo.slice(0, 32),
       payAmount,
-      currency,
-      itemList,
-      returnUrl,
+      payCurrency: "HKD",
       notifyUrl,
+      returnUrl,
+      orderRemark: `Tickets ${cart.eventSlug}`.slice(0, 256),
+      itemList,
     };
+    if (cart.discountAmount && cart.discountAmount > 0) {
+      body.discountAmount = roundMoney(cart.discountAmount);
+    }
 
-    console.log("[KPay] Creating web managed payment", {
-      outTradeNo,
+    console.log("[KPay] Creating All Hosted Checkout order", {
+      path: CREATE_PATH,
+      managedOutTradeNo: body.managedOutTradeNo,
       payAmount,
-      currency,
-      itemList: body.itemList,
       apiBase: API_BASE,
       merchant: MERCHANT_CODE.slice(0, 6) + "…",
-      hasPrivateKey: Boolean(PRIVATE_KEY),
-      origin,
       returnUrl,
       notifyUrl,
+      itemList,
     });
 
     type CreateRes = {
       code: number | string;
       message?: string;
-      data?: {
-        paymentUrl?: string;
-        managedOrderNo?: string;
-        orderNo?: string;
-        [k: string]: unknown;
-      };
+      data?: { managedOrderNo?: string; [k: string]: unknown };
     };
 
-    let result: Awaited<ReturnType<typeof kpayRequest<CreateRes>>> | null =
-      null;
-    let usedPath = "";
-
-    for (const path of CREATE_PATH_CANDIDATES) {
-      const attempt = await kpayRequest<CreateRes>("POST", path, body, {
-        logFullExchange: true,
-      });
-      const attemptCode = Number((attempt.data as any)?.code);
-      const attemptUrl = (attempt.data as any)?.data?.paymentUrl as
-        | string
-        | undefined;
-      console.log("[KPay] Create attempt", {
-        path,
-        httpStatus: attempt.status,
-        code: attemptCode,
-        hasPaymentUrl: Boolean(attemptUrl),
-      });
-      result = attempt;
-      usedPath = path;
-      if (attemptCode === SUCCESS_CODE && attemptUrl) break;
-      // 404 = wrong path, try next; other business errors may still be "valid" path
-      if (attempt.status !== 404 && attemptCode && attemptCode !== SUCCESS_CODE) {
-        break;
-      }
-    }
-
-    if (!result) {
-      return { success: false, error: "KPay create payment failed (no response)" };
-    }
+    const result = await kpayRequest<CreateRes>("POST", CREATE_PATH, body, {
+      logFullExchange: true,
+    });
 
     const code = Number((result.data as any)?.code);
-    const paymentUrl = (result.data as any)?.data?.paymentUrl as
-      | string
-      | undefined;
-
-    // managedOrderNo often only appears inside paymentUrl query string
-    let managedOrderNo = String(
-      (result.data as any)?.data?.managedOrderNo ||
-        (result.data as any)?.data?.orderNo ||
-        ""
+    const managedOrderNo = String(
+      (result.data as any)?.data?.managedOrderNo || ""
     );
-    if (!managedOrderNo && paymentUrl) {
-      try {
-        const u = new URL(paymentUrl);
-        managedOrderNo = u.searchParams.get("managedOrderNo") || "";
-      } catch {
-        /* ignore */
-      }
-    }
 
-    if (code === SUCCESS_CODE && paymentUrl) {
+    if (code === SUCCESS_CODE && managedOrderNo) {
+      const paymentUrl = buildWebCheckoutUrl(managedOrderNo);
+
       await savePendingPayment(outTradeNo, cart, {
         paymentUrl,
         managedOrderNo,
       });
 
-      console.log("[KPay] Payment created (share with KPay support)", {
-        outTradeNo,
-        managedOrderNo: managedOrderNo || null,
-        createPath: usedPath,
+      console.log("[KPay] Payment created (official API)", {
+        managedOutTradeNo: outTradeNo,
+        managedOrderNo,
+        createPath: CREATE_PATH,
         apiBase: API_BASE,
-        returnUrl: body.returnUrl,
-        notifyUrl: body.notifyUrl,
-        origin,
+        paymentUrl: paymentUrl.slice(0, 120) + "…",
+        returnUrl,
+        notifyUrl,
         responseCode: code,
-        responseDataKeys: result.data
-          ? Object.keys((result.data as any).data || {})
-          : [],
       });
 
       return {
@@ -560,13 +502,12 @@ export async function initiateKpayPayment(
     console.error("[KPay] initiate failed:", {
       status: result.status,
       code,
-      path: usedPath,
+      path: CREATE_PATH,
       apiBase: API_BASE,
       msg: String(msg).slice(0, 500),
       raw: String(result.raw || "").slice(0, 400),
       outTradeNo,
       payAmount,
-      currency,
     });
 
     if (!isProduction() && process.env.KPAY_FORCE_REAL !== "true") {
@@ -684,88 +625,62 @@ function statusFromOrderRow(hit: any): "paid" | "failed" | "unknown" {
 }
 
 /**
- * Query KPay for paid / cancel status of an outTradeNo (and optional managedOrderNo).
- *
- * Sandbox observations (2026-07):
- * - POST /v1/order/query → HTTP 404 (path not found)
- * - POST /v1/order/list → code 50002 請求方式錯誤 (wrong method)
- * - GET  /v1/order/list?... may work depending on sign rules
- * Until KPay documents a working status API, callers must fall back to
- * webhook (needs public URL) or explicit user confirm on return.
+ * Official query: GET /v1/managed/order/result
+ * managedOrderState: 1 Pending, 2 Paid, 3 Expired, 4 Refunded, 5 Closed
  */
 async function lookupOrderPayStatus(
   paymentId: string,
   managedOrderNo?: string
 ): Promise<"paid" | "failed" | "unknown"> {
-  const qs = new URLSearchParams({
-    pageNum: "1",
-    pageSize: "20",
-    outTradeNo: paymentId,
-  });
-  if (managedOrderNo) qs.set("managedOrderNo", managedOrderNo);
-
-  // GET first (POST list returns 請求方式錯誤 on sandbox)
-  const attempts: Array<() => Promise<{ ok: boolean; data: any; raw: string; status: number }>> = [
-    () => kpayRequest<any>("GET", `/v1/order/list?${qs.toString()}`),
-    () =>
-      kpayRequest<any>("GET", `/v1/payment/web/managed/query?outTradeNo=${encodeURIComponent(paymentId)}`),
-  ];
-
-  let sawAnyResponse = false;
-
-  for (const run of attempts) {
-    try {
-      const q = await run();
-      if (!q.data && !q.raw) continue;
-      sawAnyResponse = true;
-
-      // Hard API errors — log once, keep looking
-      const code = Number((q.data as any)?.code);
-      if (q.status === 404 || code === 50002) {
-        console.log(
-          "[KPay] Order status endpoint unusable",
-          paymentId,
-          "HTTP",
-          q.status,
-          String(q.raw).slice(0, 200)
-        );
-        continue;
-      }
-
-      const rows = extractOrderRows(q.data);
-      const hit = matchOrderRow(rows, paymentId, managedOrderNo);
-
-      if (hit) {
-        const st = statusFromOrderRow(hit);
-        console.log("[KPay] Order status hit", {
-          paymentId,
-          st,
-          keys: Object.keys(hit).slice(0, 20),
-          statusFields: {
-            payStatus: hit.payStatus,
-            orderStatus: hit.orderStatus,
-            status: hit.status,
-          },
-        });
-        if (st !== "unknown") return st;
-      } else if (code === SUCCESS_CODE && rows.length === 0) {
-        console.log("[KPay] Order query empty list for", paymentId, "HTTP", q.status);
-      } else if (q.raw) {
-        console.log(
-          "[KPay] Order query no match",
-          paymentId,
-          "HTTP",
-          q.status,
-          String(q.raw).slice(0, 280)
-        );
-      }
-    } catch (err) {
-      console.warn("[KPay] Order lookup attempt error:", err);
-    }
+  const attempts: string[] = [];
+  if (managedOrderNo) {
+    attempts.push(
+      `${ORDER_RESULT_PATH}?managedOrderNo=${encodeURIComponent(managedOrderNo)}`
+    );
+  }
+  if (paymentId) {
+    attempts.push(
+      `${ORDER_RESULT_PATH}?managedOutTradeNo=${encodeURIComponent(paymentId)}`
+    );
   }
 
-  if (!sawAnyResponse) {
-    console.warn("[KPay] All order status lookups returned nothing for", paymentId);
+  for (const path of attempts) {
+    try {
+      const q = await kpayRequest<any>("GET", path);
+      const code = Number((q.data as any)?.code);
+      const data = (q.data as any)?.data;
+      console.log("[KPay] Order result query", {
+        path,
+        http: q.status,
+        code,
+        managedOrderState: data?.managedOrderState,
+      });
+
+      if (code !== SUCCESS_CODE || !data) continue;
+
+      const state = Number(data.managedOrderState);
+      if (state === MANAGED_STATE.PAID) return "paid";
+      if (
+        state === MANAGED_STATE.EXPIRED ||
+        state === MANAGED_STATE.CLOSED ||
+        state === MANAGED_STATE.REFUNDED
+      ) {
+        return "failed";
+      }
+
+      // Also inspect nested payment orders if present
+      const list = data.paymentOrderList || [];
+      for (const p of list) {
+        const r = Number(p.result);
+        if (r === TX_STATE.SUCCESS) return "paid";
+        if (r === TX_STATE.FAILED || r === TX_STATE.CANCELLED || r === TX_STATE.CLOSED) {
+          return "failed";
+        }
+      }
+      return "unknown";
+    } catch (err) {
+      console.warn("[KPay] Order result lookup error:", err);
+    }
   }
   return "unknown";
 }
