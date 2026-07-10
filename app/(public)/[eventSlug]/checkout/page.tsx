@@ -278,55 +278,43 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
     setNeedsManualConfirm(false);
 
     try {
-      // 1) Poll for webhook / existing purchase
-      // 2) Auto-finalize with pending session (server-side) so real pay → tickets without a button
-      const maxAttempts = 3;
-      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-        console.log(
-          "[Checkout] Finalizing after KPay return",
-          paymentReference,
-          `attempt ${attempt}/${maxAttempts}`
-        );
-        const result = await finalizeAfterPayment(paymentReference, usedCart, {
-          returnResult: "unknown",
+      // Wait for webhook (only real paid proof). Cancel never gets a paid webhook → no tickets.
+      console.log("[Checkout] Checking payment / webhook for", paymentReference);
+      const result = await finalizeAfterPayment(paymentReference, usedCart, {
+        returnResult: "unknown",
+      });
+
+      console.log("[Checkout] Finalize result:", result);
+
+      if (result.success) {
+        try {
+          sessionStorage.removeItem("pendingCart");
+          sessionStorage.removeItem(`kpay_cart_${paymentReference}`);
+          sessionStorage.removeItem("pendingKpaySession");
+        } catch {
+          /* ignore */
+        }
+        const successParams = new URLSearchParams({
+          ref: result.orderReference || paymentReference,
+          amount: usedCart.totalAmount.toString(),
         });
-
-        console.log("[Checkout] Finalize result:", result);
-
-        if (result.success) {
-          try {
-            sessionStorage.removeItem("pendingCart");
-            sessionStorage.removeItem(`kpay_cart_${paymentReference}`);
-            sessionStorage.removeItem("pendingKpaySession");
-          } catch {
-            /* ignore */
-          }
-          const successParams = new URLSearchParams({
-            ref: result.orderReference || paymentReference,
-            amount: usedCart.totalAmount.toString(),
-          });
-          router.replace(
-            `/${usedCart.eventSlug}/success?${successParams.toString()}`
-          );
-          return;
-        }
-
-        if (attempt < maxAttempts) {
-          await new Promise((r) => setTimeout(r, 800));
-        }
+        router.replace(
+          `/${usedCart.eventSlug}/success?${successParams.toString()}`
+        );
+        return;
       }
 
-      // Rare: no pending row / strict mode — last-resort manual buttons
+      // Not paid (cancel, still processing, or webhook missing)
       finalizedSessionsRef.current.delete(paymentReference);
       setNeedsManualConfirm(true);
       setError(
-        "Could not auto-confirm this payment. If you paid, tap below to issue tickets. If you cancelled, go back."
+        "Payment not confirmed yet. If you cancelled, use “No ticket”. If you completed payment, wait a few seconds and tap “I paid” (or check email — webhook may still arrive)."
       );
     } catch (e) {
       console.error("[Checkout] Return finalize error:", e);
       finalizedSessionsRef.current.delete(paymentReference);
       setNeedsManualConfirm(true);
-      setError("Could not complete payment. If you paid, tap below to get tickets.");
+      setError("Could not verify payment. If you paid, tap “I paid”. If you cancelled, no ticket.");
     } finally {
       setIsProcessing(false);
     }
@@ -516,13 +504,15 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
               </div>
             </div>
 
-            {/* Fallback only if auto-confirm failed (missing pending / strict env) */}
+            {/* Shown when webhook has not confirmed paid (cancel OR pay still processing) */}
             {needsManualConfirm && hasReturnSession && (
               <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-4 space-y-3">
                 <div>
-                  <p className="font-medium text-amber-950">Confirm tickets</p>
+                  <p className="font-medium text-amber-950">Payment status unknown</p>
                   <p className="text-sm text-amber-900/80 mt-1">
-                    Auto-confirm did not complete. Use only if you actually paid.
+                    KPay does not tell us paid vs cancelled on return. Real pays should
+                    auto-confirm via webhook. If you paid and nothing happened, use green.
+                    If you cancelled, use grey — do not issue a ticket.
                   </p>
                 </div>
                 <div className="flex flex-col gap-2">
@@ -540,7 +530,7 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
                     disabled={isProcessing}
                     onClick={handleManualCancel}
                   >
-                    Cancel — no ticket
+                    I cancelled — no ticket
                   </button>
                 </div>
                 {returnDebug && (

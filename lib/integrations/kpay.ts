@@ -608,10 +608,13 @@ export async function confirmKpayPayment(
   // Webhook already marked pending paid
   let pending = await getPendingPayment(paymentId);
 
-  // Brief wait for webhook on public host (Vercel) — browser return often races notify
-  if (pending?.status !== "paid" && (process.env.VERCEL || process.env.KPAY_WAIT_WEBHOOK === "true")) {
-    for (let i = 0; i < 2; i++) {
-      await sleep(500);
+  // Wait for webhook on public host — browser return often races notify by a few seconds
+  if (
+    pending?.status !== "paid" &&
+    (process.env.VERCEL || process.env.KPAY_WAIT_WEBHOOK === "true")
+  ) {
+    for (let i = 0; i < 6; i++) {
+      await sleep(800);
       pending = await getPendingPayment(paymentId);
       if (pending?.status === "paid") break;
       try {
@@ -654,15 +657,14 @@ export async function confirmKpayPayment(
     };
   }
 
-  // KPay return URL is identical for pay and cancel (no status flag; order API broken
-  // on sandbox). Webhook is best; until it fires, auto-confirm when we still have the
-  // pending cart we created for this outTradeNo (proves initiate on our server).
-  //
-  // Set KPAY_REQUIRE_API_CONFIRM=true to disable this and require webhook/API only.
-  // Set KPAY_AUTO_CONFIRM_RETURN=false to require the manual “I paid” button again.
+  // KPay return URL is the SAME for pay and cancel — never auto-issue on bare return
+  // (that made cancel → "Purchase confirmed"). Only:
+  //   1) webhook / existing purchase (above)
+  //   2) order API paid (above)
+  //   3) explicit userConfirmedPaid (manual button after return)
+  // Opt-in only: KPAY_AUTO_CONFIRM_RETURN=true (not recommended; free tickets on cancel)
   const requireApi = process.env.KPAY_REQUIRE_API_CONFIRM === "true";
-  const autoReturn =
-    process.env.KPAY_AUTO_CONFIRM_RETURN !== "false" && !requireApi;
+  const autoReturn = process.env.KPAY_AUTO_CONFIRM_RETURN === "true" && !requireApi;
   const allowFinalize =
     !requireApi &&
     (Boolean(pending) || !isProduction()) &&
@@ -670,7 +672,7 @@ export async function confirmKpayPayment(
 
   if (allowFinalize) {
     console.warn(
-      "[KPay] Accepting return with pending session (auto or user-confirmed).",
+      "[KPay] Accepting return (user-confirmed or KPAY_AUTO_CONFIRM_RETURN).",
       {
         paymentId,
         hasPending: Boolean(pending),
