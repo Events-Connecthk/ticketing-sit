@@ -33,7 +33,6 @@ function normalizeEvent(raw: any): EventConfig {
     enabled: raw.enabled !== false,
     paymentEnabled: raw.paymentEnabled !== false && raw.payment_enabled !== false,
     ticketTemplate: raw.ticketTemplate || raw.ticket_template || undefined,
-    image: raw.image,
     ticketTypes: (raw.ticketTypes || raw.ticket_types || []).map((t: any) => ({
       ...t,
       enabled: t.enabled !== false,

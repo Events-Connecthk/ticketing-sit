@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { OrderSummary } from "@/components/ticketing";
 import { OrderCart } from "@/types";
@@ -10,19 +10,61 @@ import { ArrowLeft, CreditCard } from "lucide-react";
 
 /**
  * Checkout Page
- * 
- * Current state:
- * - Reads cart from sessionStorage (set by event page)
- * - Shows clean order summary
- * - Has a "Pay with KPay" button that currently simulates success
- * 
- * When payment integration is built:
- * - startCheckoutFlow will return a real redirectUrl
- * - On return / webhook, finalizeAfterPayment will be called
+ *
+ * Flow:
+ * - Reads cart from sessionStorage (pendingCart)
+ * - Calls startCheckoutFlow → initiateKpayPayment
+ * - Real KPay → external paymentUrl
+ * - On return (?session=<outTradeNo>) → poll status; never auto-issue on bare return
+ *   (KPay may reuse returnUrl for cancel). User confirms pay only if needed.
  */
 
 interface CheckoutPageProps {
   params: Promise<{ eventSlug: string }>;
+}
+
+type ReturnKind = "success" | "cancel" | "unknown";
+
+function detectReturnKind(searchParams: URLSearchParams): {
+  session: string | null;
+  kind: ReturnKind;
+  rawResult: string;
+  fullQuery: string;
+} {
+  const session =
+    searchParams.get("session") ||
+    searchParams.get("outTradeNo") ||
+    searchParams.get("out_trade_no") ||
+    searchParams.get("managedOrderNo") ||
+    searchParams.get("orderNo");
+
+  const rawResult = (
+    searchParams.get("kpay_result") ||
+    searchParams.get("result") ||
+    searchParams.get("status") ||
+    searchParams.get("payStatus") ||
+    searchParams.get("pay_status") ||
+    ""
+  ).toLowerCase();
+
+  const isCancel = ["cancel", "cancelled", "fail", "failed", "error", "close", "closed"].some(
+    (s) => rawResult === s || rawResult.includes(s)
+  );
+  const isSuccess = ["success", "paid", "ok", "complete", "completed", "successful"].some(
+    (s) => rawResult === s || rawResult.includes(s)
+  );
+
+  let kind: ReturnKind = "unknown";
+  if (isCancel) kind = "cancel";
+  else if (isSuccess) kind = "success";
+  // Bare return (no status) stays "unknown" — do NOT treat as success
+
+  return {
+    session,
+    kind,
+    rawResult,
+    fullQuery: typeof window !== "undefined" ? window.location.search : "",
+  };
 }
 
 export default function CheckoutPage({ params }: CheckoutPageProps) {
@@ -34,18 +76,32 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
   const [event, setEvent] = useState<any>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** After return from KPay when status is unknown — show confirm/cancel buttons */
+  const [needsManualConfirm, setNeedsManualConfirm] = useState(false);
+  const [returnDebug, setReturnDebug] = useState<string>("");
+  /** Prevents re-running finalize when isProcessing flips false while ?session= is still in the URL */
+  const finalizedSessionsRef = useRef<Set<string>>(new Set());
 
-  // Read slug
   useEffect(() => {
     params.then((p) => setEventSlug(p.eventSlug));
   }, [params]);
 
-  // Load cart from storage
+  // Load cart from storage (including KPay return keyed by outTradeNo)
   useEffect(() => {
     if (!eventSlug) return;
 
-    const stored = sessionStorage.getItem("pendingCart");
-    if (stored) {
+    const session =
+      searchParams.get("session") ||
+      searchParams.get("outTradeNo") ||
+      searchParams.get("out_trade_no");
+
+    const candidates = [
+      session ? sessionStorage.getItem(`kpay_cart_${session}`) : null,
+      sessionStorage.getItem("pendingCart"),
+    ];
+
+    for (const stored of candidates) {
+      if (!stored) continue;
       try {
         const parsed = JSON.parse(stored) as OrderCart;
         if (parsed.eventSlug === eventSlug) {
@@ -56,25 +112,65 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
         // ignore
       }
     }
-    // If no valid cart, send user back
-    router.replace(`/${eventSlug}`);
-  }, [eventSlug, router]);
 
-  // Load event (async from DB or fallback)
+    if (!session) {
+      router.replace(`/${eventSlug}`);
+    }
+  }, [eventSlug, router, searchParams]);
+
   useEffect(() => {
     if (!eventSlug) return;
     loadEventBySlug(eventSlug).then(setEvent);
   }, [eventSlug]);
 
-  // Handle the case where user returns from simulated KPay redirect with a session param
+  // Handle return from KPay
+  // IMPORTANT: do not depend on isProcessing — that caused an infinite finalize loop.
   useEffect(() => {
-    const session = searchParams.get("session");
-    if (session && cart && !isProcessing) {
-      // Auto-finalize simulation - pass cart to avoid TDZ
-      handlePaymentSuccess(session, cart);
+    if (!cart) return;
+
+    const { session, kind, rawResult, fullQuery } = detectReturnKind(searchParams);
+    if (!session) return;
+
+    setReturnDebug(
+      `session=${session} kind=${kind} rawResult=${rawResult || "(empty)"} query=${fullQuery}`
+    );
+    console.log("[Checkout] Return from KPay", { session, kind, rawResult, fullQuery });
+
+    const isInternalSim =
+      session.startsWith("KPAY-") ||
+      session.startsWith("SIM-") ||
+      session.startsWith("FREE-");
+
+    // Explicit cancel marker (our cancelUrl)
+    if (kind === "cancel") {
+      if (finalizedSessionsRef.current.has(`cancel:${session}`)) return;
+      finalizedSessionsRef.current.add(`cancel:${session}`);
+      setNeedsManualConfirm(false);
+      setError("Payment was cancelled. No ticket was issued — you can try again.");
+      setIsProcessing(false);
+      try {
+        sessionStorage.removeItem(`kpay_cart_${session}`);
+      } catch {
+        /* ignore */
+      }
+      return;
     }
+
+    if (finalizedSessionsRef.current.has(session)) return;
+    finalizedSessionsRef.current.add(session);
+
+    // Internal sim always finalizes as success
+    if (isInternalSim) {
+      void handlePaymentSuccess(session, cart, "success");
+      return;
+    }
+
+    // Real KPay: ALWAYS poll with "unknown" first — never auto-trust bare return.
+    // If paid (API/webhook) → tickets. If not → show manual confirm buttons.
+    // (KPay often lands cancel on the same URL as success without kpay_result=cancel.)
+    void handlePaymentReturnPoll(session, cart);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchParams, cart, isProcessing]);
+  }, [searchParams, cart]);
 
   if (!eventSlug || !event || !cart) {
     return (
@@ -84,41 +180,132 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
     );
   }
 
-  // After this guard, cart is guaranteed to be non-null.
-  // We assign to a const with explicit type so all handlers and JSX below
-  // have a clean non-nullable reference (avoids TS narrowing issues with state).
   const currentCart: OrderCart = cart;
   const isFreeEvent = !event.paymentEnabled;
 
-  async function handlePaymentSuccess(paymentReference?: string, passedCart?: OrderCart) {
-    const usedCart = passedCart || currentCart;
+  async function handlePaymentReturnPoll(paymentReference: string, usedCart: OrderCart) {
     setIsProcessing(true);
     setError(null);
+    setNeedsManualConfirm(false);
 
     try {
-      console.log("[Checkout] Starting payment finalization for", paymentReference);
-      // In real flow this would be called after KPay redirects back + verifies
-      const result = await finalizeAfterPayment(paymentReference || "SIM-" + Date.now(), usedCart);
+      // On public hosts, webhook may finish after browser return — retry a few times
+      const maxAttempts = 4;
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        console.log(
+          "[Checkout] Polling payment status",
+          paymentReference,
+          `attempt ${attempt}/${maxAttempts}`
+        );
+        const result = await finalizeAfterPayment(paymentReference, usedCart, {
+          returnResult: "unknown",
+        });
 
-      // Clean up temp cart
-      sessionStorage.removeItem("pendingCart");
+        console.log("[Checkout] Poll finalize result:", result);
+
+        if (result.success) {
+          try {
+            sessionStorage.removeItem("pendingCart");
+            sessionStorage.removeItem(`kpay_cart_${paymentReference}`);
+            sessionStorage.removeItem("pendingKpaySession");
+          } catch {
+            /* ignore */
+          }
+          const successParams = new URLSearchParams({
+            ref: result.orderReference || paymentReference,
+            amount: usedCart.totalAmount.toString(),
+          });
+          router.replace(
+            `/${usedCart.eventSlug}/success?${successParams.toString()}`
+          );
+          return;
+        }
+
+        if (attempt < maxAttempts) {
+          await new Promise((r) => setTimeout(r, 1200));
+        }
+      }
+
+      // Still unknown — KPay return has no paid/cancel flag; user must choose
+      finalizedSessionsRef.current.delete(paymentReference);
+      setNeedsManualConfirm(true);
+      setError(null);
+    } catch (e) {
+      console.error("[Checkout] Poll error:", e);
+      finalizedSessionsRef.current.delete(paymentReference);
+      setNeedsManualConfirm(true);
+      setError("Could not check payment status. If you paid, use the green button.");
+    } finally {
+      setIsProcessing(false);
+    }
+  }
+
+  async function handlePaymentSuccess(
+    paymentReference?: string,
+    passedCart?: OrderCart,
+    returnResult: ReturnKind = "unknown",
+    userConfirmedPaid = false
+  ) {
+    const usedCart = passedCart || currentCart;
+    const sessionKey = paymentReference || "SIM-" + Date.now();
+    if (paymentReference) {
+      finalizedSessionsRef.current.add(paymentReference);
+    }
+
+    setIsProcessing(true);
+    setError(null);
+    setNeedsManualConfirm(false);
+
+    try {
+      console.log(
+        "[Checkout] Starting payment finalization for",
+        paymentReference,
+        returnResult,
+        "userConfirmed=",
+        userConfirmedPaid
+      );
+      const result = await finalizeAfterPayment(sessionKey, usedCart, {
+        returnResult,
+        userConfirmedPaid,
+      });
+
+      try {
+        sessionStorage.removeItem("pendingCart");
+        if (paymentReference) {
+          sessionStorage.removeItem(`kpay_cart_${paymentReference}`);
+        }
+        sessionStorage.removeItem("pendingKpaySession");
+      } catch {
+        // ignore
+      }
 
       console.log("[Checkout] Finalize result:", result);
 
       if (result.success) {
-        // Pass minimal data to success page
         const successParams = new URLSearchParams({
           ref: result.orderReference || paymentReference || "",
           amount: usedCart.totalAmount.toString(),
         });
         console.log("[Checkout] Redirecting to success");
-        router.push(`/${usedCart.eventSlug}/success?${successParams.toString()}`);
+        router.replace(`/${usedCart.eventSlug}/success?${successParams.toString()}`);
+        return;
       } else {
         setError(result.error || "Payment processing failed");
+        if (paymentReference) {
+          finalizedSessionsRef.current.delete(paymentReference);
+        }
+        // Only show manual confirm if not an explicit cancel
+        if (returnResult !== "cancel") {
+          setNeedsManualConfirm(true);
+        }
       }
     } catch (e) {
       console.error("[Checkout] Error in payment success handling:", e);
       setError("An unexpected error occurred.");
+      if (paymentReference) {
+        finalizedSessionsRef.current.delete(paymentReference);
+      }
+      setNeedsManualConfirm(true);
     } finally {
       setIsProcessing(false);
     }
@@ -127,16 +314,17 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
   async function handlePayWithKpay() {
     setIsProcessing(true);
     setError(null);
+    setNeedsManualConfirm(false);
 
     if (isFreeEvent) {
       console.log("[Checkout] Free registration");
       const freeCart = { ...currentCart, totalAmount: 0 };
-      await handlePaymentSuccess("FREE-" + Date.now(), freeCart);
+      await handlePaymentSuccess("FREE-" + Date.now(), freeCart, "success");
       setIsProcessing(false);
       return;
     }
 
-    console.log("[Checkout] Starting simulated payment");
+    console.log("[Checkout] Starting KPay payment flow");
     const result = await startCheckoutFlow(currentCart);
 
     if (!result.success || !result.sessionId) {
@@ -145,13 +333,66 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
       return;
     }
 
-    // For current development: directly process the simulation (no extra redirect)
-    // This avoids re-initialization issues and makes it less "stuck"
-    await handlePaymentSuccess(result.sessionId, currentCart);
+    try {
+      sessionStorage.setItem(
+        `kpay_cart_${result.sessionId}`,
+        JSON.stringify(currentCart)
+      );
+      sessionStorage.setItem("pendingCart", JSON.stringify(currentCart));
+      sessionStorage.setItem("pendingKpaySession", result.sessionId);
+    } catch {
+      // ignore quota errors
+    }
+
+    if (result.checkoutUrl && /^https?:\/\//i.test(result.checkoutUrl)) {
+      console.log("[Checkout] Redirecting to KPay hosted checkout");
+      window.location.href = result.checkoutUrl;
+      return;
+    }
+
+    await handlePaymentSuccess(result.sessionId, currentCart, "success");
   }
 
+  function handleManualPaid() {
+    const s =
+      searchParams.get("session") ||
+      searchParams.get("outTradeNo") ||
+      searchParams.get("out_trade_no") ||
+      "";
+    if (!s) {
+      setError("Missing payment session. Start checkout again.");
+      return;
+    }
+    // Explicit user action only — never auto on redirect (cancel-safe)
+    finalizedSessionsRef.current.delete(s);
+    void handlePaymentSuccess(s, currentCart, "success", true);
+  }
+
+  function handleManualCancel() {
+    const s =
+      searchParams.get("session") ||
+      searchParams.get("outTradeNo") ||
+      searchParams.get("out_trade_no") ||
+      "";
+    if (s) {
+      finalizedSessionsRef.current.add(`cancel:${s}`);
+      try {
+        sessionStorage.removeItem(`kpay_cart_${s}`);
+      } catch {
+        /* ignore */
+      }
+    }
+    setNeedsManualConfirm(false);
+    setError("Payment was cancelled. No ticket was issued — you can try again.");
+    setIsProcessing(false);
+  }
+
+  const hasReturnSession = Boolean(
+    searchParams.get("session") || searchParams.get("outTradeNo")
+  );
+
   return (
-    <div className="min-h-screen py-10" style={{ background: '#FAF8F5' }}>
+    <div className="min-h-screen py-10" style={{ background: "#FAF8F5" }}>
       <div className="max-w-2xl mx-auto px-6">
         <button
           onClick={() => router.back()}
@@ -174,14 +415,54 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
                 <CreditCard className="h-4 w-4 text-emerald-600" />
               </div>
               <div>
-                <div className="font-medium">{isFreeEvent ? "Free Registration" : "Pay with KPay"}</div>
-                <div className="text-xs" style={{ color: '#6B5E50' }}>{isFreeEvent ? "No payment required" : "Secure payment processing"}</div>
+                <div className="font-medium">
+                  {isFreeEvent ? "Free Registration" : "Pay with KPay"}
+                </div>
+                <div className="text-xs" style={{ color: "#6B5E50" }}>
+                  {isFreeEvent ? "No payment required" : "Secure payment processing"}
+                </div>
               </div>
             </div>
 
-            {error && (
+            {/* After KPay return: status is unknown (same URL for pay & cancel on sandbox) */}
+            {needsManualConfirm && hasReturnSession && (
+              <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-4 space-y-3">
+                <div>
+                  <p className="font-medium text-amber-950">Did you finish paying?</p>
+                  <p className="text-sm text-amber-900/80 mt-1">
+                    KPay sent you back without saying paid vs cancelled, and localhost
+                    cannot check the bank result automatically. Choose one:
+                  </p>
+                </div>
+                <div className="flex flex-col gap-2">
+                  <button
+                    type="button"
+                    className="rounded-lg bg-emerald-600 text-white px-4 py-3 font-medium disabled:opacity-60"
+                    disabled={isProcessing}
+                    onClick={handleManualPaid}
+                  >
+                    Yes — I paid, get my tickets
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded-lg border border-zinc-300 bg-white text-zinc-800 px-4 py-3 font-medium disabled:opacity-60"
+                    disabled={isProcessing}
+                    onClick={handleManualCancel}
+                  >
+                    No — I cancelled, do not issue a ticket
+                  </button>
+                </div>
+                {returnDebug && (
+                  <p className="text-[10px] text-zinc-500 break-all font-mono">
+                    {returnDebug}
+                  </p>
+                )}
+              </div>
+            )}
+
+            {error && !needsManualConfirm && (
               <div className="mb-4 rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-700">
-                {error}
+                <p>{error}</p>
               </div>
             )}
 
@@ -190,11 +471,21 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
               disabled={isProcessing}
               className="btn-gold w-full rounded-xl py-4 font-medium text-lg disabled:opacity-60"
             >
-              {isProcessing ? (isFreeEvent ? "Registering..." : "Processing payment...") : (isFreeEvent ? "Register for Free" : `Pay ${currentCart.currency} ${currentCart.totalAmount} with KPay`)}
+              {isProcessing
+                ? isFreeEvent
+                  ? "Registering..."
+                  : hasReturnSession
+                    ? "Checking payment..."
+                    : "Processing payment..."
+                : isFreeEvent
+                  ? "Register for Free"
+                  : `Pay ${currentCart.currency} ${currentCart.totalAmount} with KPay`}
             </button>
 
             <p className="text-center text-xs text-zinc-500 mt-3">
-              {isFreeEvent ? "Free registration flow. No payment required." : "This is a simulated checkout. Real KPay integration can be enabled on request."}
+              {isFreeEvent
+                ? "Free registration flow. No payment required."
+                : "You will be redirected to KPay to complete payment securely."}
             </p>
           </div>
         </div>

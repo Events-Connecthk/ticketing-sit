@@ -117,12 +117,15 @@ export interface PurchaseRecord {
   amount: number;
   currency?: string;
   event_slug: string;
-  // Optional rich data for future reporting
-  ticket_breakdown?: TicketSelection[];
-  order_reference?: string; // From external system or internal
-  payment_reference?: string; // From KPay or internal
-  redeemed_at?: string; // Timestamp when QR was scanned/used (legacy, for single redemption)
-  redemptions?: string[]; // Array of redemption timestamps (for multi-day / multi-access tickets)
+  // Rich data: after checkout each unit has quantity:1 + serial (KPY-xxx-001, …)
+  // Legacy rows may still be { ticketTypeId, quantity: N } without serial.
+  ticket_breakdown?: Array<
+    TicketSelection & { serial?: string; redemptions?: string[] }
+  >;
+  order_reference?: string; // Order-level ref e.g. KPY-1783...
+  payment_reference?: string; // From KPay or FREE-...
+  redeemed_at?: string; // Legacy order-level redemption
+  redemptions?: string[]; // Legacy order-level multi-day redemptions
   // Applied discount code (if any)
   applied_discount_code?: string;
   discount_amount?: number;

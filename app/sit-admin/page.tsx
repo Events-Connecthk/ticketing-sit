@@ -3,8 +3,13 @@
 import React, { useEffect, useState } from "react";
 import jsQR from "jsqr";
 import { PurchaseRecord, EventConfig, TicketType, BuyerFormField, DiscountCode } from "@/types";
-import { getAllPurchases } from "@/lib/db/purchases";
-import { getAllEvents, saveEvent, deleteEvent, toggleEventEnabled, isSupabaseConfigured } from "@/lib/db/events";
+import { getAllEvents, isSupabaseConfigured } from "@/lib/db/events";
+import {
+  adminSaveEvent,
+  adminDeleteEvent,
+  adminGetAllPurchases,
+  adminSavePurchase,
+} from "./actions";
 import { getDefaultDemoEvent } from "@/lib/config/events";
 import * as XLSX from "xlsx";
 import { Download, Search, RefreshCw, Plus, Edit2, Trash2, ToggleLeft, ToggleRight } from "lucide-react";
@@ -84,7 +89,8 @@ export default function AdminDashboard() {
   async function loadPurchases() {
     setLoading(true);
     try {
-      const data = await getAllPurchases({
+      // Use server action with service_role for secure admin read
+      const data = await adminGetAllPurchases({
         search: search || undefined,
         eventSlug: eventFilter || undefined,
       });
@@ -96,30 +102,44 @@ export default function AdminDashboard() {
     }
   }
 
-  // Admin-only redemption functions (called only from the Scanner tab)
+  // Admin-only redemption (order ref OR ticket serial KPY-…-001)
 
-  // Helper: compute max redemptions allowed for a purchase based on its ticket types
-  function getMaxRedemptionsForPurchase(p: any, eventsList: any[] = []): number {
+  function getTicketTypeLimit(eventSlug: string, ticketTypeId: string): number {
+    const event = events.find((e) => e.slug === eventSlug);
+    const tt = event?.ticketTypes?.find((t) => t.id === ticketTypeId);
+    return tt?.redemptionLimit ?? 1;
+  }
+
+  function getMaxRedemptionsForPurchase(p: any): number {
     if (!p.ticket_breakdown || p.ticket_breakdown.length === 0) return 1;
-
     let maxLimit = 1;
     for (const sel of p.ticket_breakdown) {
-      // Try to find the event to get ticket type details
-      // For simplicity we use the current loaded events or fall back
-      const event = events.find(e => e.slug === p.event_slug) || eventsList.find((e: any) => e.slug === p.event_slug);
-      if (event?.ticketTypes) {
-        const tt = event.ticketTypes.find((t: any) => t.id === sel.ticketTypeId);
-        if (tt?.redemptionLimit) {
-          maxLimit = Math.max(maxLimit, tt.redemptionLimit);
-        }
-      }
+      maxLimit = Math.max(maxLimit, getTicketTypeLimit(p.event_slug, sel.ticketTypeId));
     }
     return maxLimit;
   }
 
   function getCurrentRedemptionCount(p: any): number {
+    // Prefer sum of per-ticket redemptions when serials exist
+    const units = p.ticket_breakdown || [];
+    if (units.some((u: any) => u.serial)) {
+      return units.reduce(
+        (sum: number, u: any) => sum + (u.redemptions?.length || 0),
+        0
+      );
+    }
     if (p.redemptions && p.redemptions.length > 0) return p.redemptions.length;
     return p.redeemed_at ? 1 : 0;
+  }
+
+  function getTotalTicketSlots(p: any): number {
+    const units = p.ticket_breakdown || [];
+    if (units.some((u: any) => u.serial)) return units.length;
+    return (
+      units.reduce((s: number, u: any) => s + (u.quantity || 1), 0) ||
+      p.number_of_tickets ||
+      1
+    );
   }
 
   async function checkTicketStatus(ref: string) {
@@ -127,72 +147,151 @@ export default function AdminDashboard() {
     setScanMessage("Checking...");
     setScanResult(null);
 
-    const all = await getAllPurchases();
-    const found = all.find((p: any) =>
-      p.order_reference === ref || p.payment_reference === ref
+    const { purchaseMatchesRef, findTicketUnit, listSerials } = await import(
+      "@/lib/tickets/serials"
     );
+    const all = await adminGetAllPurchases();
+    const found = all.find((p: any) => purchaseMatchesRef(p, ref.trim()));
 
     if (!found) {
       setScanMessage("No ticket found for that reference.");
       setScanResult(null);
-    } else {
-      setScanResult(found);
-      const max = getMaxRedemptionsForPurchase(found);
-      const count = getCurrentRedemptionCount(found);
+      return;
+    }
+
+    setScanResult({ ...found, _scannedRef: ref.trim() });
+    const unit = findTicketUnit(found, ref.trim());
+    const serials = listSerials(found);
+
+    if (unit) {
+      const max = getTicketTypeLimit(found.event_slug, unit.ticketTypeId);
+      const count = unit.redemptions?.length || 0;
       if (count >= max) {
-        setScanMessage(`Fully redeemed (${count}/${max} times)`);
+        setScanMessage(`Ticket ${unit.serial}: fully redeemed (${count}/${max})`);
       } else {
-        setScanMessage(`Valid — ${count}/${max} redemptions used`);
+        setScanMessage(`Ticket ${unit.serial}: VALID (${count}/${max} redemptions used)`);
       }
+    } else {
+      const maxSlots = getTotalTicketSlots(found);
+      const count = getCurrentRedemptionCount(found);
+      setScanMessage(
+        `Order ${found.order_reference}: ${count}/${maxSlots} ticket redemptions used. Serials: ${serials.join(", ") || "—"}`
+      );
     }
   }
 
   async function redeemTicket(ref: string) {
     if (!ref.trim()) return;
+    const scanned = ref.trim();
 
-    const all = await getAllPurchases();
-    const foundIndex = all.findIndex((p: any) =>
-      p.order_reference === ref || p.payment_reference === ref
+    const { purchaseMatchesRef, findTicketUnit, listSerials } = await import(
+      "@/lib/tickets/serials"
     );
+    const all = await adminGetAllPurchases();
+    const found = all.find((p: any) => purchaseMatchesRef(p, scanned));
 
-    if (foundIndex === -1) {
+    if (!found) {
       setScanMessage("Ticket not found.");
       return;
     }
 
-    const p = all[foundIndex];
-    const max = getMaxRedemptionsForPurchase(p);
-    const currentCount = getCurrentRedemptionCount(p);
+    const now = new Date().toISOString();
+    let unit = findTicketUnit(found, scanned);
 
-    if (currentCount >= max) {
-      setScanMessage(`This ticket has already been fully redeemed (${currentCount}/${max}).`);
-      setScanResult(p);
+    // Order-level scan with multiple tickets: require a specific serial
+    if (!unit && listSerials(found).length > 1 && scanned === found.order_reference) {
+      setScanMessage(
+        `Multi-ticket order. Scan a ticket QR (e.g. ${listSerials(found)[0]}), not only the order ref.`
+      );
+      setScanResult({ ...found, _scannedRef: scanned });
       return;
     }
 
-    // Build new redemptions array
-    const newRedemptions = [...(p.redemptions || [])];
-    const now = new Date().toISOString();
-    newRedemptions.push(now);
+    // Single-ticket order scanned by order ref → redeem that unit
+    const breakdown = found.ticket_breakdown || [];
+    if (!unit && breakdown.length === 1) {
+      const only = breakdown[0] as {
+        ticketTypeId: string;
+        serial?: string;
+        redemptions?: string[];
+      };
+      if (only?.serial) {
+        unit = {
+          ticketTypeId: only.ticketTypeId,
+          quantity: 1 as const,
+          serial: only.serial,
+          redemptions: only.redemptions || [],
+        };
+      }
+    }
 
+    if (unit?.serial) {
+      const max = getTicketTypeLimit(found.event_slug, unit.ticketTypeId);
+      const count = unit.redemptions?.length || 0;
+      if (count >= max) {
+        setScanMessage(`Ticket ${unit.serial} already fully redeemed (${count}/${max}).`);
+        setScanResult({ ...found, _scannedRef: scanned });
+        return;
+      }
+
+      const breakdown = (found.ticket_breakdown || []).map((t: any) => {
+        if (t.serial !== unit!.serial) return t;
+        return {
+          ...t,
+          redemptions: [...(t.redemptions || []), now],
+        };
+      });
+
+      const updated = {
+        ...found,
+        ticket_breakdown: breakdown,
+        redeemed_at: now,
+        redemptions: [...(found.redemptions || []), now],
+      };
+
+      const saved = await adminSavePurchase(updated as any);
+      if (!saved) {
+        setScanMessage(
+          "❌ Could not save check-in to database. Check service role key + that purchases.ticket_breakdown / redeemed_at exist."
+        );
+        setScanResult({ ...updated, _scannedRef: unit.serial });
+        return;
+      }
+      setScanResult({ ...saved, _scannedRef: unit.serial });
+      setScanMessage(
+        `✅ Redeemed ${unit.serial} (${count + 1}/${max}) at ${new Date().toLocaleTimeString()}`
+      );
+      await loadPurchases();
+      return;
+    }
+
+    // Legacy order without serials
+    const max = getMaxRedemptionsForPurchase(found);
+    const currentCount = getCurrentRedemptionCount(found);
+    if (currentCount >= max) {
+      setScanMessage(`Already fully redeemed (${currentCount}/${max}).`);
+      setScanResult(found);
+      return;
+    }
+    const newRedemptions = [...(found.redemptions || []), now];
     const updated = {
-      ...p,
+      ...found,
       redemptions: newRedemptions,
-      // keep legacy redeemed_at for compatibility
       redeemed_at: now,
     };
-
-    const { savePurchase } = await import("@/lib/db/purchases");
-    await savePurchase(updated as any);
-
-    setScanResult(updated);
-    setScanMessage(`✅ Redeemed (${newRedemptions.length}/${max}) at ${new Date().toLocaleTimeString()}`);
-
-    // Refresh the main purchases list so table + exports are up to date
+    const saved = await adminSavePurchase(updated as any);
+    if (!saved) {
+      setScanMessage(
+        "❌ Could not save check-in to database. Check SUPABASE_SERVICE_ROLE_KEY and schema."
+      );
+      setScanResult(updated);
+      return;
+    }
+    setScanResult(saved);
+    setScanMessage(
+      `✅ Redeemed (${newRedemptions.length}/${max}) at ${new Date().toLocaleTimeString()}`
+    );
     await loadPurchases();
-
-    // Also clear input for next scan
-    // setScanRef(""); // optional
   }
 
   // ===== Camera QR Scanner (only available to logged-in admins) =====
@@ -266,16 +365,20 @@ export default function AdminDashboard() {
       if (extractedRef && extractedRef !== scanRef) {
         setScanRef(extractedRef);
         stopCameraScanner();
-        setScanMessage(`QR detected: ${extractedRef}. Checking...`);
-        // Auto check + offer redeem
-        checkTicketStatus(extractedRef);
+        setScanMessage(`QR detected: ${extractedRef}. Checking in...`);
+        // Door workflow: check + redeem in one step, then refresh lists
+        void (async () => {
+          await checkTicketStatus(extractedRef);
+          await redeemTicket(extractedRef);
+          await loadPurchases();
+        })();
       }
     }
   }
 
-  // Ensure purchases are loaded when switching back to purchases tab
+  // Reload purchases when viewing purchases or attendance
   useEffect(() => {
-    if (isAuthenticated && activeTab === "purchases") {
+    if (isAuthenticated && (activeTab === "purchases" || activeTab === "attendance")) {
       loadPurchases();
     }
   }, [isAuthenticated, activeTab]);
@@ -431,10 +534,9 @@ export default function AdminDashboard() {
       },
     ];
 
-    // We call savePurchase multiple times (it will use memory when no Supabase)
-    const { savePurchase } = await import("@/lib/db/purchases");
+    // Use admin save for demo data (service role)
     for (const p of demoPurchases) {
-      await savePurchase(p as any);
+      await adminSavePurchase(p as any);
     }
     await loadPurchases();
   }
@@ -455,7 +557,7 @@ export default function AdminDashboard() {
 
   async function seedDemoAtThePeak() {
     const demo = getDefaultDemoEvent();
-    await saveEvent(demo);
+    await adminSaveEvent(demo);
     await loadEvents();
   }
 
@@ -630,12 +732,17 @@ export default function AdminDashboard() {
     };
 
     try {
-      await saveEvent(newEvent);
-      closeModal();
-      await loadEvents();
-      toast.success(`Event "${newEvent.name}" saved successfully!`);
-      if (!usingSupabase) {
-        toast.warning("Saved to memory only — will disappear after refresh. Check Supabase keys + restart.");
+      // Use server action with service_role for secure write
+      const saved = await adminSaveEvent(newEvent);
+      if (saved) {
+        closeModal();
+        await loadEvents();
+        toast.success(`Event "${newEvent.name}" saved successfully!`);
+        if (!usingSupabase) {
+          toast.warning("Saved to memory only — will disappear after refresh. Check Supabase keys + restart.");
+        }
+      } else {
+        toast.error("Failed to save event to Supabase");
       }
     } catch (e) {
       console.error(e);
@@ -645,13 +752,15 @@ export default function AdminDashboard() {
 
   async function handleDeleteEvent(slug: string) {
     if (!confirm(`Delete event "${slug}"? This cannot be undone.`)) return;
-    await deleteEvent(slug);
+    await adminDeleteEvent(slug);
     await loadEvents();
     toast.success("Event deleted");
   }
 
   async function handleToggleEvent(slug: string, currentEnabled: boolean) {
-    await toggleEventEnabled(slug, !currentEnabled);
+    const existing = events.find((e) => e.slug === slug);
+    if (!existing) return;
+    await adminSaveEvent({ ...existing, enabled: !currentEnabled });
     await loadEvents();
   }
 
@@ -869,12 +978,12 @@ export default function AdminDashboard() {
                   <th className="p-4 font-medium">Date</th>
                   <th className="p-4 font-medium">Name</th>
                   <th className="p-4 font-medium">Email / Phone</th>
-                  <th className="p-4 font-medium text-center">Tickets</th>
+                  <th className="p-4 font-medium text-center">#</th>
                   <th className="p-4 font-medium text-right">Amount</th>
                   <th className="p-4 font-medium">Event</th>
                   <th className="p-4 font-medium">Order Ref</th>
-                  <th className="p-4 font-medium">Status</th>
-                  <th className="p-4 font-medium">Redeemed At</th>
+                  <th className="p-4 font-medium min-w-[12rem]">Per-ticket check-ins</th>
+                  <th className="p-4 font-medium">Summary</th>
                 </tr>
               </thead>
               <tbody className="divide-y">
@@ -885,7 +994,7 @@ export default function AdminDashboard() {
                   <tr><td colSpan={9} className="p-10 text-center text-zinc-400">No purchases found.</td></tr>
                 )}
                 {purchases.map((purchase, idx) => (
-                  <tr key={purchase.id ?? idx} className="hover:bg-zinc-50/50">
+                  <tr key={purchase.id ?? idx} className="hover:bg-zinc-50/50 align-top">
                     <td className="p-4 text-xs text-zinc-500 whitespace-nowrap">
                       {new Date(purchase.bought_at).toLocaleString()}
                     </td>
@@ -894,23 +1003,110 @@ export default function AdminDashboard() {
                       <div>{purchase.email}</div>
                       <div className="text-xs text-zinc-500">{purchase.phone}</div>
                     </td>
-                    <td className="p-4 text-center font-medium tabular-nums">{purchase.number_of_tickets}</td>
+                    <td className="p-4 text-center font-medium tabular-nums">
+                      {(() => {
+                        const units = purchase.ticket_breakdown || [];
+                        if (units.some((u: any) => u.serial)) return units.length;
+                        return (
+                          units.reduce((s: number, u: any) => s + (u.quantity || 1), 0) ||
+                          purchase.number_of_tickets ||
+                          1
+                        );
+                      })()}
+                    </td>
                     <td className="p-4 text-right font-medium tabular-nums">
                       {purchase.currency || "HKD"} {purchase.amount}
                     </td>
                     <td className="p-4">
                       <span className="font-mono text-xs rounded bg-zinc-100 px-2 py-0.5">{purchase.event_slug}</span>
                     </td>
-                    <td className="p-4 font-mono text-xs text-zinc-600">{purchase.order_reference || purchase.payment_reference}</td>
-                    <td className="p-4 text-xs">
-                      {purchase.redeemed_at ? (
-                        <span className="text-green-600">Redeemed</span>
-                      ) : (
-                        <span className="text-gray-500">Valid</span>
-                      )}
+                    <td className="p-4 font-mono text-xs text-zinc-600">
+                      {purchase.order_reference || purchase.payment_reference}
                     </td>
-                    <td className="p-4 text-xs text-zinc-600 whitespace-nowrap">
-                      {purchase.redeemed_at ? formatDateTime(purchase.redeemed_at) : "—"}
+                    <td className="p-4 text-xs">
+                      {(() => {
+                        const units = purchase.ticket_breakdown || [];
+                        const hasSerials = units.some((u: any) => u.serial);
+
+                        if (hasSerials) {
+                          return (
+                            <ul className="space-y-1.5 font-mono text-[11px] leading-snug">
+                              {units.map((u: any, i: number) => {
+                                const used = u.redemptions?.length || 0;
+                                const max = getTicketTypeLimit(
+                                  purchase.event_slug,
+                                  u.ticketTypeId
+                                );
+                                const done = used >= max;
+                                return (
+                                  <li key={u.serial || i} className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                                    <span className="text-zinc-700">{u.serial}</span>
+                                    <span
+                                      className={
+                                        done
+                                          ? "text-green-600 font-medium tabular-nums"
+                                          : used > 0
+                                            ? "text-amber-600 font-medium tabular-nums"
+                                            : "text-zinc-400 tabular-nums"
+                                      }
+                                    >
+                                      {used}/{max}
+                                      {done ? " ✓" : used === 0 ? " open" : ""}
+                                    </span>
+                                    {used > 0 && u.redemptions?.[used - 1] && (
+                                      <span className="text-[10px] text-zinc-400 font-sans">
+                                        last {formatDateTime(u.redemptions[used - 1])}
+                                      </span>
+                                    )}
+                                  </li>
+                                );
+                              })}
+                            </ul>
+                          );
+                        }
+
+                        // Legacy order (no per-ticket serials)
+                        const used = getCurrentRedemptionCount(purchase);
+                        const max = getMaxRedemptionsForPurchase(purchase);
+                        return (
+                          <span className="text-zinc-500">
+                            Order-level only: {used}/{max}
+                            <span className="block text-[10px] text-zinc-400 mt-0.5">
+                              (no serials — re-purchase after serial fix for per-ticket tracking)
+                            </span>
+                          </span>
+                        );
+                      })()}
+                    </td>
+                    <td className="p-4 text-xs whitespace-nowrap">
+                      {(() => {
+                        const units = purchase.ticket_breakdown || [];
+                        if (units.some((u: any) => u.serial)) {
+                          const total = units.length;
+                          const fullyIn = units.filter((u: any) => {
+                            const used = u.redemptions?.length || 0;
+                            const max = getTicketTypeLimit(purchase.event_slug, u.ticketTypeId);
+                            return used >= max;
+                          }).length;
+                          const anyIn = units.filter((u: any) => (u.redemptions?.length || 0) > 0).length;
+                          if (anyIn === 0) {
+                            return <span className="text-gray-500">Valid (0/{total} in)</span>;
+                          }
+                          if (fullyIn >= total) {
+                            return <span className="text-green-600 font-medium">All in ({fullyIn}/{total})</span>;
+                          }
+                          return (
+                            <span className="text-amber-600 font-medium">
+                              Partial ({anyIn} scanned / {fullyIn} full / {total} tickets)
+                            </span>
+                          );
+                        }
+                        return purchase.redeemed_at ? (
+                          <span className="text-green-600">Redeemed</span>
+                        ) : (
+                          <span className="text-gray-500">Valid</span>
+                        );
+                      })()}
                     </td>
                   </tr>
                 ))}
@@ -1051,16 +1247,24 @@ export default function AdminDashboard() {
 
           <div className="bg-white rounded-2xl border p-8">
             <div className="mb-4">
-              <label className="block text-sm font-medium mb-1">Order Reference (from ticket or QR)</label>
+              <label className="block text-sm font-medium mb-1">
+                Ticket ID or Order Ref (from PDF QR — prefer KPY-…-001)
+              </label>
               <div className="flex gap-2">
                 <input
                   type="text"
                   value={scanRef}
                   onChange={(e) => setScanRef(e.target.value.trim())}
-                  placeholder="e.g. KPY-1783052511276 or KPAY-..."
+                  placeholder="e.g. KPY-1783…-001 or order KPY-1783…"
                   className="flex-1 border rounded-lg px-4 py-2 font-mono text-sm"
                   onKeyDown={(e) => {
-                    if (e.key === "Enter") checkTicketStatus(scanRef);
+                    if (e.key === "Enter") {
+                      void (async () => {
+                        await checkTicketStatus(scanRef);
+                        await redeemTicket(scanRef);
+                        await loadPurchases();
+                      })();
+                    }
                   }}
                 />
                 <button
@@ -1160,17 +1364,27 @@ export default function AdminDashboard() {
         </div>
       )}
 
-      {/* ATTENDANCE TAB - Redeemed tickets with timestamps */}
+      {/* ATTENDANCE TAB — derived from purchases (no separate Supabase table) */}
       {activeTab === "attendance" && (
         <div className="max-w-7xl mx-auto px-6 py-8">
-          <div className="mb-6">
-            <h2 className="text-xl font-semibold">Attendance</h2>
-            <p className="text-sm text-zinc-600 mt-1">
-              List of redeemed tickets. Timestamps are shown in your local time.
-              {` `}
-              <span className="text-amber-600">Note:</span> Redemption limit is set per ticket type (see when adding tickets).
-              Orders can be redeemed up to the highest limit of their ticket types.
-            </p>
+          <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <h2 className="text-xl font-semibold">Attendance</h2>
+              <p className="text-sm text-zinc-600 mt-1">
+                Check-ins from the Scanner. One row per ticket serial when available.
+                Data comes from the <strong>purchases</strong> table (ticket_breakdown + redeemed_at) —{" "}
+                <strong>no separate attendance table</strong> in Supabase.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => loadPurchases()}
+              disabled={loading}
+              className="flex items-center gap-2 rounded-lg border px-3 py-2 text-sm hover:bg-zinc-100"
+            >
+              <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
+              Refresh
+            </button>
           </div>
 
           <div className="overflow-x-auto rounded-2xl border bg-white">
@@ -1178,50 +1392,96 @@ export default function AdminDashboard() {
               <thead>
                 <tr className="border-b bg-zinc-50 text-left">
                   <th className="p-4 font-medium">Redeemed At</th>
+                  <th className="p-4 font-medium">Ticket ID</th>
                   <th className="p-4 font-medium">Name</th>
                   <th className="p-4 font-medium">Email / Phone</th>
                   <th className="p-4 font-medium">Event</th>
                   <th className="p-4 font-medium">Order Ref</th>
-                  <th className="p-4 font-medium text-center">Tickets</th>
                 </tr>
               </thead>
               <tbody className="divide-y">
-                {purchases.filter(p => getCurrentRedemptionCount(p) > 0).length === 0 && (
-                  <tr><td colSpan={6} className="p-10 text-center text-zinc-400">No redeemed tickets yet.</td></tr>
-                )}
-                {purchases
-                  .filter(p => getCurrentRedemptionCount(p) > 0)
-                  .sort((a, b) => {
-                    const aLatest = (a.redemptions?.[a.redemptions.length-1] || a.redeemed_at || "");
-                    const bLatest = (b.redemptions?.[b.redemptions.length-1] || b.redeemed_at || "");
-                    return bLatest.localeCompare(aLatest);
-                  })
-                  .map((purchase, idx) => (
-                    <tr key={purchase.id ?? idx} className="hover:bg-zinc-50/50">
+                {(() => {
+                  // Flatten to one attendance row per redeemed serial (or legacy order)
+                  type AttRow = {
+                    key: string;
+                    redeemedAt: string;
+                    ticketId: string;
+                    name: string;
+                    email: string;
+                    phone: string;
+                    event: string;
+                    orderRef: string;
+                  };
+                  const rows: AttRow[] = [];
+                  for (const p of purchases) {
+                    const units = p.ticket_breakdown || [];
+                    const hasSerials = units.some((u: any) => u.serial);
+                    if (hasSerials) {
+                      for (const u of units as any[]) {
+                        const last = u.redemptions?.[u.redemptions.length - 1];
+                        if (!last) continue;
+                        rows.push({
+                          key: `${p.id}-${u.serial}-${last}`,
+                          redeemedAt: last,
+                          ticketId: u.serial,
+                          name: p.name,
+                          email: p.email,
+                          phone: p.phone,
+                          event: p.event_slug,
+                          orderRef: p.order_reference || p.payment_reference || "",
+                        });
+                      }
+                    } else if (getCurrentRedemptionCount(p) > 0) {
+                      const latest =
+                        p.redemptions?.[p.redemptions.length - 1] || p.redeemed_at || "";
+                      rows.push({
+                        key: String(p.id ?? p.order_reference),
+                        redeemedAt: latest,
+                        ticketId: p.order_reference || "—",
+                        name: p.name,
+                        email: p.email,
+                        phone: p.phone,
+                        event: p.event_slug,
+                        orderRef: p.order_reference || p.payment_reference || "",
+                      });
+                    }
+                  }
+                  rows.sort((a, b) => b.redeemedAt.localeCompare(a.redeemedAt));
+
+                  if (rows.length === 0) {
+                    return (
+                      <tr>
+                        <td colSpan={6} className="p-10 text-center text-zinc-400">
+                          {loading ? "Loading..." : "No redeemed tickets yet. Use Scanner → Mark Redeemed (or camera)."}
+                        </td>
+                      </tr>
+                    );
+                  }
+                  return rows.map((row) => (
+                    <tr key={row.key} className="hover:bg-zinc-50/50">
                       <td className="p-4 text-xs text-emerald-700 font-medium whitespace-nowrap">
-                        {(() => {
-                          const count = getCurrentRedemptionCount(purchase);
-                          const latest = purchase.redemptions?.[purchase.redemptions.length - 1] || purchase.redeemed_at;
-                          return `${count}× (${formatDateTime(latest)})`;
-                        })()}
+                        {formatDateTime(row.redeemedAt)}
                       </td>
-                      <td className="p-4 font-medium">{purchase.name}</td>
+                      <td className="p-4 font-mono text-xs">{row.ticketId}</td>
+                      <td className="p-4 font-medium">{row.name}</td>
                       <td className="p-4 text-sm">
-                        <div>{purchase.email}</div>
-                        <div className="text-xs text-zinc-500">{purchase.phone}</div>
+                        <div>{row.email}</div>
+                        <div className="text-xs text-zinc-500">{row.phone}</div>
                       </td>
                       <td className="p-4">
-                        <span className="font-mono text-xs rounded bg-zinc-100 px-2 py-0.5">{purchase.event_slug}</span>
+                        <span className="font-mono text-xs rounded bg-zinc-100 px-2 py-0.5">{row.event}</span>
                       </td>
-                      <td className="p-4 font-mono text-xs text-zinc-600">{purchase.order_reference || purchase.payment_reference}</td>
-                      <td className="p-4 text-center font-medium tabular-nums">{purchase.number_of_tickets}</td>
+                      <td className="p-4 font-mono text-xs text-zinc-600">{row.orderRef}</td>
                     </tr>
-                  ))}
+                  ));
+                })()}
               </tbody>
             </table>
           </div>
 
-          <p className="mt-4 text-xs text-zinc-500">Use the Scanner tab to mark more tickets as redeemed.</p>
+          <p className="mt-4 text-xs text-zinc-500">
+            Use the Scanner tab to check people in. Purchases/Registration shows status; this tab is the check-in log.
+          </p>
         </div>
       )}
 

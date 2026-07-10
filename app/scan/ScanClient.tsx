@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { getAllPurchases } from "@/lib/db/purchases";
+import { getPurchaseByReference } from "@/app/sit-admin/actions";
 
 interface ScanClientProps {
   searchParams: Promise<{ ref?: string }>;
@@ -42,21 +42,29 @@ export default function ScanClient({ searchParams }: ScanClientProps) {
     setLoading(true);
     setMessage("Checking ticket...");
 
-    getAllPurchases().then((purchases) => {
-      const p = purchases.find((p: any) =>
-        p.order_reference === ref || p.payment_reference === ref
-      );
-
+    getPurchaseByReference(ref).then((p) => {
       if (!p) {
         setMessage("Ticket not found. Invalid or unknown reference.");
         setPurchase(null);
       } else {
-        const count = p.redemptions?.length || (p.redeemed_at ? 1 : 0);
-        if (count > 0) {
-          const latest = (p.redemptions?.[p.redemptions.length-1] || p.redeemed_at) as string;
-          setMessage(`Redeemed ${count} time${count > 1 ? 's' : ''} (last: ${new Date(latest).toLocaleString()})`);
+        const unit = (p.ticket_breakdown || []).find((t: any) => t.serial === ref);
+        if (unit) {
+          const count = unit.redemptions?.length || 0;
+          setMessage(
+            count > 0
+              ? `Ticket ${unit.serial}: redeemed ${count} time(s)`
+              : `Ticket ${unit.serial}: VALID — ready for check-in`
+          );
         } else {
-          setMessage("Ticket is VALID and ready for check-in.");
+          const count = p.redemptions?.length || (p.redeemed_at ? 1 : 0);
+          if (count > 0) {
+            const latest = (p.redemptions?.[p.redemptions.length - 1] || p.redeemed_at) as string;
+            setMessage(
+              `Order redeemed ${count} time${count > 1 ? "s" : ""} (last: ${new Date(latest).toLocaleString()})`
+            );
+          } else {
+            setMessage("Order is VALID. Admin should scan each ticket QR (…-001, …-002) at the door.");
+          }
         }
         setPurchase(p);
       }
@@ -78,6 +86,19 @@ export default function ScanClient({ searchParams }: ScanClientProps) {
           <div className="text-left text-sm border-t pt-4 mt-4" style={{ borderColor: '#EDE4D3' }}>
             <p><strong>Attendee:</strong> {purchase.name}</p>
             <p><strong>Event:</strong> {purchase.event_slug}</p>
+            <p><strong>Order:</strong> <span className="font-mono text-xs">{purchase.order_reference}</span></p>
+            {ref && ref !== purchase.order_reference && (
+              <p><strong>Scanned ID:</strong> <span className="font-mono text-xs">{ref}</span></p>
+            )}
+            {(purchase.ticket_breakdown || []).some((t: any) => t.serial) && (
+              <p className="mt-2 text-xs text-zinc-500">
+                Tickets:{" "}
+                {(purchase.ticket_breakdown as any[])
+                  .map((t) => t.serial)
+                  .filter(Boolean)
+                  .join(", ")}
+              </p>
+            )}
             <p><strong>Tickets:</strong> {purchase.number_of_tickets}</p>
             <p><strong>Ref:</strong> <span className="font-mono">{ref}</span></p>
             {(() => {

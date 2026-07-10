@@ -34,34 +34,75 @@ CREATE TABLE IF NOT EXISTS purchases (
 
 -- Example for purchases (run in Supabase SQL editor):
 
--- First, add the redeemed_at column (required for the scanner to persist redemptions):
+-- Scanner / attendance (no separate attendance table — use purchases)
 ALTER TABLE purchases 
 ADD COLUMN IF NOT EXISTS redeemed_at TIMESTAMPTZ;
+
+-- Optional order-level multi-scan log (per-ticket times live in ticket_breakdown JSON)
+ALTER TABLE purchases
+ADD COLUMN IF NOT EXISTS redemptions JSONB DEFAULT '[]';
 
 -- For applied discount codes (from checkout promo codes):
 ALTER TABLE purchases 
 ADD COLUMN IF NOT EXISTS applied_discount_code TEXT,
 ADD COLUMN IF NOT EXISTS discount_amount NUMERIC;
 
--- Then enable RLS when ready:
--- ALTER TABLE purchases ENABLE ROW LEVEL SECURITY;
+-- Clean up any duplicate/old policies first (run this to fix conflicts)
+DROP POLICY IF EXISTS "Allow public insert purchases" ON purchases;
+DROP POLICY IF EXISTS "Block anon select purchases" ON purchases;
+DROP POLICY IF EXISTS "Block anon update purchases" ON purchases;
+DROP POLICY IF EXISTS "Block anon delete purchases" ON purchases;
+DROP POLICY IF EXISTS "Block anon reads on purchases" ON purchases;
 
--- -- Allow anyone to insert new purchases (from checkout flow)
--- CREATE POLICY "Allow public insert purchases" ON purchases
---   FOR INSERT TO anon WITH CHECK (true);
+ALTER TABLE purchases ENABLE ROW LEVEL SECURITY;
 
--- -- Block public reads and updates (only service_role or future authenticated admins)
--- CREATE POLICY "Block anon read/update purchases" ON purchases
---   FOR SELECT USING (false);
--- CREATE POLICY "Block anon update/delete purchases" ON purchases
---   FOR UPDATE USING (false);
--- CREATE POLICY "Block anon delete purchases" ON purchases
---   FOR DELETE USING (false);
+-- Public (anon key from browser) can INSERT new purchases from checkout
+CREATE POLICY "Allow public insert purchases" 
+ON purchases 
+FOR INSERT 
+TO anon 
+WITH CHECK (true);
+
+-- Block anon from reading/updating/deleting (admin uses service_role on server)
+CREATE POLICY "Block anon reads on purchases" 
+ON purchases 
+FOR SELECT 
+TO anon 
+USING (false);
+
+CREATE POLICY "Block anon update purchases" 
+ON purchases 
+FOR UPDATE 
+TO anon 
+USING (false);
+
+CREATE POLICY "Block anon delete purchases" 
+ON purchases 
+FOR DELETE 
+TO anon 
+USING (false);
 
 -- For admin dashboard you will later need proper auth (Supabase Auth users with admin role)
 -- or use Supabase service_role key ONLY on server (never NEXT_PUBLIC).
 
--- Same treatment recommended for the "events" table.
+-- For events: public can read (app filters enabled), admin writes now use service_role
+-- Clean up first (safe to run multiple times)
+DROP POLICY IF EXISTS "Allow public read events" ON events;
+DROP POLICY IF EXISTS "anon can select events" ON events;
+DROP POLICY IF EXISTS "anon can insert events" ON events;
+DROP POLICY IF EXISTS "anon can update events" ON events;
+DROP POLICY IF EXISTS "anon can delete events" ON events;
+
+ALTER TABLE events ENABLE ROW LEVEL SECURITY;
+
+-- Public can still read all events (frontend code filters by enabled = true)
+CREATE POLICY "Allow public read events" 
+ON events 
+FOR SELECT 
+TO anon 
+USING (true);
+
+-- No anon writes anymore (admin uses SUPABASE_SERVICE_ROLE_KEY via server actions)
 
 -- For development you can start without RLS (current default).
 
@@ -127,6 +168,40 @@ ADD COLUMN IF NOT EXISTS ticket_template TEXT;
 ALTER TABLE purchases 
 ADD COLUMN IF NOT EXISTS applied_discount_code TEXT,
 ADD COLUMN IF NOT EXISTS discount_amount NUMERIC;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_purchases_payment_reference_unique
+  ON purchases (payment_reference)
+  WHERE payment_reference IS NOT NULL AND payment_reference <> '';
+
+-- =========================================
+-- PENDING KPAY PAYMENTS (required on Vercel)
+-- =========================================
+-- Serverless instances do not share memory. Webhook + return URL need a durable cart.
+-- App uses SUPABASE_SERVICE_ROLE_KEY (bypasses RLS).
+
+CREATE TABLE IF NOT EXISTS pending_kpay_payments (
+  out_trade_no TEXT PRIMARY KEY,
+  cart JSONB NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  payment_url TEXT,
+  managed_order_no TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_pending_kpay_status ON pending_kpay_payments(status);
+CREATE INDEX IF NOT EXISTS idx_pending_kpay_created ON pending_kpay_payments(created_at);
+
+ALTER TABLE pending_kpay_payments ENABLE ROW LEVEL SECURITY;
+
+-- No anon access — only service_role from server
+DROP POLICY IF EXISTS "Block anon pending kpay" ON pending_kpay_payments;
+CREATE POLICY "Block anon pending kpay"
+  ON pending_kpay_payments
+  FOR ALL
+  TO anon
+  USING (false)
+  WITH CHECK (false);
 
 -- =========================================
 -- RESETTING PURCHASE IDs (BIGSERIAL)

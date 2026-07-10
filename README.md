@@ -93,17 +93,24 @@ See `.env.example`. Most integrations gracefully degrade when keys are missing (
 
 ## Important Notes About Integrations
 
-**KPay Payment Integration**
+**KPay Payment Integration (All Hosted Checkout)**
 
-The actual payment integration with KPay is currently stubbed for development.
+Real Merchant Mode integration lives in `lib/integrations/kpay.ts`.
 
-The current checkout page has a simulation flow that:
-- Calls the stub in `lib/integrations/kpay.ts`
-- Runs the full post-payment pipeline via `order.service.ts`
+| Env | Purpose |
+|-----|---------|
+| `KPAY_MERCHANT_CODE` | Merchant ID (test: `852124272000001`) |
+| `KPAY_API_BASE_URL` | Sandbox: `https://online-sandbox.kpay-group.com/api` |
+| `KPAY_MERCHANT_PRIVATE_KEY` | PKCS#8 PEM — signs requests (SHA256-RSA) |
+| `KPAY_PLATFORM_PUBLIC_KEY` | PKCS#8 PEM — verifies webhooks |
+| `NEXT_PUBLIC_SITE_URL` | Return/notify URLs + email links |
 
-To enable the real KPay integration:
-- Provide the KPay API key / merchant ID
-- We can implement the real flow (redirect + confirmation) when ready.
+Flow: `POST /v1/payment/web/managed` → `paymentUrl` → user pays on KPay → return to `/{slug}/checkout?session=<outTradeNo>` → finalize purchase. Webhook: `/api/webhooks/kpay`.
+
+Simulation only when **not production** and merchant code is missing.
+
+**Test cards (sandbox):** `5454 5454 5454 5454` or `4917 6100 0000 0000` — exp `03/30`, CVV `737`, 3DS password `password`.  
+Simulator UI: https://online-sandbox.kpay-group.com/home
 
 The platform is designed to be fully standalone. No external order syncing is required.
 
@@ -141,7 +148,7 @@ Create any additional pages or customizations under `app/(public)/[new-slug]`.
 - [x] Background PDF/email processing (immediate redirect, no stuck UI)
 - [x] QR codes on tickets linking to safe public check page
 - [x] Admin-only redemption via scanner (camera + manual) that updates DB + admin + exports
-- [ ] Implement real KPay payment integration (currently simulation only)
+- [x] Real KPay All Hosted Checkout (web/managed + webhook + RSA helpers)
 - [ ] Finish Canva-designed PDF template (place your exported PDF at public/ticket-template.pdf)
 
 ### Reliability & Data
@@ -174,7 +181,7 @@ Create any additional pages or customizations under `app/(public)/[new-slug]`.
 ## Production Checklist
 
 - [ ] Replace simple admin password with proper auth (middleware + sessions or Supabase Auth)
-- [ ] Implement real KPay + webhooks (when you have the keys)
+- [x] Webhook skeleton prepared at app/api/webhooks/kpay/route.ts (fill in when keys arrive)
 - [ ] Enable + test Supabase RLS policies
 - [ ] Configure real Resend + verified sending domain
 - [ ] Add rate limiting, better input validation, CSRF where needed

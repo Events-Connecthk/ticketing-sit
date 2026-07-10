@@ -127,7 +127,7 @@ export default function EventPage({ params }: EventPageProps) {
 
   const proceedToCheckout = async (buyerData?: BuyerInfo) => {
     const finalBuyer = buyerData || buyer;
-    if (!finalBuyer || totalTickets === 0) return;
+    if (!event || !finalBuyer || totalTickets === 0) return;
 
     const cart: OrderCart = {
       eventSlug: event.slug,
@@ -152,8 +152,10 @@ export default function EventPage({ params }: EventPageProps) {
   };
 
   async function handleFreeRegistration(buyerData: BuyerInfo) {
+    if (!event) return;
+    const slug = event.slug;
     const freeCart: OrderCart = {
-      eventSlug: event.slug,
+      eventSlug: slug,
       tickets: selections,
       buyer: buyerData,
       totalAmount: 0,
@@ -171,7 +173,7 @@ export default function EventPage({ params }: EventPageProps) {
       const { finalizeAfterPayment } = await import("@/lib/integrations/order.service");
       const result = await finalizeAfterPayment("FREE-" + Date.now(), freeCart);
       const ref = result.orderReference || "FREE-" + Date.now();
-      router.push(`/${event.slug}/success?ref=${ref}&amount=0`);
+      router.push(`/${slug}/success?ref=${ref}&amount=0`);
     } catch (e) {
       console.error(e);
       alert("Registration failed. Please try again.");

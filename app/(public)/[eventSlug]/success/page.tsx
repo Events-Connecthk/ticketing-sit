@@ -4,8 +4,8 @@ import React, { useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { CheckCircle, Download } from "lucide-react";
 import { loadEventBySlug } from "@/lib/config/events";
-import { getAllPurchases } from "@/lib/db/purchases";
 import { generateTicketPdf } from "@/lib/pdf/generate-ticket";
+import { getPurchaseByReference } from "@/app/sit-admin/actions";
 
 /**
  * Success / Confirmation Page
@@ -22,8 +22,9 @@ export default function SuccessPage({ params }: SuccessPageProps) {
   const searchParams = useSearchParams();
 
   const ref = searchParams.get("ref") || "N/A";
-  const amount = searchParams.get("amount") || "0";
-  const isFreeRegistration = amount === "0" || ref.startsWith("FREE");
+  const amountParam = searchParams.get("amount");
+  const amount = amountParam || "0";
+  const isFreeRegistration = ref.startsWith("FREE") || (amountParam !== null && parseFloat(amount) === 0);
 
   const [eventSlug, setEventSlug] = React.useState<string | null>(null);
   const [event, setEvent] = React.useState<any>(null);
@@ -38,13 +39,29 @@ export default function SuccessPage({ params }: SuccessPageProps) {
   const ticketItems = React.useMemo(() => {
     if (!purchase || !event || !ref) return [];
     const items: Array<{ serial: string; ticketTypeId: string; ticketTypeName: string }> = [];
+    const breakdown = purchase.ticket_breakdown || [];
+
+    // Prefer stored serials from DB (set at purchase time)
+    if (breakdown.some((t: any) => t.serial)) {
+      for (const sel of breakdown) {
+        const tt = event.ticketTypes?.find((t: any) => t.id === sel.ticketTypeId);
+        items.push({
+          serial: sel.serial,
+          ticketTypeId: sel.ticketTypeId,
+          ticketTypeName: tt?.name || sel.ticketTypeId,
+        });
+      }
+      return items;
+    }
+
+    // Legacy: synthesize serials from quantities
     let counter = 1;
-    (purchase.ticket_breakdown || []).forEach((sel: any) => {
+    breakdown.forEach((sel: any) => {
       const tt = event.ticketTypes?.find((t: any) => t.id === sel.ticketTypeId);
       const name = tt?.name || sel.ticketTypeId;
       for (let i = 0; i < (sel.quantity || 0); i++) {
         items.push({
-          serial: `${ref}-${String(counter).padStart(3, '0')}`,
+          serial: `${ref}-${String(counter).padStart(3, "0")}`,
           ticketTypeId: sel.ticketTypeId,
           ticketTypeName: name,
         });
@@ -70,13 +87,9 @@ export default function SuccessPage({ params }: SuccessPageProps) {
       return;
     }
 
-    // Load purchase details as soon as we have the ref (do not wait for event)
-    // Fetch broadly + find by ref (more reliable than search filter for exact match)
-    // getAllPurchases already merges Supabase + memory so it works after immediate redirect.
-    getAllPurchases().then((purchases) => {
-      const p = purchases.find((p: any) =>
-        p.order_reference === ref || p.payment_reference === ref
-      );
+    // Use server action with service role to fetch by ref.
+    // This works even if anon SELECT is blocked by RLS.
+    getPurchaseByReference(ref).then((p) => {
       if (p) setPurchase(p);
       setPurchaseLoading(false);
     }).catch(() => {
@@ -102,10 +115,7 @@ export default function SuccessPage({ params }: SuccessPageProps) {
     if (!currentPurchase) {
       // Attempt a fresh lookup before giving up (handles slow async or refresh)
       try {
-        const purchases = await getAllPurchases();
-        const found = purchases.find((p: any) =>
-          p.order_reference === ref || p.payment_reference === ref
-        );
+        const found = await getPurchaseByReference(ref);
         if (found) {
           currentPurchase = found;
           setPurchase(found);
@@ -123,7 +133,7 @@ export default function SuccessPage({ params }: SuccessPageProps) {
     setShowDownloaded(true);
 
     try {
-      const sel = (purchase.ticket_breakdown || [])[0];
+      const sel = (currentPurchase.ticket_breakdown || [])[0];
       if (!sel) {
         alert("No ticket found.");
         setShowDownloaded(false);
@@ -132,12 +142,12 @@ export default function SuccessPage({ params }: SuccessPageProps) {
 
       const pdfResult = await generateTicketPdf({
         event,
-        buyer: { name: purchase.name, phone: purchase.phone, email: purchase.email },
+        buyer: { name: currentPurchase.name, phone: currentPurchase.phone, email: currentPurchase.email },
         tickets: [sel],
         orderReference: ref,
         amount: parseFloat(amount) || 0,
         currency: event.ticketTypes?.[0]?.currency || "HKD",
-        purchaseDate: purchase.bought_at || new Date().toISOString(),
+        purchaseDate: currentPurchase.bought_at || new Date().toISOString(),
       });
 
       if (pdfResult.success && pdfResult.pdfBuffer) {

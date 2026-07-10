@@ -1,3 +1,5 @@
+'use server';
+
 /**
  * Order Service - Central Orchestration Layer
  *
@@ -21,10 +23,17 @@
 
 import { OrderCart, PurchaseRecord, OrderCreationResult } from "@/types";
 import { initiateKpayPayment, confirmKpayPayment } from "./kpay";
-import { savePurchase } from "../db/purchases";
+import {
+  savePurchase,
+  getPurchaseByPaymentReference,
+} from "../db/purchases";
 import { generateTicketPdf } from "../pdf/generate-ticket";
 import { sendConfirmationEmail } from "./email";
 import { loadEventBySlug } from "../config/events";
+import { expandTicketsWithSerials } from "../tickets/serials";
+
+// Prevent double-fulfillment within a single serverless instance
+const processedPaymentRefs = new Map<string, string>(); // paymentRef → orderReference
 
 /**
  * Main entry point after a successful KPay payment.
@@ -35,6 +44,35 @@ export async function processSuccessfulPurchase(
   paymentReference: string
 ): Promise<OrderCreationResult> {
   console.log("[OrderService] Starting post-payment processing for", cart.eventSlug, paymentReference);
+
+  if (paymentReference && processedPaymentRefs.has(paymentReference)) {
+    const existing = processedPaymentRefs.get(paymentReference)!;
+    console.log("[OrderService] Idempotent hit for", paymentReference, "→", existing);
+    return {
+      success: true,
+      orderReference: existing,
+      metadata: { duplicate: true },
+    };
+  }
+
+  // Durable idempotency across Vercel instances (webhook + browser return race)
+  if (paymentReference) {
+    const already = await getPurchaseByPaymentReference(paymentReference);
+    if (already?.order_reference) {
+      processedPaymentRefs.set(paymentReference, already.order_reference);
+      console.log(
+        "[OrderService] DB idempotent hit for",
+        paymentReference,
+        "→",
+        already.order_reference
+      );
+      return {
+        success: true,
+        orderReference: already.order_reference,
+        metadata: { duplicate: true },
+      };
+    }
+  }
 
   const event = await loadEventBySlug(cart.eventSlug);
   if (!event) {
@@ -47,18 +85,24 @@ export async function processSuccessfulPurchase(
 
     // 2. Persist our own purchase record (for admin dashboard, reporting, exports)
     const orderReference = `KPY-${Date.now()}`;
+    if (paymentReference) {
+      processedPaymentRefs.set(paymentReference, orderReference);
+    }
+
+    // One order row; many scannable serials KPY-…-001, -002, …
+    const ticketUnits = expandTicketsWithSerials(orderReference, cart.tickets);
 
     const purchaseRecord: Omit<PurchaseRecord, "id"> = {
       bought_at: new Date().toISOString(),
       name: cart.buyer.name,
       phone: cart.buyer.phone,
       email: cart.buyer.email,
-      number_of_tickets: totalTickets,
+      number_of_tickets: ticketUnits.length || totalTickets,
       payment_method: paymentReference.startsWith("FREE") ? "free" : "kpay",
       amount: cart.totalAmount,
       currency: cart.currency,
       event_slug: cart.eventSlug,
-      ticket_breakdown: cart.tickets,
+      ticket_breakdown: ticketUnits,
       order_reference: orderReference,
       payment_reference: paymentReference,
       applied_discount_code: cart.appliedDiscountCode,
@@ -83,18 +127,20 @@ export async function processSuccessfulPurchase(
     // Fire and forget the heavy parts (PDF + email) so redirect isn't blocked
     (async () => {
       try {
-        const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://connecthk.org';
-        const downloadUrl = cart.totalAmount > 0 ? `${baseUrl}/${event.slug}/success?ref=${orderReference}` : undefined;
+        const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000';
+        const downloadUrl = cart.totalAmount > 0 
+          ? `${baseUrl}/${event.slug}/success?ref=${orderReference}&amount=${cart.totalAmount}` 
+          : undefined;
 
         console.log("[OrderService] Sending confirmation email (background)...");
         const emailResult = await sendConfirmationEmail({
           to: cart.buyer.email,
           buyerName: cart.buyer.name,
           event,
-          orderReference: paymentReference,
+          orderReference: orderReference,
           totalAmount: cart.totalAmount,
           currency: cart.currency,
-          ticketCount: totalTickets,
+          ticketCount: ticketUnits.length || totalTickets,
           downloadUrl,
         });
         console.log("[OrderService] Email result (background):", emailResult.success);
@@ -115,6 +161,7 @@ export async function processSuccessfulPurchase(
 
 /**
  * Initiates the payment flow using KPay.
+ * When KPAY_MERCHANT_CODE (or aliases) is set, returns the real hosted checkout URL.
  */
 export async function startCheckoutFlow(cart: OrderCart): Promise<{
   success: boolean;
@@ -136,21 +183,38 @@ export async function startCheckoutFlow(cart: OrderCart): Promise<{
 }
 
 /**
- * Helper used on success page / webhook to verify and finalize.
+ * Helper used after redirect from KPay (or webhook).
+ * Calls confirmKpayPayment then runs the full success pipeline (save purchase, email, PDF).
  */
 export async function finalizeAfterPayment(
   sessionId: string,
-  cart: OrderCart
+  cart: OrderCart,
+  opts?: {
+    returnResult?: "success" | "cancel" | "unknown";
+    userConfirmedPaid?: boolean;
+  }
 ): Promise<OrderCreationResult> {
-  const confirmation = await confirmKpayPayment(sessionId);
+  const confirmation = await confirmKpayPayment(sessionId, {
+    returnResult: opts?.returnResult,
+    userConfirmedPaid: opts?.userConfirmedPaid,
+  });
 
   if (!confirmation.success || !confirmation.paymentReference) {
+    // Webhook may have finished; purchase exists even if confirm path refused
+    const already = await getPurchaseByPaymentReference(sessionId);
+    if (already?.order_reference) {
+      return {
+        success: true,
+        orderReference: already.order_reference,
+        metadata: { via: "existing_purchase" },
+      };
+    }
     return {
       success: false,
       error: confirmation.error || "Payment not confirmed",
     };
   }
 
-  // This is the critical post-payment pipeline
+  // This is the critical post-payment pipeline (DB + email + PDF generation)
   return processSuccessfulPurchase(cart, confirmation.paymentReference);
 }

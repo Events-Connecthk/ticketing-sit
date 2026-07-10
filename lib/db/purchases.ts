@@ -82,48 +82,46 @@ export async function savePurchase(input: SavePurchaseInput): Promise<PurchaseRe
       const insertPayload: any = { ...baseRecord };
       delete insertPayload.id; // never send id on insert (let DB generate)
 
-      let { data, error } = await client
+      // Do pure INSERT (no .select()) because anon SELECT is blocked by RLS.
+      // We don't need the DB id back for the public flow (order_reference is used instead).
+      const { error: insertError } = await client
         .from("purchases")
-        .insert(insertPayload)
-        .select()
-        .single();
+        .insert(insertPayload);
 
-      if (error && error.code === 'PGRST204' && (error.message || '').includes('column')) {
-        // Graceful fallback for missing columns like applied_discount_code
+      let data: any = null;
+      let error = insertError;
+
+      if (insertError && insertError.code === 'PGRST204' && (insertError.message || '').includes('column')) {
+        // Graceful fallback for missing columns
         console.warn("[DB] Supabase schema missing new purchase columns (applied_discount_code etc). Retrying without them. Run ALTER from supabase-schema.sql.");
         const safePayload = { ...insertPayload };
         delete safePayload.applied_discount_code;
         delete safePayload.discount_amount;
 
-        const retry = await client
+        const { error: retryError } = await client
           .from("purchases")
-          .insert(safePayload)
-          .select()
-          .single();
+          .insert(safePayload);
 
-        data = retry.data;
-        error = retry.error;
+        error = retryError;
 
-        // Merge the discount fields back for memory (they won't be in DB until column added)
-        if (data && (insertPayload.applied_discount_code || insertPayload.discount_amount)) {
-          data = {
-            ...data,
-            applied_discount_code: insertPayload.applied_discount_code,
-            discount_amount: insertPayload.discount_amount,
-          };
+        // We still don't have data, but insert succeeded (or not)
+        if (!retryError) {
+          data = { ...insertPayload }; // use what we sent
         }
+      } else if (!insertError) {
+        data = { ...insertPayload };
       }
 
       if (error) {
         console.error("[DB] Supabase insert failed for purchase:", error);
         console.warn("[DB] Purchase saved to memory only (check RLS on 'purchases' table).");
       } else if (data) {
-        // Always keep a copy in memory as backup for fetch issues
+        // Keep in memory as backup
         const withId: PurchaseRecord = { ...data, id: data.id ?? memoryStore.length + 1 } as PurchaseRecord;
         if (!memoryStore.some(m => m.email === withId.email && m.bought_at === withId.bought_at)) {
           memoryStore.push(withId);
         }
-        return data as PurchaseRecord;
+        return withId;
       }
     }
   }
@@ -229,4 +227,35 @@ export async function getAllPurchases(filters?: {
  */
 export async function getPurchasesForExport(filters?: { eventSlug?: string }): Promise<PurchaseRecord[]> {
   return getAllPurchases(filters);
+}
+
+/**
+ * Find purchase by KPay outTradeNo / payment_reference (webhook + return idempotency).
+ * Prefers service role so it works with RLS on Vercel.
+ */
+export async function getPurchaseByPaymentReference(
+  paymentReference: string
+): Promise<PurchaseRecord | null> {
+  if (!paymentReference) return null;
+  const ref = paymentReference.trim();
+
+  try {
+    const { getSupabaseAdmin } = await import("@/lib/supabase/server");
+    const admin = getSupabaseAdmin();
+    if (admin) {
+      const { data, error } = await admin
+        .from("purchases")
+        .select("*")
+        .eq("payment_reference", ref)
+        .order("bought_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (!error && data) return data as PurchaseRecord;
+    }
+  } catch (err) {
+    console.warn("[DB] getPurchaseByPaymentReference admin lookup failed:", err);
+  }
+
+  const mem = memoryStore.find((p) => p.payment_reference === ref);
+  return mem || null;
 }

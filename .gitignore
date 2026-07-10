@@ -23,6 +23,10 @@
 # misc
 .DS_Store
 *.pem
+secrets/
+.data/
+tsc-out.txt
+build-output.log
 
 # debug
 npm-debug.log*
