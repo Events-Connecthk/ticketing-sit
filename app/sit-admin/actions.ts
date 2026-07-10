@@ -16,67 +16,133 @@ export async function verifyAdminPassword(inputPassword: string): Promise<boolea
   return inputPassword === expected;
 }
 
+function mapRowToEventConfig(data: any): EventConfig {
+  return {
+    slug: data.slug,
+    name: data.name,
+    description: data.description || "",
+    date: data.date,
+    endDate: data.end_date || data.endDate || undefined,
+    time: data.time || "",
+    location: data.location,
+    image: data.image || undefined,
+    enabled: data.enabled !== false,
+    paymentEnabled: data.payment_enabled !== false && data.paymentEnabled !== false,
+    ticketTemplate: data.ticket_template || data.ticketTemplate || undefined,
+    ticketTypes: (data.ticket_types || data.ticketTypes || []).map((t: any) => ({
+      ...t,
+      enabled: t.enabled !== false,
+      discounts: t.discounts || [],
+    })),
+    buyerFormFields: data.buyer_form_fields || data.buyerFormFields || [],
+    discountCodes: data.discount_codes || data.discountCodes || [],
+    metadata: data.metadata,
+  };
+}
+
+/**
+ * Admin-only: list events with service role (always fresh after save).
+ */
+export async function adminGetAllEvents(): Promise<EventConfig[]> {
+  try {
+    const supabaseAdmin = getSupabaseAdmin();
+    if (!supabaseAdmin) {
+      const { getAllEvents } = await import("@/lib/db/events");
+      return getAllEvents();
+    }
+    const { data, error } = await supabaseAdmin
+      .from("events")
+      .select("*")
+      .order("name", { ascending: true });
+    if (error) {
+      console.error("[Admin Actions] adminGetAllEvents error:", error);
+      return [];
+    }
+    return (data || []).map(mapRowToEventConfig);
+  } catch (err) {
+    console.error("[Admin Actions] adminGetAllEvents error:", err);
+    return [];
+  }
+}
+
 /**
  * Admin-only: Save event using SERVICE_ROLE (bypasses RLS).
- * Use this from /sit-admin instead of direct db call.
+ * Always writes arrays (including empty) so removals persist.
  */
 export async function adminSaveEvent(event: EventConfig): Promise<EventConfig | null> {
   try {
     const cleanEvent = {
       ...event,
       slug: event.slug.toLowerCase().trim(),
+      ticketTypes: event.ticketTypes || [],
+      buyerFormFields: event.buyerFormFields || [],
+      discountCodes: event.discountCodes || [],
     };
 
-    const upsertPayload: any = {
+    // Always include full field set so "remove ticket type / form field" actually clears DB
+    const upsertPayload: Record<string, unknown> = {
       slug: cleanEvent.slug,
       name: cleanEvent.name,
       description: cleanEvent.description || null,
       date: cleanEvent.date,
+      end_date: cleanEvent.endDate || null,
       time: cleanEvent.time || null,
       location: cleanEvent.location,
-      enabled: cleanEvent.enabled,
-      ticket_types: cleanEvent.ticketTypes || [],
+      enabled: cleanEvent.enabled !== false,
+      payment_enabled: cleanEvent.paymentEnabled !== false,
+      ticket_types: cleanEvent.ticketTypes,
+      buyer_form_fields: cleanEvent.buyerFormFields,
+      discount_codes: cleanEvent.discountCodes,
+      ticket_template: cleanEvent.ticketTemplate || null,
+      image: cleanEvent.image || null,
       metadata: cleanEvent.metadata || {},
     };
 
-    if (cleanEvent.endDate) upsertPayload.end_date = cleanEvent.endDate;
-    if (cleanEvent.buyerFormFields && cleanEvent.buyerFormFields.length > 0) {
-      upsertPayload.buyer_form_fields = cleanEvent.buyerFormFields;
-    }
-    if (cleanEvent.discountCodes && cleanEvent.discountCodes.length > 0) {
-      upsertPayload.discount_codes = cleanEvent.discountCodes;
-    }
-    if (cleanEvent.paymentEnabled !== undefined) {
-      upsertPayload.payment_enabled = cleanEvent.paymentEnabled;
-    }
-    if (cleanEvent.ticketTemplate) {
-      upsertPayload.ticket_template = cleanEvent.ticketTemplate;
-    }
-    if (cleanEvent.image) {
-      upsertPayload.image = cleanEvent.image;
-    }
-
     const supabaseAdmin = getSupabaseAdmin();
     if (!supabaseAdmin) {
-      console.warn('[Admin] No service role key - saving to memory only');
-      return null;
+      console.warn("[Admin] No service role key - saving to memory only");
+      const { saveEvent } = await import("@/lib/db/events");
+      return saveEvent(cleanEvent as EventConfig);
     }
 
-    const { data, error } = await supabaseAdmin
+    let { data, error } = await supabaseAdmin
       .from("events")
       .upsert(upsertPayload)
       .select()
       .single();
+
+    // Retry without newer columns if schema is behind
+    if (error && (error.code === "PGRST204" || error.message?.includes("column"))) {
+      console.warn(
+        "[Admin Actions] Event upsert missing columns, retrying minimal payload:",
+        error.message
+      );
+      const minimal = {
+        slug: upsertPayload.slug,
+        name: upsertPayload.name,
+        description: upsertPayload.description,
+        date: upsertPayload.date,
+        time: upsertPayload.time,
+        location: upsertPayload.location,
+        enabled: upsertPayload.enabled,
+        ticket_types: upsertPayload.ticket_types,
+        metadata: upsertPayload.metadata,
+      };
+      const retry = await supabaseAdmin
+        .from("events")
+        .upsert(minimal)
+        .select()
+        .single();
+      data = retry.data;
+      error = retry.error;
+    }
 
     if (error) {
       console.error("[Admin Actions] Supabase event save error:", error);
       return null;
     }
 
-    return {
-      ...data,
-      ticketTypes: data.ticket_types || [],
-    } as EventConfig;
+    return mapRowToEventConfig(data);
   } catch (err) {
     console.error("[Admin Actions] adminSaveEvent error:", err);
     return null;

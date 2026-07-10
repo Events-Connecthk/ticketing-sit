@@ -6,6 +6,7 @@ import { PurchaseRecord, EventConfig, TicketType, BuyerFormField, DiscountCode }
 import { getAllEvents, isSupabaseConfigured } from "@/lib/db/events";
 import {
   adminSaveEvent,
+  adminGetAllEvents,
   adminDeleteEvent,
   adminGetAllPurchases,
   adminSavePurchase,
@@ -546,10 +547,17 @@ export default function AdminDashboard() {
   async function loadEvents() {
     setEventsLoading(true);
     try {
-      const data = await getAllEvents();
+      // Service-role list so admin always sees what was just saved
+      const data = await adminGetAllEvents();
       setEvents(data);
     } catch (e) {
       console.error(e);
+      try {
+        const fallback = await getAllEvents();
+        setEvents(fallback);
+      } catch {
+        /* ignore */
+      }
     } finally {
       setEventsLoading(false);
     }
@@ -625,9 +633,10 @@ export default function AdminDashboard() {
     setShowEventModal(true);
   }
 
-  // Reset time pickers when modal closes (safety)
+  // Reset form when modal closes
   function closeModal() {
     setShowEventModal(false);
+    setEditingEvent(null);
     setStartTime("");
     setEndTime("");
   }
@@ -726,20 +735,31 @@ export default function AdminDashboard() {
       enabled: eventForm.enabled,
       paymentEnabled: eventForm.paymentEnabled,
       ticketTemplate: eventForm.ticketTemplate || undefined,
-      ticketTypes: ticketTypesForm,
-      buyerFormFields: buyerFormFields.length > 0 ? buyerFormFields : undefined,
-      discountCodes: discountCodesForm.length > 0 ? discountCodesForm : undefined,
+      // Always send arrays so remove/add persists (never leave undefined)
+      ticketTypes: [...ticketTypesForm],
+      buyerFormFields: [...buyerFormFields],
+      discountCodes: [...discountCodesForm],
     };
 
     try {
-      // Use server action with service_role for secure write
       const saved = await adminSaveEvent(newEvent);
       if (saved) {
-        closeModal();
-        await loadEvents();
+        // Close first so UI never looks "stuck" on the form
+        setShowEventModal(false);
+        setEditingEvent(null);
+        setStartTime("");
+        setEndTime("");
+        // Optimistic list update, then refresh from server
+        setEvents((prev) => {
+          const rest = prev.filter((e) => e.slug !== saved.slug);
+          return [...rest, saved].sort((a, b) => a.name.localeCompare(b.name));
+        });
         toast.success(`Event "${newEvent.name}" saved successfully!`);
+        void loadEvents();
         if (!usingSupabase) {
-          toast.warning("Saved to memory only — will disappear after refresh. Check Supabase keys + restart.");
+          toast.warning(
+            "Saved to memory only — will disappear after refresh. Check Supabase keys + restart."
+          );
         }
       } else {
         toast.error("Failed to save event to Supabase");

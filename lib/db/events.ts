@@ -61,28 +61,13 @@ export async function getAllEvents(): Promise<EventConfig[]> {
       results = data.map(normalizeEvent);
     }
 
-    // Merge advanced fields from memory for events that couldn't save all columns to Supabase
-    const mergedResults = results.map(r => {
-      const mem = memoryEvents.find(m => m.slug === r.slug);
-      if (mem) {
-        return {
-          ...r,
-          paymentEnabled: mem.paymentEnabled !== false,
-          ticketTemplate: mem.ticketTemplate || r.ticketTemplate,
-          discountCodes: mem.discountCodes && mem.discountCodes.length > 0 ? mem.discountCodes : r.discountCodes,
-          buyerFormFields: mem.buyerFormFields && mem.buyerFormFields.length > 0 ? mem.buyerFormFields : r.buyerFormFields,
-          endDate: mem.endDate || r.endDate,
-          image: mem.image || r.image,
-        };
-      }
-      return r;
-    });
-
-    // Add completely new memory-only events
+    // Prefer DB rows as source of truth. Do NOT overlay memory arrays —
+    // that made removed ticket types / form fields reappear after save.
+    // Only append events that exist solely in memory (dev without Supabase write).
     const memoryToAdd = memoryEvents.filter(
       (m) => !results.some((r) => r.slug === m.slug)
     );
-    return [...mergedResults, ...memoryToAdd.map(normalizeEvent)];
+    return [...results, ...memoryToAdd.map(normalizeEvent)];
   }
 
   // Memory fallback
@@ -103,20 +88,7 @@ export async function getEventBySlug(slug: string): Promise<EventConfig | null> 
       console.error("[Events DB] Supabase get by slug error:", error);
     }
     if (!error && data) {
-      const r = normalizeEvent(data);
-      const mem = memoryEvents.find(m => m.slug === slug);
-      if (mem) {
-        return {
-          ...r,
-          paymentEnabled: mem.paymentEnabled !== false,
-          ticketTemplate: mem.ticketTemplate || r.ticketTemplate,
-          discountCodes: mem.discountCodes && mem.discountCodes.length > 0 ? mem.discountCodes : r.discountCodes,
-          buyerFormFields: mem.buyerFormFields && mem.buyerFormFields.length > 0 ? mem.buyerFormFields : r.buyerFormFields,
-          endDate: mem.endDate || r.endDate,
-          image: mem.image || r.image,
-        };
-      }
-      return r;
+      return normalizeEvent(data);
     }
   }
 
@@ -157,26 +129,13 @@ export async function saveEvent(event: EventConfig): Promise<EventConfig> {
       metadata: cleanEvent.metadata || {},
     };
 
-    // Only include new columns if they have values (prevents schema errors on old tables)
-    // IMPORTANT: You MUST run the ALTER TABLE statements from supabase-schema.sql
-    // (for end_date, buyer_form_fields, discount_codes) or new columns will cause PGRST204.
-    // The code below has fallback retry logic for missing columns.
-    if (cleanEvent.endDate) upsertPayload.end_date = cleanEvent.endDate;
-    if (cleanEvent.buyerFormFields && cleanEvent.buyerFormFields.length > 0) {
-      upsertPayload.buyer_form_fields = cleanEvent.buyerFormFields;
-    }
-    if (cleanEvent.discountCodes && cleanEvent.discountCodes.length > 0) {
-      upsertPayload.discount_codes = cleanEvent.discountCodes;
-    }
-    if (cleanEvent.paymentEnabled !== undefined) {
-      upsertPayload.payment_enabled = cleanEvent.paymentEnabled;
-    }
-    if (cleanEvent.ticketTemplate) {
-      upsertPayload.ticket_template = cleanEvent.ticketTemplate;
-    }
-    if (cleanEvent.image) {
-      upsertPayload.image = cleanEvent.image;
-    }
+    // Always write full optional fields (including empty arrays / null) so removals stick
+    upsertPayload.end_date = cleanEvent.endDate || null;
+    upsertPayload.buyer_form_fields = cleanEvent.buyerFormFields || [];
+    upsertPayload.discount_codes = cleanEvent.discountCodes || [];
+    upsertPayload.payment_enabled = cleanEvent.paymentEnabled !== false;
+    upsertPayload.ticket_template = cleanEvent.ticketTemplate || null;
+    upsertPayload.image = cleanEvent.image || null;
 
     const { data, error } = await client
       .from("events")
