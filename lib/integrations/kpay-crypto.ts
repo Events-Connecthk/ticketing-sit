@@ -36,10 +36,13 @@ export function randomNonce(length = 32): string {
 
 /**
  * Build the payload that is RSA-SHA256 signed.
- * Modes:
- *  - body_only: raw JSON body
+ * Modes (KPay docs vary; we try several on create if needed):
  *  - timestamp_nonce_body (default): timestamp\\nnonce\\nbody
- *  - sorted_params: classic Chinese gateway k=v& sorted string of body object + header fields
+ *  - timestamp_nonce_body_crlf: same with \\r\\n
+ *  - body_only: raw JSON body
+ *  - concat: timestamp + nonce + body (no separators)
+ *  - merchant_timestamp_nonce_body: MID\\ntimestamp\\nnonce\\nbody
+ *  - sorted_params: sorted k=v of headers + body fields
  */
 export function buildSignPayload(opts: {
   mode?: string;
@@ -53,6 +56,18 @@ export function buildSignPayload(opts: {
 
   if (mode === "body_only") {
     return opts.rawBody;
+  }
+
+  if (mode === "concat" || mode === "timestamp_nonce_body_nosep") {
+    return `${opts.timestamp}${opts.nonce}${opts.rawBody}`;
+  }
+
+  if (mode === "timestamp_nonce_body_crlf") {
+    return `${opts.timestamp}\r\n${opts.nonce}\r\n${opts.rawBody}`;
+  }
+
+  if (mode === "merchant_timestamp_nonce_body") {
+    return `${opts.merchantCode}\n${opts.timestamp}\n${opts.nonce}\n${opts.rawBody}`;
   }
 
   if (mode === "sorted_params") {
@@ -73,9 +88,19 @@ export function buildSignPayload(opts: {
       .join("&");
   }
 
-  // default
+  // default: timestamp\nnonce\nbody
   return `${opts.timestamp}\n${opts.nonce}\n${opts.rawBody}`;
 }
+
+/** Modes to try when create returns Invalid signature */
+export const KPAY_SIGN_MODES = [
+  "timestamp_nonce_body",
+  "body_only",
+  "concat",
+  "timestamp_nonce_body_crlf",
+  "merchant_timestamp_nonce_body",
+  "sorted_params",
+] as const;
 
 export function signWithPrivateKey(payload: string, privateKeyPem: string): string {
   const key = normalizePem(privateKeyPem, "PRIVATE KEY");

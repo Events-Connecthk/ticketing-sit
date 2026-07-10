@@ -22,6 +22,7 @@ import {
   randomNonce,
   signWithPrivateKey,
   verifyWithPublicKey,
+  KPAY_SIGN_MODES,
 } from "./kpay-crypto";
 import {
   getPendingPayment,
@@ -168,7 +169,7 @@ async function kpayRequest<T = any>(
   method: "GET" | "POST",
   path: string,
   body?: Record<string, unknown>,
-  opts?: { logFullExchange?: boolean }
+  opts?: { logFullExchange?: boolean; signMode?: string }
 ): Promise<{
   ok: boolean;
   status: number;
@@ -178,14 +179,18 @@ async function kpayRequest<T = any>(
   requestUrl?: string;
   requestHeaders?: Record<string, string>;
   requestBody?: string;
+  signMode?: string;
 }> {
   const url = `${API_BASE}${path.startsWith("/") ? path : `/${path}`}`;
   const rawBody = body ? JSON.stringify(body) : "";
   const timestamp = Date.now().toString();
   const nonce = randomNonce(32);
+  const signMode =
+    opts?.signMode || process.env.KPAY_SIGN_PAYLOAD || "timestamp_nonce_body";
 
   const headers: Record<string, string> = {
-    "Content-Type": "application/json",
+    // Docs intro: application/json;charset=UTF-8
+    "Content-Type": "application/json;charset=UTF-8",
     "K-Merchant-Code": MERCHANT_CODE,
     "K-Timestamp": timestamp,
     "K-Nonce-Str": nonce,
@@ -196,21 +201,14 @@ async function kpayRequest<T = any>(
     headers["K-App-Id"] = APP_ID;
   }
 
-  if (PRIVATE_KEY && rawBody) {
+  if (PRIVATE_KEY && (rawBody || method === "GET")) {
     const payload = buildSignPayload({
+      mode: signMode,
       timestamp,
       nonce,
       merchantCode: MERCHANT_CODE,
-      rawBody,
+      rawBody: method === "GET" ? "" : rawBody,
       bodyObject: body,
-    });
-    headers["K-Signature"] = signWithPrivateKey(payload, PRIVATE_KEY);
-  } else if (PRIVATE_KEY && method === "GET") {
-    const payload = buildSignPayload({
-      timestamp,
-      nonce,
-      merchantCode: MERCHANT_CODE,
-      rawBody: "",
     });
     headers["K-Signature"] = signWithPrivateKey(payload, PRIVATE_KEY);
   }
@@ -272,6 +270,7 @@ async function kpayRequest<T = any>(
       requestUrl: url,
       requestHeaders: headers,
       requestBody: rawBody,
+      signMode,
     };
   } catch (err) {
     console.error("[KPay] request error:", err);
@@ -281,6 +280,7 @@ async function kpayRequest<T = any>(
       data: null,
       raw: "",
       error: err instanceof Error ? err.message : "Network error",
+      signMode,
     };
   }
 }
@@ -299,9 +299,11 @@ function productIconUrl(): string {
  */
 async function cartToItemList(cart: OrderCart) {
   const icon = productIconUrl();
+  // ASCII only in item names — some sign/verify stacks choke on Unicode (×)
   const clean = (s: string) =>
     s
-      .replace(/[^\x20-\x7E\u00D7]/g, " ")
+      .replace(/\u00D7/g, "x")
+      .replace(/[^\x20-\x7E]/g, " ")
       .replace(/\s+/g, " ")
       .trim();
 
@@ -324,7 +326,7 @@ async function cartToItemList(cart: OrderCart) {
     const meta = typeMap.get(sel.ticketTypeId);
     const qty = Math.max(1, Number(sel.quantity) || 1);
     const unit = roundMoney(meta?.price ?? 0);
-    const name = clean(`${meta?.name || sel.ticketTypeId} × ${qty}`).slice(
+    const name = clean(`${meta?.name || sel.ticketTypeId} x ${qty}`).slice(
       0,
       128
     );
@@ -377,6 +379,14 @@ function buildWebCheckoutUrl(managedOrderNo: string): string {
 
 function formatKpayUserError(code: number, msg: string): string {
   const m = (msg || "").trim();
+  if (/signature|sign|签名|驗簽|验签/i.test(m) || code === 40001) {
+    return (
+      `KPay rejected the request signature (Invalid signature). ` +
+      `Check Vercel env: KPAY_MERCHANT_PRIVATE_KEY (full PEM), KPAY_MERCHANT_CODE, ` +
+      `KPAY_API_BASE_URL=https://payment.uat.kpay-group.com. ` +
+      `Optional: set KPAY_SIGN_PAYLOAD=body_only if support confirms that mode.`
+    );
+  }
   if (m.includes("未知錯誤") || code === 50001) {
     return (
       `KPay error ${code || ""}: Unknown error (未知錯誤). `.trim() +
@@ -459,9 +469,53 @@ export async function initiateKpayPayment(
       data?: { managedOrderNo?: string; [k: string]: unknown };
     };
 
-    const result = await kpayRequest<CreateRes>("POST", CREATE_PATH, body, {
-      logFullExchange: true,
-    });
+    // Try sign modes until create succeeds (docs don't spell the exact string-to-sign)
+    const preferred = process.env.KPAY_SIGN_PAYLOAD || "timestamp_nonce_body";
+    const modes = [
+      preferred,
+      ...KPAY_SIGN_MODES.filter((m) => m !== preferred),
+    ];
+
+    let result: Awaited<ReturnType<typeof kpayRequest<CreateRes>>> | null =
+      null;
+    let usedMode = preferred;
+
+    for (const mode of modes) {
+      const attempt = await kpayRequest<CreateRes>("POST", CREATE_PATH, body, {
+        logFullExchange: true,
+        signMode: mode,
+      });
+      const attemptCode = Number((attempt.data as any)?.code);
+      const attemptManaged = String(
+        (attempt.data as any)?.data?.managedOrderNo || ""
+      );
+      const attemptMsg = String(
+        (attempt.data as any)?.message || attempt.raw || ""
+      );
+      console.log("[KPay] Create sign-mode try", {
+        mode,
+        code: attemptCode,
+        http: attempt.status,
+        hasManagedOrderNo: Boolean(attemptManaged),
+        msg: attemptMsg.slice(0, 80),
+      });
+
+      result = attempt;
+      usedMode = mode;
+
+      if (attemptCode === SUCCESS_CODE && attemptManaged) break;
+
+      // Only retry other modes on signature-style failures
+      const sigFail =
+        /signature|sign|签名|驗簽|验签|invalid/i.test(attemptMsg) ||
+        attemptCode === 40001 ||
+        attemptCode === 401;
+      if (!sigFail && attemptCode && attemptCode !== SUCCESS_CODE) break;
+    }
+
+    if (!result) {
+      return { success: false, error: "KPay create payment failed (no response)" };
+    }
 
     const code = Number((result.data as any)?.code);
     const managedOrderNo = String(
@@ -480,6 +534,7 @@ export async function initiateKpayPayment(
         managedOutTradeNo: outTradeNo,
         managedOrderNo,
         createPath: CREATE_PATH,
+        signMode: usedMode,
         apiBase: API_BASE,
         paymentUrl: paymentUrl.slice(0, 120) + "…",
         returnUrl,
@@ -504,11 +559,14 @@ export async function initiateKpayPayment(
       status: result.status,
       code,
       path: CREATE_PATH,
+      signMode: usedMode,
       apiBase: API_BASE,
       msg: String(msg).slice(0, 500),
       raw: String(result.raw || "").slice(0, 400),
       outTradeNo,
       payAmount,
+      hasPrivateKey: Boolean(PRIVATE_KEY),
+      merchantLen: MERCHANT_CODE.length,
     });
 
     if (!isProduction() && process.env.KPAY_FORCE_REAL !== "true") {
@@ -862,76 +920,3 @@ export async function verifyKpayWebhook(
 ): Promise<boolean> {
   if (!signature) {
     if (webhookRelaxed()) {
-      console.warn(
-        "[KPay] Webhook signature missing — allowed (sandbox/relaxed)"
-      );
-      return true;
-    }
-    return false;
-  }
-
-  if (!PLATFORM_PUBLIC_KEY) {
-    if (webhookRelaxed()) {
-      console.warn(
-        "[KPay] KPAY_PLATFORM_PUBLIC_KEY not set — skipping verify (sandbox/relaxed)"
-      );
-      return true;
-    }
-    console.error("[KPay] Cannot verify webhook: missing platform public key");
-    return false;
-  }
-
-  const raw =
-    typeof payload === "string" ? payload : JSON.stringify(payload ?? {});
-
-  if (verifyWithPublicKey(raw, signature, PLATFORM_PUBLIC_KEY)) {
-    return true;
-  }
-
-  if (payload && typeof payload === "object") {
-    const data = (payload as any).data ?? payload;
-    if (data && typeof data === "object") {
-      const sorted = Object.keys(data)
-        .filter((k) => k !== "sign" && k !== "signature")
-        .sort()
-        .map(
-          (k) =>
-            `${k}=${typeof data[k] === "object" ? JSON.stringify(data[k]) : data[k]}`
-        )
-        .join("&");
-      if (verifyWithPublicKey(sorted, signature, PLATFORM_PUBLIC_KEY)) {
-        return true;
-      }
-    }
-  }
-
-  if (webhookRelaxed()) {
-    console.warn(
-      "[KPay] Webhook signature verify failed — allowing (sandbox/relaxed)"
-    );
-    return true;
-  }
-
-  console.warn("[KPay] Webhook signature verification failed");
-  return false;
-}
-
-// ──────────────────────────────────────────────────────
-// Helpers
-// ──────────────────────────────────────────────────────
-
-function createSimulatedResponse(
-  cart: OrderCart,
-  customId?: string
-): PaymentInitiationResult {
-  const paymentId =
-    customId ||
-    `KPAY-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-
-  // Internal path so checkout page finalizes without leaving the app
-  return {
-    success: true,
-    paymentId,
-    redirectUrl: `/checkout?session=${paymentId}`,
-  };
-}
