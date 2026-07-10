@@ -3,21 +3,19 @@
 /**
  * KPay Online Payment Gateway (Merchant Mode) — All Hosted Checkout
  *
- * Sandbox base (from KPay test resources):
- *   https://online-sandbox.kpay-group.com/api
- * Hosted checkout simulator:
- *   https://online-sandbox.kpay-group.com/home
+ * Official UAT base (per KPay support):
+ *   https://payment.uat.kpay-group.com
  *
- * Confirmed working create endpoint (sandbox discovery):
+ * Create path candidates (first success wins; override with KPAY_CREATE_PATH):
+ *   POST /v1/web/managed
  *   POST /v1/payment/web/managed
- *   body: { payAmount, itemList[{productId,productName,productIcon,productPrice,productQuantity}], ... }
- *   success code: 10000 → data.paymentUrl
  *
- * Auth headers (docs):
+ * Success: code 10000 → data.paymentUrl (often hosts payment.uat.kpay-group.com)
+ *
+ * Auth headers:
  *   K-Nonce-Str, K-Merchant-Code, K-Signature, K-Timestamp, K-Language
- *   (+ K-App-Id for Service Provider Mode)
  *
- * Simulation is used only when NODE_ENV !== "production" AND credentials missing.
+ * Simulation only when NODE_ENV !== "production" AND credentials missing.
  */
 
 import { readFileSync, existsSync } from "fs";
@@ -84,10 +82,19 @@ const PLATFORM_PUBLIC_KEY = loadKeyMaterial(
 );
 const APP_ID = process.env.KPAY_APP_ID || "";
 
+// Official UAT host per KPay (not online-sandbox…/api)
 const API_BASE = (
   process.env.KPAY_API_BASE_URL ||
-  "https://online-sandbox.kpay-group.com/api"
+  "https://payment.uat.kpay-group.com"
 ).replace(/\/$/, "");
+
+/** Override exact create path if KPay docs specify one */
+const CREATE_PATH_CANDIDATES = [
+  process.env.KPAY_CREATE_PATH,
+  "/v1/web/managed",
+  "/v1/payment/web/managed",
+  "/api/v1/payment/web/managed",
+].filter((p): p is string => Boolean(p && p.trim()));
 
 const LANGUAGE = process.env.KPAY_LANGUAGE || "en_US";
 
@@ -455,7 +462,7 @@ export async function initiateKpayPayment(
       notifyUrl,
     });
 
-    const result = await kpayRequest<{
+    type CreateRes = {
       code: number | string;
       message?: string;
       data?: {
@@ -464,17 +471,58 @@ export async function initiateKpayPayment(
         orderNo?: string;
         [k: string]: unknown;
       };
-    }>("POST", "/v1/payment/web/managed", body, { logFullExchange: true });
+    };
+
+    let result: Awaited<ReturnType<typeof kpayRequest<CreateRes>>> | null =
+      null;
+    let usedPath = "";
+
+    for (const path of CREATE_PATH_CANDIDATES) {
+      const attempt = await kpayRequest<CreateRes>("POST", path, body, {
+        logFullExchange: true,
+      });
+      const attemptCode = Number((attempt.data as any)?.code);
+      const attemptUrl = (attempt.data as any)?.data?.paymentUrl as
+        | string
+        | undefined;
+      console.log("[KPay] Create attempt", {
+        path,
+        httpStatus: attempt.status,
+        code: attemptCode,
+        hasPaymentUrl: Boolean(attemptUrl),
+      });
+      result = attempt;
+      usedPath = path;
+      if (attemptCode === SUCCESS_CODE && attemptUrl) break;
+      // 404 = wrong path, try next; other business errors may still be "valid" path
+      if (attempt.status !== 404 && attemptCode && attemptCode !== SUCCESS_CODE) {
+        break;
+      }
+    }
+
+    if (!result) {
+      return { success: false, error: "KPay create payment failed (no response)" };
+    }
 
     const code = Number((result.data as any)?.code);
     const paymentUrl = (result.data as any)?.data?.paymentUrl as
       | string
       | undefined;
-    const managedOrderNo = String(
+
+    // managedOrderNo often only appears inside paymentUrl query string
+    let managedOrderNo = String(
       (result.data as any)?.data?.managedOrderNo ||
         (result.data as any)?.data?.orderNo ||
         ""
     );
+    if (!managedOrderNo && paymentUrl) {
+      try {
+        const u = new URL(paymentUrl);
+        managedOrderNo = u.searchParams.get("managedOrderNo") || "";
+      } catch {
+        /* ignore */
+      }
+    }
 
     if (code === SUCCESS_CODE && paymentUrl) {
       await savePendingPayment(outTradeNo, cart, {
@@ -485,11 +533,12 @@ export async function initiateKpayPayment(
       console.log("[KPay] Payment created (share with KPay support)", {
         outTradeNo,
         managedOrderNo: managedOrderNo || null,
+        createPath: usedPath,
+        apiBase: API_BASE,
         returnUrl: body.returnUrl,
         notifyUrl: body.notifyUrl,
         origin,
         responseCode: code,
-        // KPay often indexes by managedOrderNo / orderNo, not only merchant outTradeNo
         responseDataKeys: result.data
           ? Object.keys((result.data as any).data || {})
           : [],
@@ -511,6 +560,8 @@ export async function initiateKpayPayment(
     console.error("[KPay] initiate failed:", {
       status: result.status,
       code,
+      path: usedPath,
+      apiBase: API_BASE,
       msg: String(msg).slice(0, 500),
       raw: String(result.raw || "").slice(0, 400),
       outTradeNo,
@@ -518,7 +569,6 @@ export async function initiateKpayPayment(
       currency,
     });
 
-    // In non-production, allow falling back to sim if API rejects
     if (!isProduction() && process.env.KPAY_FORCE_REAL !== "true") {
       console.warn(
         "[KPay] Falling back to simulation (set KPAY_FORCE_REAL=true to disable)."
@@ -871,7 +921,11 @@ export async function confirmKpayPayment(
 
 function isSandboxApi(): boolean {
   const base = process.env.KPAY_API_BASE_URL || API_BASE || "";
-  return base.includes("sandbox");
+  return (
+    base.includes("sandbox") ||
+    base.includes("uat") ||
+    base.includes("payment.uat")
+  );
 }
 
 function webhookRelaxed(): boolean {
