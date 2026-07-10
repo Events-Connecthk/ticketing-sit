@@ -324,11 +324,11 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
         return;
       }
 
-      // Not paid (cancel, still processing, or webhook missing)
+      // Still no notify — intermediate page fallback
       finalizedSessionsRef.current.delete(paymentReference);
       setNeedsManualConfirm(true);
       setError(
-        "Payment not confirmed yet. If you cancelled, use “No ticket”. If you completed payment, wait a few seconds and tap “I paid” (or check email — webhook may still arrive)."
+        "Waiting for payment result timed out (no notify from KPay yet). If you completed payment, tap “I paid”. If you cancelled, tap “I cancelled”."
       );
     } catch (e) {
       console.error("[Checkout] Return finalize error:", e);
