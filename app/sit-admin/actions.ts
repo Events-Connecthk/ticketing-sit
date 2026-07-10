@@ -41,6 +41,38 @@ function mapRowToEventConfig(data: any): EventConfig {
 }
 
 /**
+ * Public: sold counts per ticket type for an event (for inventory UI).
+ * Uses service role so it works with RLS blocking anon SELECT on purchases.
+ */
+export async function getEventTicketSoldCounts(
+  eventSlug: string
+): Promise<Record<string, number>> {
+  if (!eventSlug) return {};
+  try {
+    const supabaseAdmin = getSupabaseAdmin();
+    if (!supabaseAdmin) {
+      const { getAllPurchases } = await import("@/lib/db/purchases");
+      const { countSoldByTicketType } = await import("@/lib/tickets/inventory");
+      const rows = await getAllPurchases({ eventSlug });
+      return countSoldByTicketType(rows);
+    }
+    const { data, error } = await supabaseAdmin
+      .from("purchases")
+      .select("ticket_breakdown, number_of_tickets")
+      .eq("event_slug", eventSlug);
+    if (error) {
+      console.error("[Admin Actions] getEventTicketSoldCounts:", error);
+      return {};
+    }
+    const { countSoldByTicketType } = await import("@/lib/tickets/inventory");
+    return countSoldByTicketType(data || []);
+  } catch (err) {
+    console.error("[Admin Actions] getEventTicketSoldCounts error:", err);
+    return {};
+  }
+}
+
+/**
  * Admin-only: list events with service role (always fresh after save).
  */
 export async function adminGetAllEvents(): Promise<EventConfig[]> {

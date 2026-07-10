@@ -71,6 +71,7 @@ export default function AdminDashboard() {
     price: 0,
     currency: "HKD",
     maxPerOrder: 6,
+    quantityAvailable: undefined,
     redemptionLimit: 1,
     enabled: true,
   });
@@ -576,7 +577,16 @@ export default function AdminDashboard() {
     setTicketTypesForm([]);
     setBuyerFormFields([]);
     setDiscountCodesForm([]);
-    setNewTicket({ id: "", name: "", price: 0, currency: "HKD", maxPerOrder: 6, redemptionLimit: 1, enabled: true });
+    setNewTicket({
+      id: "",
+      name: "",
+      price: 0,
+      currency: "HKD",
+      maxPerOrder: 6,
+      quantityAvailable: undefined,
+      redemptionLimit: 1,
+      enabled: true,
+    });
     setStartTime("");
     setEndTime("");
     setShowEventModal(true);
@@ -601,7 +611,16 @@ export default function AdminDashboard() {
     setTicketTypesForm([...(ev.ticketTypes || [])]);
     setBuyerFormFields([...(ev.buyerFormFields || [])]);
     setDiscountCodesForm([...(ev.discountCodes || [])]);
-    setNewTicket({ id: "", name: "", price: 0, currency: "HKD", maxPerOrder: 6, redemptionLimit: 1, enabled: true });
+    setNewTicket({
+      id: "",
+      name: "",
+      price: 0,
+      currency: "HKD",
+      maxPerOrder: 6,
+      quantityAvailable: undefined,
+      redemptionLimit: 1,
+      enabled: true,
+    });
 
     // Parse time range if present (e.g. "18:30 – 23:00")
     if (ev.time) {
@@ -778,18 +797,32 @@ export default function AdminDashboard() {
       alert("Ticket ID and Name are required.");
       return;
     }
+    const cap = newTicket.quantityAvailable;
     const t: TicketType = {
       id: newTicket.id.trim(),
       name: newTicket.name.trim(),
       price: Number(newTicket.price) || 0,
       currency: newTicket.currency || "HKD",
       maxPerOrder: newTicket.maxPerOrder || 6,
+      quantityAvailable:
+        cap != null && cap !== ("" as any) && !Number.isNaN(Number(cap)) && Number(cap) > 0
+          ? Number(cap)
+          : undefined,
       redemptionLimit: newTicket.redemptionLimit || 1,
       description: "",
       enabled: newTicket.enabled !== false,
     };
     setTicketTypesForm([...ticketTypesForm, t]);
-    setNewTicket({ id: "", name: "", price: 0, currency: "HKD", maxPerOrder: 6, redemptionLimit: 1, enabled: true });
+    setNewTicket({
+      id: "",
+      name: "",
+      price: 0,
+      currency: "HKD",
+      maxPerOrder: 6,
+      quantityAvailable: undefined,
+      redemptionLimit: 1,
+      enabled: true,
+    });
   }
 
   function removeTicketType(id: string) {
@@ -1718,6 +1751,47 @@ export default function AdminDashboard() {
                           <div className="text-xs">
                             <input
                               type="number"
+                              value={t.maxPerOrder ?? 6}
+                              onChange={(e) => {
+                                const val = Math.max(1, parseInt(e.target.value) || 6);
+                                setTicketTypesForm(
+                                  ticketTypesForm.map((tt) =>
+                                    tt.id === t.id ? { ...tt, maxPerOrder: val } : tt
+                                  )
+                                );
+                              }}
+                              className="w-12 border rounded px-1 py-0.5 text-center"
+                              min="1"
+                              title="Max per order"
+                            />
+                            <span className="ml-0.5 text-zinc-500">max/order</span>
+                          </div>
+                          <div className="text-xs">
+                            <input
+                              type="number"
+                              value={t.quantityAvailable ?? ""}
+                              onChange={(e) => {
+                                const raw = e.target.value;
+                                const val =
+                                  raw === "" ? undefined : Math.max(0, parseInt(raw) || 0);
+                                setTicketTypesForm(
+                                  ticketTypesForm.map((tt) =>
+                                    tt.id === t.id
+                                      ? { ...tt, quantityAvailable: val }
+                                      : tt
+                                  )
+                                );
+                              }}
+                              className="w-16 border rounded px-1 py-0.5 text-center"
+                              min="0"
+                              placeholder="∞"
+                              title="Total available (empty = unlimited)"
+                            />
+                            <span className="ml-0.5 text-zinc-500">stock</span>
+                          </div>
+                          <div className="text-xs">
+                            <input
+                              type="number"
                               value={t.redemptionLimit ?? 1}
                               onChange={(e) => {
                                 const val = parseInt(e.target.value) || 1;
@@ -1764,7 +1838,7 @@ export default function AdminDashboard() {
 
                 {/* Add new ticket type */}
                 <div className="border rounded-xl p-4 bg-zinc-50">
-                  <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                  <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
                     <input
                       placeholder="ID (e.g. ga)"
                       value={newTicket.id}
@@ -1785,24 +1859,49 @@ export default function AdminDashboard() {
                       className="border px-3 py-2 rounded text-sm"
                     />
                     <input
-                      placeholder="Currency"
-                      value={newTicket.currency}
-                      onChange={(e) => setNewTicket({ ...newTicket, currency: e.target.value })}
+                      type="number"
+                      placeholder="Max per order"
+                      value={newTicket.maxPerOrder ?? 6}
+                      onChange={(e) =>
+                        setNewTicket({
+                          ...newTicket,
+                          maxPerOrder: Math.max(1, parseInt(e.target.value) || 6),
+                        })
+                      }
                       className="border px-3 py-2 rounded text-sm"
+                      min="1"
                     />
                     <input
                       type="number"
-                      placeholder="Redemption limit (days)"
+                      placeholder="Stock (blank = ∞)"
+                      value={newTicket.quantityAvailable ?? ""}
+                      onChange={(e) => {
+                        const raw = e.target.value;
+                        setNewTicket({
+                          ...newTicket,
+                          quantityAvailable:
+                            raw === "" ? undefined : Math.max(0, parseInt(raw) || 0),
+                        });
+                      }}
+                      className="border px-3 py-2 rounded text-sm"
+                      min="0"
+                    />
+                    <input
+                      type="number"
+                      placeholder="Redemptions"
                       value={newTicket.redemptionLimit ?? 1}
                       onChange={(e) => setNewTicket({ ...newTicket, redemptionLimit: parseInt(e.target.value) || 1 })}
                       className="border px-3 py-2 rounded text-sm"
                       min="1"
                     />
-                    <button onClick={addTicketType} className="bg-white border rounded-lg text-sm hover:bg-white/80">
+                    <button onClick={addTicketType} className="bg-white border rounded-lg text-sm hover:bg-white/80 col-span-2 md:col-span-1">
                       + Add Type
                     </button>
                   </div>
-                  <p className="text-[10px] text-zinc-500 mt-2">Ticket type IDs must be unique within the event.</p>
+                  <p className="text-[10px] text-zinc-500 mt-2">
+                    Unique IDs per event. Stock = total tickets for sale (empty = unlimited).
+                    At ≤50 remaining, buyers see “Limited available”; at 0 = Out of stock.
+                  </p>
                 </div>
               </div>
 

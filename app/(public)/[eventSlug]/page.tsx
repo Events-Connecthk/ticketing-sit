@@ -6,6 +6,8 @@ import { TicketSelector } from "@/components/ticketing";
 import { loadEventBySlug, getEffectivePrice } from "@/lib/config/events";
 import { EventConfig, TicketSelection, BuyerInfo, OrderCart, BuyerFormField } from "@/types";
 import { Calendar, MapPin, Users } from "lucide-react";
+import { getEventTicketSoldCounts } from "@/app/sit-admin/actions";
+import { getRemaining } from "@/lib/tickets/inventory";
 
 /**
  * Dynamic Event Page
@@ -48,6 +50,9 @@ export default function EventPage({ params }: EventPageProps) {
         setStep(needsTicketSelection ? "tickets" : "details");
       }
     });
+    getEventTicketSoldCounts(eventSlug)
+      .then(setSoldByType)
+      .catch(() => setSoldByType({}));
   }, [eventSlug]);
 
   const [step, setStep] = useState<"tickets" | "details">("details");
@@ -57,6 +62,7 @@ export default function EventPage({ params }: EventPageProps) {
   const [discountCodeInput, setDiscountCodeInput] = useState("");
   const [appliedDiscount, setAppliedDiscount] = useState<{ code: string; percent: number } | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [soldByType, setSoldByType] = useState<Record<string, number>>({});
 
   React.useEffect(() => {
     if (event) {
@@ -242,6 +248,7 @@ export default function EventPage({ params }: EventPageProps) {
                   selections={selections}
                   onChange={handleTicketChange}
                   currency={currency}
+                  soldByType={soldByType}
                 />
 
                 <div className="mt-6">
@@ -249,7 +256,13 @@ export default function EventPage({ params }: EventPageProps) {
                     onClick={() => {
                       if (totalTickets > 0) setStep("details");
                     }}
-                    disabled={totalTickets === 0}
+                    disabled={
+                      totalTickets === 0 ||
+                      availableTicketTypes.every((t) => {
+                        const rem = getRemaining(t, soldByType);
+                        return rem !== null && rem <= 0;
+                      })
+                    }
                     className="btn-gold w-full rounded-xl py-4 font-medium text-lg disabled:opacity-60 disabled:cursor-not-allowed"
                   >
                     {totalTickets > 0 ? (event.paymentEnabled ? "Proceed to Checkout" : "Register for Free") : "Select tickets to continue"}

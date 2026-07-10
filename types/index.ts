@@ -17,6 +17,8 @@ export interface TicketType {
   price: number; // in the currency unit (e.g. HKD)
   currency: string; // e.g. "HKD"
   maxPerOrder?: number;
+  /** Total tickets of this type for the event. Omit / leave empty = unlimited. */
+  quantityAvailable?: number;
   enabled?: boolean; // defaults to true if omitted
   discounts?: DiscountRule[]; // customizable discounts
   redemptionLimit?: number; // how many times this ticket can be redeemed (e.g. 1 = single day, 3 = 3-day access)
