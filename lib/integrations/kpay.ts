@@ -92,9 +92,8 @@ const API_BASE = (
 const LANGUAGE = process.env.KPAY_LANGUAGE || "en_US";
 
 const DEFAULT_PRODUCT_ID = Number(process.env.KPAY_DEFAULT_PRODUCT_ID || "1");
-const DEFAULT_PRODUCT_ICON =
-  process.env.KPAY_DEFAULT_PRODUCT_ICON ||
-  "https://s3-stage.kpay-group.com/public/online-gateway-sandbox/product/default/AirJodan3.jpeg";
+/** Override with any public HTTPS image URL for KPay hosted checkout product art */
+const DEFAULT_PRODUCT_ICON = process.env.KPAY_DEFAULT_PRODUCT_ICON || "";
 
 const SUCCESS_CODE = 10000;
 
@@ -216,16 +215,28 @@ async function kpayRequest<T = any>(
   }
 }
 
+function productIconUrl(): string {
+  if (DEFAULT_PRODUCT_ICON) return DEFAULT_PRODUCT_ICON;
+  // Our ticket icon (not KPay sandbox shoe demo). Must be absolute HTTPS for KPay.
+  const origin = siteOrigin();
+  return `${origin}/images/ticket-product-icon.svg`;
+}
+
 function cartToItemList(cart: OrderCart) {
   // Hosted checkout requires productId + productIcon on every line.
-  // Sandbox demo catalog uses productId 1/2/3; real MID may allow any positive id.
-  const name = `Tickets - ${cart.eventSlug}`.replace(/[^\x20-\x7E]/g, " ");
+  const count =
+    cart.tickets.reduce((sum, t) => sum + (Number(t.quantity) || 0), 0) || 1;
+  const name = (
+    count === 1
+      ? `Event ticket (${cart.eventSlug})`
+      : `${count} event tickets (${cart.eventSlug})`
+  ).replace(/[^\x20-\x7E]/g, " ");
   const price = roundMoney(cart.totalAmount);
   return [
     {
       productId: DEFAULT_PRODUCT_ID,
       productName: name.slice(0, 120),
-      productIcon: DEFAULT_PRODUCT_ICON,
+      productIcon: productIconUrl(),
       productPrice: price,
       productQuantity: 1,
     },
