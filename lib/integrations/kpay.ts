@@ -920,3 +920,76 @@ export async function verifyKpayWebhook(
 ): Promise<boolean> {
   if (!signature) {
     if (webhookRelaxed()) {
+      console.warn(
+        "[KPay] Webhook signature missing — allowed (sandbox/relaxed)"
+      );
+      return true;
+    }
+    return false;
+  }
+
+  if (!PLATFORM_PUBLIC_KEY) {
+    if (webhookRelaxed()) {
+      console.warn(
+        "[KPay] KPAY_PLATFORM_PUBLIC_KEY not set — skipping verify (sandbox/relaxed)"
+      );
+      return true;
+    }
+    console.error("[KPay] Cannot verify webhook: missing platform public key");
+    return false;
+  }
+
+  const raw =
+    typeof payload === "string" ? payload : JSON.stringify(payload ?? {});
+
+  if (verifyWithPublicKey(raw, signature, PLATFORM_PUBLIC_KEY)) {
+    return true;
+  }
+
+  if (payload && typeof payload === "object") {
+    const data = (payload as any).data ?? payload;
+    if (data && typeof data === "object") {
+      const sorted = Object.keys(data)
+        .filter((k) => k !== "sign" && k !== "signature")
+        .sort()
+        .map(
+          (k) =>
+            `${k}=${typeof data[k] === "object" ? JSON.stringify(data[k]) : data[k]}`
+        )
+        .join("&");
+      if (verifyWithPublicKey(sorted, signature, PLATFORM_PUBLIC_KEY)) {
+        return true;
+      }
+    }
+  }
+
+  if (webhookRelaxed()) {
+    console.warn(
+      "[KPay] Webhook signature verify failed — allowing (sandbox/relaxed)"
+    );
+    return true;
+  }
+
+  console.warn("[KPay] Webhook signature verification failed");
+  return false;
+}
+
+// ──────────────────────────────────────────────────────
+// Helpers
+// ──────────────────────────────────────────────────────
+
+function createSimulatedResponse(
+  cart: OrderCart,
+  customId?: string
+): PaymentInitiationResult {
+  const paymentId =
+    customId ||
+    `KPAY-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+
+  // Internal path so checkout page finalizes without leaving the app
+  return {
+    success: true,
+    paymentId,
+    redirectUrl: `/checkout?session=${paymentId}`,
+  };
+}
