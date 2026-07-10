@@ -59,8 +59,9 @@ export default function ScanClient({ searchParams }: ScanClientProps) {
           const count = p.redemptions?.length || (p.redeemed_at ? 1 : 0);
           if (count > 0) {
             const latest = (p.redemptions?.[p.redemptions.length - 1] || p.redeemed_at) as string;
+            const { formatHkDateTime } = await import("@/lib/time/hk");
             setMessage(
-              `Order redeemed ${count} time${count > 1 ? "s" : ""} (last: ${new Date(latest).toLocaleString()})`
+              `Order redeemed ${count} time${count > 1 ? "s" : ""} (last: ${formatHkDateTime(latest)} HK)`
             );
           } else {
             setMessage("Order is VALID. Admin should scan each ticket QR (…-001, …-002) at the door.");

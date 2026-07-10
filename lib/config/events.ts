@@ -9,6 +9,7 @@
 
 import { EventConfig, TicketType } from "@/types";
 import { getEventBySlug as getDbEvent, getAllEvents as getDbEvents } from "../db/events";
+import { hkTodayYmd } from "@/lib/time/hk";
 
 // Base ticket types (used for default seed)
 const generalAdmission: TicketType = {
@@ -103,7 +104,7 @@ export function getEffectivePrice(
   let bestDiscount = 0;
   let appliedName: string | undefined;
 
-  const today = currentDate.toISOString().split('T')[0]; // YYYY-MM-DD
+  const today = hkTodayYmd(currentDate);
 
   for (const d of ticket.discounts) {
     let applies = true;

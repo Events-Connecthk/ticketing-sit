@@ -15,6 +15,7 @@ import { getDefaultDemoEvent } from "@/lib/config/events";
 import * as XLSX from "xlsx";
 import { Download, Search, RefreshCw, Plus, Edit2, Trash2, ToggleLeft, ToggleRight } from "lucide-react";
 import { toast } from "sonner";
+import { formatHkDateTime, formatHkTime } from "@/lib/time/hk";
 
 /**
  * Admin Dashboard
@@ -260,7 +261,7 @@ export default function AdminDashboard() {
       }
       setScanResult({ ...saved, _scannedRef: unit.serial });
       setScanMessage(
-        `✅ Redeemed ${unit.serial} (${count + 1}/${max}) at ${new Date().toLocaleTimeString()}`
+        `✅ Redeemed ${unit.serial} (${count + 1}/${max}) at ${formatHkTime(new Date())} (HK)`
       );
       await loadPurchases();
       return;
@@ -290,7 +291,7 @@ export default function AdminDashboard() {
     }
     setScanResult(saved);
     setScanMessage(
-      `✅ Redeemed (${newRedemptions.length}/${max}) at ${new Date().toLocaleTimeString()}`
+      `✅ Redeemed (${newRedemptions.length}/${max}) at ${formatHkTime(new Date())} (HK)`
     );
     await loadPurchases();
   }
@@ -428,20 +429,7 @@ export default function AdminDashboard() {
   }
 
   function formatDateTime(iso?: string) {
-    if (!iso) return "";
-    try {
-      const d = new Date(iso);
-      // Use en-GB for readable format, browser will use user's local TZ (e.g. HK)
-      return d.toLocaleString("en-GB", {
-        day: "numeric",
-        month: "short",
-        year: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
-      });
-    } catch {
-      return iso;
-    }
+    return formatHkDateTime(iso);
   }
 
   function exportToCSV() {
@@ -1016,7 +1004,7 @@ export default function AdminDashboard() {
                 {purchases.map((purchase, idx) => (
                   <tr key={purchase.id ?? idx} className="hover:bg-zinc-50/50 align-top">
                     <td className="p-4 text-xs text-zinc-500 whitespace-nowrap">
-                      {new Date(purchase.bought_at).toLocaleString()}
+                      {formatHkDateTime(purchase.bought_at)}
                     </td>
                     <td className="p-4 font-medium">{purchase.name}</td>
                     <td className="p-4">

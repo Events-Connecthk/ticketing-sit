@@ -198,14 +198,16 @@ export async function generateTicketPdf(
       height: qrSize 
     });
 
-    // Date of purchase (subtitle) - below QR
-    const purchaseDateStr = params.purchaseDate 
-      ? new Date(params.purchaseDate).toLocaleDateString('en-GB', { 
-          day: 'numeric', month: 'long', year: 'numeric' 
-        }) 
-      : new Date().toLocaleDateString('en-GB', { 
-          day: 'numeric', month: 'long', year: 'numeric' 
-        });
+    // Date of purchase (subtitle) - below QR — Hong Kong calendar date
+    const purchaseDateStr = (params.purchaseDate
+      ? new Date(params.purchaseDate)
+      : new Date()
+    ).toLocaleDateString("en-GB", {
+      timeZone: "Asia/Hong_Kong",
+      day: "numeric",
+      month: "long",
+      year: "numeric",
+    });
     page.drawRectangle({ x: 171, y: 268, width: 500, height: 34, color: rgb(1,1,1) });
     const dateX = getCenteredX(purchaseDateStr, textSizeDate, textCenterX);
     page.drawText(purchaseDateStr, { 
