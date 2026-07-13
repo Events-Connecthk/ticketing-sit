@@ -2269,47 +2269,148 @@ export default function AdminDashboard() {
                 {discountCodesForm.length > 0 && (
                   <div className="border rounded-xl divide-y mb-3 text-sm">
                     {discountCodesForm.map((dc, idx) => (
-                      <div key={idx} className="p-2 flex items-center gap-3">
-                        <span className="font-mono font-medium">{dc.code}</span>
-                        <span className="text-emerald-700">-{dc.percent}%</span>
-                        {dc.description && <span className="text-zinc-500 text-xs">{dc.description}</span>}
-                        <button
-                          onClick={() => setDiscountCodesForm(discountCodesForm.filter((_, i) => i !== idx))}
-                          className="ml-auto text-red-500 text-xs"
-                        >
-                          Remove
-                        </button>
+                      <div
+                        key={idx}
+                        className="p-2 flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3"
+                      >
+                        <div className="flex flex-wrap items-center gap-2 min-w-0">
+                          <span className="font-mono font-medium">{dc.code}</span>
+                          <span className="text-emerald-700">-{dc.percent}%</span>
+                          {dc.description && (
+                            <span className="text-zinc-500 text-xs">{dc.description}</span>
+                          )}
+                          <span className="text-[11px] text-zinc-500">
+                            {dc.validFrom || dc.validUntil
+                              ? `Valid ${dc.validFrom || "…"} → ${dc.validUntil || "…"} (HK)`
+                              : "No expiry"}
+                          </span>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2 sm:ml-auto">
+                          <label className="text-[10px] text-zinc-500 flex items-center gap-1">
+                            from
+                            <input
+                              type="date"
+                              value={dc.validFrom || ""}
+                              onChange={(e) => {
+                                const v = e.target.value || undefined;
+                                setDiscountCodesForm(
+                                  discountCodesForm.map((c, i) =>
+                                    i === idx ? { ...c, validFrom: v } : c
+                                  )
+                                );
+                              }}
+                              className="border rounded px-1 py-0.5 text-xs"
+                            />
+                          </label>
+                          <label className="text-[10px] text-zinc-500 flex items-center gap-1">
+                            until
+                            <input
+                              type="date"
+                              value={dc.validUntil || ""}
+                              onChange={(e) => {
+                                const v = e.target.value || undefined;
+                                setDiscountCodesForm(
+                                  discountCodesForm.map((c, i) =>
+                                    i === idx ? { ...c, validUntil: v } : c
+                                  )
+                                );
+                              }}
+                              className="border rounded px-1 py-0.5 text-xs"
+                            />
+                          </label>
+                          <button
+                            onClick={() =>
+                              setDiscountCodesForm(
+                                discountCodesForm.filter((_, i) => i !== idx)
+                              )
+                            }
+                            className="text-red-500 text-xs"
+                          >
+                            Remove
+                          </button>
+                        </div>
                       </div>
                     ))}
                   </div>
                 )}
 
-                <div className="border rounded p-3 bg-zinc-50 text-sm grid grid-cols-1 md:grid-cols-5 gap-2">
-                  <input id="dcCode" placeholder="Code (e.g. SUMMER20)" className="border px-2 py-1 rounded font-mono uppercase" />
-                  <input id="dcPercent" type="number" placeholder="% off" className="border px-2 py-1 rounded" />
-                  <input id="dcDesc" placeholder="Description (optional)" className="border px-2 py-1 rounded md:col-span-2" />
+                <div className="border rounded p-3 bg-zinc-50 text-sm grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-2">
+                  <input
+                    id="dcCode"
+                    placeholder="Code (e.g. SUMMER20)"
+                    className="border px-2 py-1 rounded font-mono uppercase"
+                  />
+                  <input
+                    id="dcPercent"
+                    type="number"
+                    placeholder="% off"
+                    className="border px-2 py-1 rounded"
+                  />
+                  <input
+                    id="dcDesc"
+                    placeholder="Description (optional)"
+                    className="border px-2 py-1 rounded md:col-span-2"
+                  />
+                  <label className="text-[10px] text-zinc-500 flex flex-col gap-0.5">
+                    Valid until (closes)
+                    <input
+                      id="dcUntil"
+                      type="date"
+                      className="border px-2 py-1 rounded text-sm text-zinc-800"
+                    />
+                  </label>
+                  <label className="text-[10px] text-zinc-500 flex flex-col gap-0.5">
+                    Valid from (optional)
+                    <input
+                      id="dcFrom"
+                      type="date"
+                      className="border px-2 py-1 rounded text-sm text-zinc-800"
+                    />
+                  </label>
                   <button
                     onClick={() => {
-                      const codeEl = document.getElementById('dcCode') as HTMLInputElement;
-                      const pctEl = document.getElementById('dcPercent') as HTMLInputElement;
-                      const descEl = document.getElementById('dcDesc') as HTMLInputElement;
+                      const codeEl = document.getElementById(
+                        "dcCode"
+                      ) as HTMLInputElement;
+                      const pctEl = document.getElementById(
+                        "dcPercent"
+                      ) as HTMLInputElement;
+                      const descEl = document.getElementById(
+                        "dcDesc"
+                      ) as HTMLInputElement;
+                      const untilEl = document.getElementById(
+                        "dcUntil"
+                      ) as HTMLInputElement;
+                      const fromEl = document.getElementById(
+                        "dcFrom"
+                      ) as HTMLInputElement;
 
-                      if (!codeEl?.value || !pctEl?.value) return alert("Code and % required");
+                      if (!codeEl?.value || !pctEl?.value)
+                        return alert("Code and % required");
 
                       const newCode: DiscountCode = {
-                        id: 'dc-' + Date.now(),
+                        id: "dc-" + Date.now(),
                         code: codeEl.value.trim().toUpperCase(),
                         percent: parseInt(pctEl.value, 10) || 10,
                         description: descEl?.value?.trim() || undefined,
+                        validUntil: untilEl?.value?.trim() || undefined,
+                        validFrom: fromEl?.value?.trim() || undefined,
                       };
                       setDiscountCodesForm([...discountCodesForm, newCode]);
-                      codeEl.value = ''; pctEl.value = ''; if (descEl) descEl.value = '';
+                      codeEl.value = "";
+                      pctEl.value = "";
+                      if (descEl) descEl.value = "";
+                      if (untilEl) untilEl.value = "";
+                      if (fromEl) fromEl.value = "";
                     }}
-                    className="bg-white border rounded text-sm px-3"
+                    className="bg-white border rounded text-sm px-3 py-2"
                   >
                     + Add Code
                   </button>
                 </div>
+                <p className="text-[10px] text-zinc-500 mt-1">
+                  After “valid until”, buyers see “This discount isn’t available (expired).” Empty dates = always open.
+                </p>
               </div>
             </div>
 

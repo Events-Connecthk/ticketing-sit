@@ -68,3 +68,27 @@ export function formatTicketDateWindow(ticket: TicketValidity): string {
   if (to) return `until ${to}`;
   return "any day";
 }
+
+/** Promo / discount code availability (calendar days, Hong Kong). */
+export function isDiscountCodeActive(
+  code: { validFrom?: string | null; validUntil?: string | null },
+  onYmd: string = hkTodayYmd()
+): { ok: true } | { ok: false; reason: string } {
+  const from = normalizeYmd(code.validFrom);
+  const until = normalizeYmd(code.validUntil);
+  const day = normalizeYmd(onYmd) || hkTodayYmd();
+
+  if (from && day < from) {
+    return {
+      ok: false,
+      reason: "This discount isn’t available yet.",
+    };
+  }
+  if (until && day > until) {
+    return {
+      ok: false,
+      reason: "This discount isn’t available (expired).",
+    };
+  }
+  return { ok: true };
+}

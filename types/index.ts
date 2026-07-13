@@ -47,6 +47,10 @@ export interface DiscountCode {
   percent: number;       // e.g. 15 for 15% off
   maxUses?: number;
   description?: string;
+  /** YYYY-MM-DD — code becomes available this day (HK). Empty = already open */
+  validFrom?: string;
+  /** YYYY-MM-DD — code closes end of this day (HK). Empty = no expiry */
+  validUntil?: string;
 }
 
 export interface EventConfig {

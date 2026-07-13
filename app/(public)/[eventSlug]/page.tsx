@@ -8,6 +8,7 @@ import { EventConfig, TicketSelection, BuyerInfo, OrderCart, BuyerFormField } fr
 import { Calendar, MapPin, Users } from "lucide-react";
 import { getEventTicketSoldCounts } from "@/app/sit-admin/actions";
 import { getRemaining } from "@/lib/tickets/inventory";
+import { isDiscountCodeActive } from "@/lib/tickets/validity";
 
 /**
  * Dynamic Event Page
@@ -61,6 +62,7 @@ export default function EventPage({ params }: EventPageProps) {
   const [customBuyerValues, setCustomBuyerValues] = useState<Record<string, string>>({});
   const [discountCodeInput, setDiscountCodeInput] = useState("");
   const [appliedDiscount, setAppliedDiscount] = useState<{ code: string; percent: number } | null>(null);
+  const [discountCodeError, setDiscountCodeError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [soldByType, setSoldByType] = useState<Record<string, number>>({});
 
@@ -343,7 +345,10 @@ export default function EventPage({ params }: EventPageProps) {
                         <div className="flex gap-2">
                           <input
                             value={discountCodeInput}
-                            onChange={(e) => setDiscountCodeInput(e.target.value.toUpperCase())}
+                            onChange={(e) => {
+                              setDiscountCodeInput(e.target.value.toUpperCase());
+                              setDiscountCodeError("");
+                            }}
                             placeholder="e.g. SUMMER20"
                             className="flex-1 border rounded-lg px-3 py-2 font-mono text-sm"
                           />
@@ -352,22 +357,53 @@ export default function EventPage({ params }: EventPageProps) {
                             onClick={() => {
                               const code = discountCodeInput.trim().toUpperCase();
                               if (!code) return;
-                              const match = (event.discountCodes || []).find(dc => dc.code.toUpperCase() === code);
-                              if (match) {
-                                setAppliedDiscount({ code: match.code, percent: match.percent });
-                              } else {
-                                alert("Invalid or expired discount code.");
+                              const match = (event.discountCodes || []).find(
+                                (dc) => dc.code.toUpperCase() === code
+                              );
+                              if (!match) {
+                                setAppliedDiscount(null);
+                                setDiscountCodeError("Invalid discount code.");
+                                return;
                               }
+                              const active = isDiscountCodeActive(match);
+                              if (!active.ok) {
+                                setAppliedDiscount(null);
+                                setDiscountCodeError(
+                                  active.reason ||
+                                    "This discount isn’t available."
+                                );
+                                return;
+                              }
+                              setDiscountCodeError("");
+                              setAppliedDiscount({
+                                code: match.code,
+                                percent: match.percent,
+                              });
                             }}
                             className="px-4 py-2 border rounded-lg text-sm hover:bg-white"
                           >
                             Apply
                           </button>
                         </div>
-                        {appliedDiscount && (
+                        {discountCodeError && (
+                          <div className="mt-1 text-xs text-red-600 font-medium">
+                            {discountCodeError}
+                          </div>
+                        )}
+                        {appliedDiscount && !discountCodeError && (
                           <div className="mt-1 text-xs text-emerald-600">
                             ✓ {appliedDiscount.code} applied (-{appliedDiscount.percent}%)
-                            <button className="ml-2 text-zinc-500 underline" onClick={() => { setAppliedDiscount(null); setDiscountCodeInput(""); }}>Remove</button>
+                            <button
+                              type="button"
+                              className="ml-2 text-zinc-500 underline"
+                              onClick={() => {
+                                setAppliedDiscount(null);
+                                setDiscountCodeInput("");
+                                setDiscountCodeError("");
+                              }}
+                            >
+                              Remove
+                            </button>
                           </div>
                         )}
                       </div>
