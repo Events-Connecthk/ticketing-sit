@@ -1060,7 +1060,7 @@ export async function confirmKpayPayment(
   // No paid webhook + no paid order result → treat as not completed (cancel/abandon).
   // Success path relies on webhook/order paid above; do not auto-issue tickets here.
   if (pending) await markPendingFailed(paymentId);
-  console.warn("[KPay] Not paid after return — treating as cancelled/not completed", {
+  console.log("[KPay] Cancel/incomplete return — no ticket issued", {
     paymentId,
     managedOrderNo: managedOrderNo || null,
     orderStatus: st,
