@@ -112,6 +112,8 @@ export async function saveEvent(event: EventConfig): Promise<EventConfig> {
       ...t,
       enabled: t.enabled !== false,
       discounts: t.discounts || [],
+      validFrom: t.validFrom || undefined,
+      validTo: t.validTo || undefined,
     })),
   };
 

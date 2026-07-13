@@ -70,6 +70,17 @@ export function TicketSelector({
         const soldOut = level === "sold_out";
         const limited = level === "limited";
 
+        const dateHint =
+          ticket.validFrom || ticket.validTo
+            ? ticket.validFrom && ticket.validTo
+              ? ticket.validFrom === ticket.validTo
+                ? ticket.validFrom
+                : `${ticket.validFrom} → ${ticket.validTo}`
+              : ticket.validFrom
+                ? `from ${ticket.validFrom}`
+                : `until ${ticket.validTo}`
+            : null;
+
         return (
           <div
             key={ticket.id}
@@ -98,6 +109,9 @@ export function TicketSelector({
               </div>
               {ticket.description && (
                 <p className="mt-1 text-sm text-zinc-600">{ticket.description}</p>
+              )}
+              {dateHint && (
+                <p className="mt-1 text-xs text-blue-800/80">Valid: {dateHint}</p>
               )}
               <p className="mt-1 text-xs text-amber-700">
                 Max {ticket.maxPerOrder ?? 6} per order

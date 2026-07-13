@@ -73,6 +73,8 @@ export default function AdminDashboard() {
     maxPerOrder: 6,
     quantityAvailable: undefined,
     redemptionLimit: 1,
+    validFrom: "",
+    validTo: "",
     enabled: true,
   });
 
@@ -84,6 +86,8 @@ export default function AdminDashboard() {
   const [scanRef, setScanRef] = useState("");
   const [scanResult, setScanResult] = useState<any>(null);
   const [scanMessage, setScanMessage] = useState("");
+  /** ok | error | warn | info — controls result banner colour */
+  const [scanTone, setScanTone] = useState<"ok" | "error" | "warn" | "info">("info");
   const [isScanningCamera, setIsScanningCamera] = useState(false);
   const videoRef = React.useRef<HTMLVideoElement>(null);
   const canvasRef = React.useRef<HTMLCanvasElement>(null);
@@ -107,10 +111,23 @@ export default function AdminDashboard() {
 
   // Admin-only redemption (order ref OR ticket serial KPY-…-001)
 
-  function getTicketTypeLimit(eventSlug: string, ticketTypeId: string): number {
+  function getTicketType(eventSlug: string, ticketTypeId: string) {
     const event = events.find((e) => e.slug === eventSlug);
-    const tt = event?.ticketTypes?.find((t) => t.id === ticketTypeId);
-    return tt?.redemptionLimit ?? 1;
+    return event?.ticketTypes?.find((t) => t.id === ticketTypeId);
+  }
+
+  function getTicketTypeLimit(eventSlug: string, ticketTypeId: string): number {
+    return getTicketType(eventSlug, ticketTypeId)?.redemptionLimit ?? 1;
+  }
+
+  function setScanFeedback(
+    message: string,
+    tone: "ok" | "error" | "warn" | "info" = "info",
+    result?: any
+  ) {
+    setScanMessage(message);
+    setScanTone(tone);
+    if (result !== undefined) setScanResult(result);
   }
 
   function getMaxRedemptionsForPurchase(p: any): number {
@@ -147,38 +164,68 @@ export default function AdminDashboard() {
 
   async function checkTicketStatus(ref: string) {
     if (!ref.trim()) return;
-    setScanMessage("Checking...");
-    setScanResult(null);
+    setScanFeedback("Checking...", "info", null);
 
     const { purchaseMatchesRef, findTicketUnit, listSerials } = await import(
       "@/lib/tickets/serials"
     );
+    const { isTicketValidOnDate, formatTicketDateWindow, hkTodayYmd } =
+      await import("@/lib/tickets/validity");
     const all = await adminGetAllPurchases();
     const found = all.find((p: any) => purchaseMatchesRef(p, ref.trim()));
 
     if (!found) {
-      setScanMessage("No ticket found for that reference.");
-      setScanResult(null);
+      setScanFeedback("❌ Invalid ticket — not found for that reference.", "error", null);
       return;
     }
 
-    setScanResult({ ...found, _scannedRef: ref.trim() });
     const unit = findTicketUnit(found, ref.trim());
     const serials = listSerials(found);
+    const resultBase = { ...found, _scannedRef: ref.trim() };
 
     if (unit) {
-      const max = getTicketTypeLimit(found.event_slug, unit.ticketTypeId);
+      const tt = getTicketType(found.event_slug, unit.ticketTypeId);
+      const max = tt?.redemptionLimit ?? 1;
       const count = unit.redemptions?.length || 0;
+      const dateCheck = isTicketValidOnDate(tt || {}, hkTodayYmd());
+      const window = formatTicketDateWindow(tt || {});
+
       if (count >= max) {
-        setScanMessage(`Ticket ${unit.serial}: fully redeemed (${count}/${max})`);
-      } else {
-        setScanMessage(`Ticket ${unit.serial}: VALID (${count}/${max} redemptions used)`);
+        setScanFeedback(
+          `❌ Invalid ticket — fully redeemed (${count}/${max}). Serial ${unit.serial}.`,
+          "error",
+          resultBase
+        );
+        return;
       }
+      if (!dateCheck.ok) {
+        setScanFeedback(
+          `❌ Invalid ticket — wrong date. ${dateCheck.reason}. Ticket window: ${window}.`,
+          "error",
+          resultBase
+        );
+        return;
+      }
+      setScanFeedback(
+        `✅ VALID ${unit.serial} (${count}/${max} used) · dates: ${window}`,
+        "ok",
+        resultBase
+      );
     } else {
       const maxSlots = getTotalTicketSlots(found);
       const count = getCurrentRedemptionCount(found);
-      setScanMessage(
-        `Order ${found.order_reference}: ${count}/${maxSlots} ticket redemptions used. Serials: ${serials.join(", ") || "—"}`
+      if (count >= maxSlots) {
+        setScanFeedback(
+          `❌ Invalid ticket — order fully checked in (${count}/${maxSlots}).`,
+          "error",
+          resultBase
+        );
+        return;
+      }
+      setScanFeedback(
+        `Order ${found.order_reference}: ${count}/${maxSlots} used. Serials: ${serials.join(", ") || "—"}`,
+        "info",
+        resultBase
       );
     }
   }
@@ -190,11 +237,13 @@ export default function AdminDashboard() {
     const { purchaseMatchesRef, findTicketUnit, listSerials } = await import(
       "@/lib/tickets/serials"
     );
+    const { isTicketValidOnDate, formatTicketDateWindow, hkTodayYmd } =
+      await import("@/lib/tickets/validity");
     const all = await adminGetAllPurchases();
     const found = all.find((p: any) => purchaseMatchesRef(p, scanned));
 
     if (!found) {
-      setScanMessage("Ticket not found.");
+      setScanFeedback("❌ Invalid ticket — not found.", "error", null);
       return;
     }
 
@@ -203,10 +252,11 @@ export default function AdminDashboard() {
 
     // Order-level scan with multiple tickets: require a specific serial
     if (!unit && listSerials(found).length > 1 && scanned === found.order_reference) {
-      setScanMessage(
-        `Multi-ticket order. Scan a ticket QR (e.g. ${listSerials(found)[0]}), not only the order ref.`
+      setScanFeedback(
+        `⚠️ Multi-ticket order. Scan a ticket QR (e.g. ${listSerials(found)[0]}), not only the order ref.`,
+        "warn",
+        { ...found, _scannedRef: scanned }
       );
-      setScanResult({ ...found, _scannedRef: scanned });
       return;
     }
 
@@ -229,15 +279,31 @@ export default function AdminDashboard() {
     }
 
     if (unit?.serial) {
-      const max = getTicketTypeLimit(found.event_slug, unit.ticketTypeId);
+      const tt = getTicketType(found.event_slug, unit.ticketTypeId);
+      const max = tt?.redemptionLimit ?? 1;
       const count = unit.redemptions?.length || 0;
+      const dateCheck = isTicketValidOnDate(tt || {}, hkTodayYmd());
+      const window = formatTicketDateWindow(tt || {});
+
       if (count >= max) {
-        setScanMessage(`Ticket ${unit.serial} already fully redeemed (${count}/${max}).`);
-        setScanResult({ ...found, _scannedRef: scanned });
+        setScanFeedback(
+          `❌ Invalid ticket — already fully redeemed (${count}/${max}). Serial ${unit.serial}.`,
+          "error",
+          { ...found, _scannedRef: scanned }
+        );
         return;
       }
 
-      const breakdown = (found.ticket_breakdown || []).map((t: any) => {
+      if (!dateCheck.ok) {
+        setScanFeedback(
+          `❌ Invalid ticket — cannot redeem today. ${dateCheck.reason}. Allowed: ${window}.`,
+          "error",
+          { ...found, _scannedRef: scanned }
+        );
+        return;
+      }
+
+      const nextBreakdown = (found.ticket_breakdown || []).map((t: any) => {
         if (t.serial !== unit!.serial) return t;
         return {
           ...t,
@@ -247,22 +313,24 @@ export default function AdminDashboard() {
 
       const updated = {
         ...found,
-        ticket_breakdown: breakdown,
+        ticket_breakdown: nextBreakdown,
         redeemed_at: now,
         redemptions: [...(found.redemptions || []), now],
       };
 
       const saved = await adminSavePurchase(updated as any);
       if (!saved) {
-        setScanMessage(
-          "❌ Could not save check-in to database. Check service role key + that purchases.ticket_breakdown / redeemed_at exist."
+        setScanFeedback(
+          "❌ Could not save check-in to database. Check service role key + schema.",
+          "error",
+          { ...updated, _scannedRef: unit.serial }
         );
-        setScanResult({ ...updated, _scannedRef: unit.serial });
         return;
       }
-      setScanResult({ ...saved, _scannedRef: unit.serial });
-      setScanMessage(
-        `✅ Redeemed ${unit.serial} (${count + 1}/${max}) at ${formatHkTime(new Date())} (HK)`
+      setScanFeedback(
+        `✅ Redeemed ${unit.serial} (${count + 1}/${max}) at ${formatHkTime(new Date())} (HK)`,
+        "ok",
+        { ...saved, _scannedRef: unit.serial }
       );
       await loadPurchases();
       return;
@@ -272,8 +340,11 @@ export default function AdminDashboard() {
     const max = getMaxRedemptionsForPurchase(found);
     const currentCount = getCurrentRedemptionCount(found);
     if (currentCount >= max) {
-      setScanMessage(`Already fully redeemed (${currentCount}/${max}).`);
-      setScanResult(found);
+      setScanFeedback(
+        `❌ Invalid ticket — already fully redeemed (${currentCount}/${max}).`,
+        "error",
+        found
+      );
       return;
     }
     const newRedemptions = [...(found.redemptions || []), now];
@@ -284,15 +355,17 @@ export default function AdminDashboard() {
     };
     const saved = await adminSavePurchase(updated as any);
     if (!saved) {
-      setScanMessage(
-        "❌ Could not save check-in to database. Check SUPABASE_SERVICE_ROLE_KEY and schema."
+      setScanFeedback(
+        "❌ Could not save check-in to database. Check SUPABASE_SERVICE_ROLE_KEY and schema.",
+        "error",
+        updated
       );
-      setScanResult(updated);
       return;
     }
-    setScanResult(saved);
-    setScanMessage(
-      `✅ Redeemed (${newRedemptions.length}/${max}) at ${formatHkTime(new Date())} (HK)`
+    setScanFeedback(
+      `✅ Redeemed (${newRedemptions.length}/${max}) at ${formatHkTime(new Date())} (HK)`,
+      "ok",
+      saved
     );
     await loadPurchases();
   }
@@ -368,10 +441,9 @@ export default function AdminDashboard() {
       if (extractedRef && extractedRef !== scanRef) {
         setScanRef(extractedRef);
         stopCameraScanner();
-        setScanMessage(`QR detected: ${extractedRef}. Checking in...`);
-        // Door workflow: check + redeem in one step, then refresh lists
+        setScanFeedback(`QR detected: ${extractedRef}. Checking in...`, "info");
+        // Door workflow: redeem (includes date + limit checks), then refresh
         void (async () => {
-          await checkTicketStatus(extractedRef);
           await redeemTicket(extractedRef);
           await loadPurchases();
         })();
@@ -834,6 +906,8 @@ export default function AdminDashboard() {
           ? Number(cap)
           : undefined,
       redemptionLimit: newTicket.redemptionLimit || 1,
+      validFrom: newTicket.validFrom?.trim() || undefined,
+      validTo: newTicket.validTo?.trim() || undefined,
       description: "",
       enabled: newTicket.enabled !== false,
     };
@@ -846,6 +920,8 @@ export default function AdminDashboard() {
       maxPerOrder: 6,
       quantityAvailable: undefined,
       redemptionLimit: 1,
+      validFrom: "",
+      validTo: "",
       enabled: true,
     });
   }
@@ -1356,24 +1432,103 @@ export default function AdminDashboard() {
               </div>
             </div>
 
+            {/* Result always above camera so layout stays stable on 2nd+ scans */}
+            {(scanMessage || scanResult) && (
+              <div
+                className={`mb-4 p-4 rounded-lg border text-sm ${
+                  scanTone === "ok"
+                    ? "bg-emerald-50 border-emerald-200"
+                    : scanTone === "error"
+                      ? "bg-red-50 border-red-300"
+                      : scanTone === "warn"
+                        ? "bg-amber-50 border-amber-200"
+                        : "bg-zinc-50 border-zinc-200"
+                }`}
+              >
+                <div className="font-semibold mb-1">
+                  {scanTone === "error"
+                    ? "Invalid / blocked"
+                    : scanTone === "ok"
+                      ? "OK"
+                      : scanTone === "warn"
+                        ? "Attention"
+                        : "Result"}
+                </div>
+                <div
+                  className={
+                    scanTone === "ok"
+                      ? "text-emerald-800 font-medium"
+                      : scanTone === "error"
+                        ? "text-red-800 font-medium"
+                        : scanTone === "warn"
+                          ? "text-amber-900"
+                          : "text-zinc-700"
+                  }
+                >
+                  {scanMessage}
+                </div>
+
+                {scanResult && (
+                  <div className="mt-3 text-xs grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1">
+                    <div><strong>Name:</strong> {scanResult.name}</div>
+                    <div><strong>Event:</strong> {scanResult.event_slug}</div>
+                    <div>
+                      <strong>Ref:</strong>{" "}
+                      <span className="font-mono break-all">
+                        {scanResult._scannedRef ||
+                          scanResult.order_reference ||
+                          scanRef}
+                      </span>
+                    </div>
+                    <div><strong>Tickets:</strong> {scanResult.number_of_tickets}</div>
+                    <div className="sm:col-span-2 mt-1">
+                      {(() => {
+                        const max = getMaxRedemptionsForPurchase(scanResult);
+                        const count = getCurrentRedemptionCount(scanResult);
+                        if (count >= max && max > 0) {
+                          return (
+                            <span className="text-red-700 font-medium">
+                              FULLY REDEEMED {count}/{max}
+                            </span>
+                          );
+                        }
+                        if (count > 0) {
+                          return (
+                            <span className="text-emerald-700 font-medium">
+                              CHECK-INS {count}/{max}
+                            </span>
+                          );
+                        }
+                        return (
+                          <span className="text-amber-700">Not redeemed yet (0/{max})</span>
+                        );
+                      })()}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Camera Scanner */}
-            <div className="mt-6 border-t pt-6">
-              <div className="flex items-center justify-between mb-3">
+            <div className="mt-2 border-t pt-6">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-3">
                 <div>
                   <div className="font-medium">Camera Scanner</div>
-                  <div className="text-xs text-zinc-500">Use your device's camera to scan the QR on the ticket.</div>
+                  <div className="text-xs text-zinc-500">
+                    Use your device camera. Result banner stays above so it does not jump under the video.
+                  </div>
                 </div>
                 {!isScanningCamera ? (
                   <button
                     onClick={startCameraScanner}
-                    className="flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 text-white text-sm hover:bg-emerald-700"
+                    className="flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 text-white text-sm hover:bg-emerald-700 shrink-0"
                   >
-                    📷 Start Camera
+                    Start Camera
                   </button>
                 ) : (
                   <button
                     onClick={stopCameraScanner}
-                    className="px-4 py-2 rounded-lg border text-sm hover:bg-red-50 text-red-600"
+                    className="px-4 py-2 rounded-lg border text-sm hover:bg-red-50 text-red-600 shrink-0"
                   >
                     Stop Camera
                   </button>
@@ -1382,7 +1537,12 @@ export default function AdminDashboard() {
 
               {isScanningCamera && (
                 <div className="relative bg-black rounded-xl overflow-hidden">
-                  <video ref={videoRef} className="w-full max-h-[320px] object-contain" playsInline muted />
+                  <video
+                    ref={videoRef}
+                    className="w-full max-h-[320px] object-contain"
+                    playsInline
+                    muted
+                  />
                   <canvas ref={canvasRef} className="hidden" />
                   <div className="absolute bottom-2 left-1/2 -translate-x-1/2 bg-black/70 text-white text-xs px-3 py-1 rounded">
                     Point camera at the QR code on the ticket
@@ -1391,38 +1551,8 @@ export default function AdminDashboard() {
               )}
             </div>
 
-            {/* Result */}
-            {(scanMessage || scanResult) && (
-              <div className="mt-6 p-4 rounded-lg bg-zinc-50 border text-sm">
-                <div className="font-medium mb-1">Result</div>
-                <div className={scanMessage.includes("✅") || scanMessage.includes("VALID") ? "text-emerald-700" : "text-zinc-700"}>
-                  {scanMessage}
-                </div>
-
-                {scanResult && (
-                  <div className="mt-3 text-xs grid grid-cols-2 gap-x-4 gap-y-1">
-                    <div><strong>Name:</strong> {scanResult.name}</div>
-                    <div><strong>Event:</strong> {scanResult.event_slug}</div>
-                    <div><strong>Ref:</strong> <span className="font-mono">{scanResult.order_reference || scanRef}</span></div>
-                    <div><strong>Tickets:</strong> {scanResult.number_of_tickets}</div>
-                    <div className="col-span-2 mt-1">
-                      {(() => {
-                        const max = getMaxRedemptionsForPurchase(scanResult);
-                        const count = getCurrentRedemptionCount(scanResult);
-                        if (count > 0) {
-                          return <span className="text-green-600 font-medium">REDEEMED {count}/{max} ✓</span>;
-                        }
-                        return <span className="text-amber-600">Not redeemed yet (0/{max})</span>;
-                      })()}
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-
             <div className="mt-6 text-xs text-zinc-500">
-              Tip: Public visitors scanning the QR will now only see status (no changes). 
-              Use this scanner (or type the ref) to officially check people in.
+              Date rules use Hong Kong calendar day. Fully redeemed or wrong-date tickets show a red warning and will not check in.
             </div>
           </div>
 
@@ -1848,6 +1978,54 @@ export default function AdminDashboard() {
                             + Discount
                           </button>
                         </div>
+                        <div className="flex flex-wrap items-center gap-2 text-xs pl-0 sm:pl-1">
+                          <span className="text-zinc-500 shrink-0">Valid dates (HK):</span>
+                          <label className="flex items-center gap-1">
+                            <span className="text-zinc-400">from</span>
+                            <input
+                              type="date"
+                              value={t.validFrom || ""}
+                              onChange={(e) =>
+                                setTicketTypesForm(
+                                  ticketTypesForm.map((tt) =>
+                                    tt.id === t.id
+                                      ? {
+                                          ...tt,
+                                          validFrom: e.target.value || undefined,
+                                        }
+                                      : tt
+                                  )
+                                )
+                              }
+                              className="border rounded px-1.5 py-0.5"
+                              title="Valid from (inclusive). Empty = no start limit"
+                            />
+                          </label>
+                          <label className="flex items-center gap-1">
+                            <span className="text-zinc-400">to</span>
+                            <input
+                              type="date"
+                              value={t.validTo || ""}
+                              onChange={(e) =>
+                                setTicketTypesForm(
+                                  ticketTypesForm.map((tt) =>
+                                    tt.id === t.id
+                                      ? {
+                                          ...tt,
+                                          validTo: e.target.value || undefined,
+                                        }
+                                      : tt
+                                  )
+                                )
+                              }
+                              className="border rounded px-1.5 py-0.5"
+                              title="Valid to (inclusive). Empty = no end limit"
+                            />
+                          </label>
+                          {!t.validFrom && !t.validTo && (
+                            <span className="text-zinc-400">any day</span>
+                          )}
+                        </div>
 
                         {/* Discounts list */}
                         {t.discounts && t.discounts.length > 0 && (
@@ -1926,13 +2104,35 @@ export default function AdminDashboard() {
                       className="border px-3 py-2 rounded text-sm"
                       min="1"
                     />
+                    <label className="text-xs text-zinc-500 flex flex-col gap-0.5">
+                      Valid from
+                      <input
+                        type="date"
+                        value={newTicket.validFrom || ""}
+                        onChange={(e) =>
+                          setNewTicket({ ...newTicket, validFrom: e.target.value })
+                        }
+                        className="border px-2 py-1.5 rounded text-sm text-zinc-800"
+                      />
+                    </label>
+                    <label className="text-xs text-zinc-500 flex flex-col gap-0.5">
+                      Valid to
+                      <input
+                        type="date"
+                        value={newTicket.validTo || ""}
+                        onChange={(e) =>
+                          setNewTicket({ ...newTicket, validTo: e.target.value })
+                        }
+                        className="border px-2 py-1.5 rounded text-sm text-zinc-800"
+                      />
+                    </label>
                     <button onClick={addTicketType} className="bg-white border rounded-lg text-sm hover:bg-white/80 col-span-2 md:col-span-1">
                       + Add Type
                     </button>
                   </div>
                   <p className="text-[10px] text-zinc-500 mt-2">
                     Unique IDs per event. Stock = total tickets for sale (empty = unlimited).
-                    At ≤50 remaining, buyers see “Limited available”; at 0 = Out of stock.
+                    Valid from/to = which calendar day(s) the scanner will accept (HK timezone). Empty = any day.
                   </p>
                 </div>
               </div>

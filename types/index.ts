@@ -22,6 +22,13 @@ export interface TicketType {
   enabled?: boolean; // defaults to true if omitted
   discounts?: DiscountRule[]; // customizable discounts
   redemptionLimit?: number; // how many times this ticket can be redeemed (e.g. 1 = single day, 3 = 3-day access)
+  /**
+   * Optional calendar validity (YYYY-MM-DD, Hong Kong day).
+   * Used by admin scanner — e.g. Day-1 only vs Day-2 only.
+   * Omit both = valid any day.
+   */
+  validFrom?: string;
+  validTo?: string;
 }
 
 export interface DiscountRule {
