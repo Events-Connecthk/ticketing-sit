@@ -595,17 +595,6 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
                     You can pay again with the button below when ready.
                   </p>
                 )}
-                {/* Escape hatch if webhook was late but user really paid */}
-                {/not completed|cancelled/i.test(error) && hasReturnSession && (
-                  <button
-                    type="button"
-                    className="text-xs underline text-red-800/80"
-                    disabled={isProcessing}
-                    onClick={handleManualPaid}
-                  >
-                    I already paid — check again
-                  </button>
-                )}
               </div>
             )}
 
