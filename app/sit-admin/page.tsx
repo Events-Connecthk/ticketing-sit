@@ -1168,6 +1168,40 @@ export default function AdminDashboard() {
     setTicketTypesForm(ticketTypesForm.filter((t) => t.id !== id));
   }
 
+  /**
+   * Duplicate a ticket type: same price/stock/redemptions/discounts.
+   * Name and valid dates are left for the admin to set (name prefilled as Copy of …).
+   */
+  function duplicateTicketType(id: string) {
+    const src = ticketTypesForm.find((t) => t.id === id);
+    if (!src) return;
+
+    const used = new Set(ticketTypesForm.map((t) => t.id));
+    let newId = `${src.id}-copy`;
+    let n = 2;
+    while (used.has(newId)) {
+      newId = `${src.id}-copy-${n}`;
+      n += 1;
+    }
+
+    const dup: TicketType = {
+      ...src,
+      id: newId,
+      name: `Copy of ${src.name}`,
+      validFrom: undefined,
+      validTo: undefined,
+      discounts: (src.discounts || []).map((d) => ({
+        ...d,
+        id: `${d.id}-dup-${Date.now().toString(36)}`,
+      })),
+    };
+
+    setTicketTypesForm([...ticketTypesForm, dup]);
+    toast.message("Ticket type duplicated", {
+      description: "Edit name and valid dates, then Save Event.",
+    });
+  }
+
   function toggleTicketType(id: string) {
     setTicketTypesForm(
       ticketTypesForm.map((t) =>
@@ -2289,6 +2323,14 @@ export default function AdminDashboard() {
                             className="text-xs px-2 py-1.5 border rounded hover:bg-white"
                           >
                             + Ticket discount rule
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => duplicateTicketType(t.id)}
+                            className="text-xs px-2 py-1.5 border rounded hover:bg-blue-50 text-blue-700 inline-flex items-center gap-1"
+                            title="Duplicate (same price, stock, discounts; set name & dates)"
+                          >
+                            <Copy className="h-3 w-3" /> Duplicate
                           </button>
                           <button
                             type="button"
