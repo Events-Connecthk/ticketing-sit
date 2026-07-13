@@ -933,17 +933,19 @@ export default function AdminDashboard() {
   }
 
   return (
-    <div className="min-h-screen bg-zinc-50">
+    <div className="min-h-screen bg-zinc-50 overflow-x-hidden">
       <div className="border-b bg-white">
-        <div className="max-w-7xl mx-auto px-6 py-5 flex items-center justify-between">
-          <div>
-            <h1 className="font-semibold text-2xl tracking-tight">Admin Dashboard</h1>
-            <p className="text-sm text-zinc-500">Ticketing System SIT — Purchases &amp; Event Management</p>
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4 sm:py-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0">
+            <h1 className="font-semibold text-xl sm:text-2xl tracking-tight">Admin Dashboard</h1>
+            <p className="text-xs sm:text-sm text-zinc-500">
+              Ticketing System SIT — Purchases &amp; Events
+            </p>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 shrink-0">
             <button
               onClick={handleSignOut}
-              className="text-sm px-3 py-2 text-zinc-600 hover:text-black"
+              className="text-sm px-3 py-2 text-zinc-600 hover:text-black border rounded-lg sm:border-0"
             >
               Sign out
             </button>
@@ -951,44 +953,44 @@ export default function AdminDashboard() {
         </div>
       </div>
 
-      {/* Tabs */}
-      <div className="max-w-7xl mx-auto px-6 pt-6">
-        <div className="flex border-b">
+      {/* Tabs — scroll on small screens */}
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 pt-4 sm:pt-6">
+        <div className="flex border-b overflow-x-auto no-scrollbar -mx-4 px-4 sm:mx-0 sm:px-0 gap-0">
           <button
             onClick={() => setActiveTab("purchases")}
-            className={`px-6 py-3 font-medium text-sm border-b-2 transition-all ${activeTab === "purchases" ? "border-zinc-900 text-zinc-900" : "border-transparent text-zinc-500 hover:text-zinc-700"}`}
+            className={`shrink-0 px-3 sm:px-6 py-3 font-medium text-xs sm:text-sm border-b-2 transition-all whitespace-nowrap ${activeTab === "purchases" ? "border-zinc-900 text-zinc-900" : "border-transparent text-zinc-500 hover:text-zinc-700"}`}
           >
-            Purchases/Registration
+            Purchases
           </button>
           <button
             onClick={() => setActiveTab("events")}
-            className={`px-6 py-3 font-medium text-sm border-b-2 transition-all ${activeTab === "events" ? "border-zinc-900 text-zinc-900" : "border-transparent text-zinc-500 hover:text-zinc-700"}`}
+            className={`shrink-0 px-3 sm:px-6 py-3 font-medium text-xs sm:text-sm border-b-2 transition-all whitespace-nowrap ${activeTab === "events" ? "border-zinc-900 text-zinc-900" : "border-transparent text-zinc-500 hover:text-zinc-700"}`}
           >
-            Manage Events
+            Events
           </button>
           <button
             onClick={() => {
               setActiveTab("scanner");
               stopCameraScanner(); // ensure camera is off when leaving
             }}
-            className={`px-6 py-3 font-medium text-sm border-b-2 transition-all ${activeTab === "scanner" ? "border-emerald-600 text-emerald-700" : "border-transparent text-zinc-500 hover:text-zinc-700"}`}
+            className={`shrink-0 px-3 sm:px-6 py-3 font-medium text-xs sm:text-sm border-b-2 transition-all whitespace-nowrap ${activeTab === "scanner" ? "border-emerald-600 text-emerald-700" : "border-transparent text-zinc-500 hover:text-zinc-700"}`}
           >
-            🎟️ Ticket Scanner
+            Scanner
           </button>
           <button
             onClick={() => setActiveTab("attendance")}
-            className={`px-6 py-3 font-medium text-sm border-b-2 transition-all ${activeTab === "attendance" ? "border-blue-600 text-blue-700" : "border-transparent text-zinc-500 hover:text-zinc-700"}`}
+            className={`shrink-0 px-3 sm:px-6 py-3 font-medium text-xs sm:text-sm border-b-2 transition-all whitespace-nowrap ${activeTab === "attendance" ? "border-blue-600 text-blue-700" : "border-transparent text-zinc-500 hover:text-zinc-700"}`}
           >
-            📋 Attendance
+            Attendance
           </button>
         </div>
       </div>
 
       {/* PURCHASES / REGISTRATION TAB */}
       {activeTab === "purchases" && (
-        <div className="max-w-7xl mx-auto px-6 py-8">
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-3">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-8">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-4">
+            <div className="flex flex-wrap items-center gap-2 sm:gap-3">
               <button
                 onClick={loadPurchases}
                 disabled={loading}
@@ -1008,11 +1010,11 @@ export default function AdminDashboard() {
               )}
             </div>
 
-            <div className="flex gap-2">
-              <button onClick={exportToCSV} className="flex items-center gap-2 rounded-lg bg-black px-4 py-2 text-sm text-white hover:bg-zinc-800">
-                <Download className="h-4 w-4" /> Export Excel
+            <div className="flex flex-wrap gap-2">
+              <button onClick={exportToCSV} className="flex items-center gap-2 rounded-lg bg-black px-3 sm:px-4 py-2 text-sm text-white hover:bg-zinc-800">
+                <Download className="h-4 w-4" /> <span className="sm:inline">Export Excel</span>
               </button>
-              <button onClick={exportToCSVRaw} className="flex items-center gap-2 rounded-lg border px-4 py-2 text-sm hover:bg-zinc-100">
+              <button onClick={exportToCSVRaw} className="flex items-center gap-2 rounded-lg border px-3 sm:px-4 py-2 text-sm hover:bg-zinc-100">
                 Export CSV
               </button>
             </div>
@@ -1037,19 +1039,19 @@ export default function AdminDashboard() {
             />
           </div>
 
-          <div className="overflow-x-auto rounded-2xl border bg-white">
-            <table className="w-full text-sm">
+          <div className="overflow-x-auto rounded-2xl border bg-white -mx-1 sm:mx-0">
+            <table className="w-full text-sm min-w-[720px] md:min-w-0">
               <thead>
                 <tr className="border-b bg-zinc-50 text-left">
-                  <th className="p-4 font-medium">Date</th>
-                  <th className="p-4 font-medium">Name</th>
-                  <th className="p-4 font-medium">Email / Phone</th>
-                  <th className="p-4 font-medium text-center">#</th>
-                  <th className="p-4 font-medium text-right">Amount</th>
-                  <th className="p-4 font-medium">Event</th>
-                  <th className="p-4 font-medium">Order Ref</th>
-                  <th className="p-4 font-medium min-w-[12rem]">Per-ticket check-ins</th>
-                  <th className="p-4 font-medium">Summary</th>
+                  <th className="p-3 sm:p-4 font-medium whitespace-nowrap">Date</th>
+                  <th className="p-3 sm:p-4 font-medium">Name</th>
+                  <th className="p-3 sm:p-4 font-medium hidden sm:table-cell">Email / Phone</th>
+                  <th className="p-3 sm:p-4 font-medium text-center">#</th>
+                  <th className="p-3 sm:p-4 font-medium text-right">Amount</th>
+                  <th className="p-3 sm:p-4 font-medium">Event</th>
+                  <th className="p-3 sm:p-4 font-medium hidden md:table-cell">Order Ref</th>
+                  <th className="p-3 sm:p-4 font-medium min-w-[10rem] hidden lg:table-cell">Per-ticket check-ins</th>
+                  <th className="p-3 sm:p-4 font-medium">Summary</th>
                 </tr>
               </thead>
               <tbody className="divide-y">
@@ -1061,15 +1063,20 @@ export default function AdminDashboard() {
                 )}
                 {purchases.map((purchase, idx) => (
                   <tr key={purchase.id ?? idx} className="hover:bg-zinc-50/50 align-top">
-                    <td className="p-4 text-xs text-zinc-500 whitespace-nowrap">
+                    <td className="p-3 sm:p-4 text-xs text-zinc-500 whitespace-nowrap">
                       {formatHkDateTime(purchase.bought_at)}
                     </td>
-                    <td className="p-4 font-medium">{purchase.name}</td>
-                    <td className="p-4">
-                      <div>{purchase.email}</div>
+                    <td className="p-3 sm:p-4 font-medium">
+                      <div>{purchase.name}</div>
+                      <div className="text-xs text-zinc-500 sm:hidden break-all">
+                        {purchase.email}
+                      </div>
+                    </td>
+                    <td className="p-3 sm:p-4 hidden sm:table-cell">
+                      <div className="break-all">{purchase.email}</div>
                       <div className="text-xs text-zinc-500">{purchase.phone}</div>
                     </td>
-                    <td className="p-4 text-center font-medium tabular-nums">
+                    <td className="p-3 sm:p-4 text-center font-medium tabular-nums">
                       {(() => {
                         const units = purchase.ticket_breakdown || [];
                         if (units.some((u: any) => u.serial)) return units.length;
@@ -1080,16 +1087,16 @@ export default function AdminDashboard() {
                         );
                       })()}
                     </td>
-                    <td className="p-4 text-right font-medium tabular-nums">
+                    <td className="p-3 sm:p-4 text-right font-medium tabular-nums whitespace-nowrap">
                       {purchase.currency || "HKD"} {purchase.amount}
                     </td>
-                    <td className="p-4">
+                    <td className="p-3 sm:p-4">
                       <span className="font-mono text-xs rounded bg-zinc-100 px-2 py-0.5">{purchase.event_slug}</span>
                     </td>
-                    <td className="p-4 font-mono text-xs text-zinc-600">
+                    <td className="p-3 sm:p-4 font-mono text-xs text-zinc-600 hidden md:table-cell break-all">
                       {purchase.order_reference || purchase.payment_reference}
                     </td>
-                    <td className="p-4 text-xs">
+                    <td className="p-3 sm:p-4 text-xs hidden lg:table-cell">
                       {(() => {
                         const units = purchase.ticket_breakdown || [];
                         const hasSerials = units.some((u: any) => u.serial);
@@ -1189,7 +1196,7 @@ export default function AdminDashboard() {
 
       {/* EVENTS TAB - Full Management */}
       {activeTab === "events" && (
-        <div className="max-w-7xl mx-auto px-6 py-8">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-8">
           <div className="flex justify-between items-center mb-6">
             <div>
               <h2 className="text-xl font-semibold">Manage Events</h2>
@@ -1302,27 +1309,27 @@ export default function AdminDashboard() {
 
       {/* SCANNER TAB — Admin-only redemption / check-in */}
       {activeTab === "scanner" && (
-        <div className="max-w-3xl mx-auto px-6 py-8">
+        <div className="max-w-3xl mx-auto px-4 sm:px-6 py-6 sm:py-8">
           <div className="mb-6">
-            <h2 className="text-2xl font-semibold">Ticket Scanner</h2>
+            <h2 className="text-xl sm:text-2xl font-semibold">Ticket Scanner</h2>
             <p className="text-sm text-zinc-600 mt-1">
               Only staff logged into the admin can mark tickets as redeemed. 
               Scanning here will instantly update the Purchases/Registration table and future Excel exports.
             </p>
           </div>
 
-          <div className="bg-white rounded-2xl border p-8">
+          <div className="bg-white rounded-2xl border p-4 sm:p-8">
             <div className="mb-4">
               <label className="block text-sm font-medium mb-1">
                 Ticket ID or Order Ref (from PDF QR — prefer KPY-…-001)
               </label>
-              <div className="flex gap-2">
+              <div className="flex flex-col sm:flex-row gap-2">
                 <input
                   type="text"
                   value={scanRef}
                   onChange={(e) => setScanRef(e.target.value.trim())}
                   placeholder="e.g. KPY-1783…-001 or order KPY-1783…"
-                  className="flex-1 border rounded-lg px-4 py-2 font-mono text-sm"
+                  className="flex-1 min-w-0 border rounded-lg px-4 py-2 font-mono text-sm"
                   onKeyDown={(e) => {
                     if (e.key === "Enter") {
                       void (async () => {
@@ -1432,7 +1439,7 @@ export default function AdminDashboard() {
 
       {/* ATTENDANCE TAB — derived from purchases (no separate Supabase table) */}
       {activeTab === "attendance" && (
-        <div className="max-w-7xl mx-auto px-6 py-8">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-8">
           <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
             <div>
               <h2 className="text-xl font-semibold">Attendance</h2>

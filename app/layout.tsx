@@ -21,6 +21,12 @@ export const metadata: Metadata = {
   },
 };
 
+export const viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 5,
+};
+
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -34,9 +40,11 @@ export default function RootLayout({
       <body className="min-h-screen flex flex-col bg-white text-zinc-950">
         {/* Simple top nav for the standalone platform - White Gold Theme */}
         <header className="border-b bg-white/95 backdrop-blur z-50 sticky top-0 border-[#EDE4D3]">
-          <div className="max-w-5xl mx-auto px-6 h-14 flex items-center justify-between text-sm">
-            <a href="/" className="font-semibold tracking-tight text-[#2C2520]">Ticketing System SIT</a>
-            <nav className="flex items-center gap-5 text-[#6B5E50]">
+          <div className="max-w-5xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between text-sm gap-3">
+            <a href="/" className="font-semibold tracking-tight text-[#2C2520] truncate min-w-0">
+              Ticketing System SIT
+            </a>
+            <nav className="flex items-center gap-4 sm:gap-5 text-[#6B5E50] shrink-0">
               <a href="/events" className="hover:text-[#2C2520] transition-colors">Events</a>
             </nav>
           </div>

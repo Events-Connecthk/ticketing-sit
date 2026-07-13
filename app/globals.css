@@ -22,6 +22,22 @@ body {
   overflow-x: hidden;
 }
 
+/* Horizontal tab strips on mobile */
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+/* Safer default for wide tables / forms on small screens */
+@media (max-width: 640px) {
+  input, select, textarea, button {
+    max-width: 100%;
+  }
+}
+
 /* Professional subtle enhancements */
 input, button, select, textarea {
   font-family: inherit;
