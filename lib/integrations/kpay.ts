@@ -730,6 +730,19 @@ function statusFromOrderRow(hit: any): "paid" | "failed" | "unknown" {
   return "unknown";
 }
 
+/** Recover managedOrderNo from stored checkout URL if pending row lost the field */
+function managedOrderNoFromPaymentUrl(url?: string): string | undefined {
+  if (!url) return undefined;
+  try {
+    const u = new URL(url);
+    const n = u.searchParams.get("managedOrderNo");
+    return n?.trim() || undefined;
+  } catch {
+    const m = url.match(/managedOrderNo=([^&]+)/i);
+    return m?.[1] ? decodeURIComponent(m[1]) : undefined;
+  }
+}
+
 /**
  * Official query: GET /v1/managed/order/result
  * managedOrderState: 1 Pending, 2 Paid, 3 Expired, 4 Refunded, 5 Closed
@@ -755,13 +768,16 @@ async function lookupOrderPayStatus(
       const q = await kpayRequest<any>("GET", path);
       const code = Number((q.data as any)?.code);
       const data = (q.data as any)?.data;
+      const msg = String((q.data as any)?.message || q.raw || "").slice(0, 200);
       console.log("[KPay] Order result query", {
         path,
         http: q.status,
         code,
         managedOrderState: data?.managedOrderState,
+        msg: code !== SUCCESS_CODE ? msg : undefined,
       });
 
+      // 30002 etc. — business error / not found; try next key
       if (code !== SUCCESS_CODE || !data) continue;
 
       const state = Number(data.managedOrderState);
@@ -774,15 +790,21 @@ async function lookupOrderPayStatus(
         return "failed";
       }
 
-      // Also inspect nested payment orders if present
+      // Nested payment orders (one managed order may have several attempts)
       const list = data.paymentOrderList || [];
       for (const p of list) {
         const r = Number(p.result);
         if (r === TX_STATE.SUCCESS) return "paid";
-        if (r === TX_STATE.FAILED || r === TX_STATE.CANCELLED || r === TX_STATE.CLOSED) {
+        if (
+          r === TX_STATE.FAILED ||
+          r === TX_STATE.CANCELLED ||
+          r === TX_STATE.CLOSED
+        ) {
           return "failed";
         }
       }
+
+      // State 1 Pending → unknown (wait for webhook / more polls; do not race success)
       return "unknown";
     } catch (err) {
       console.warn("[KPay] Order result lookup error:", err);
@@ -886,10 +908,16 @@ export async function confirmKpayPayment(
   }
 
   let pending = await getPendingPayment(paymentId);
+  const managedOrderNoResolved =
+    pending?.managedOrderNo ||
+    managedOrderNoFromPaymentUrl(pending?.paymentUrl) ||
+    undefined;
+
   console.log("[KPay] confirm state", {
     paymentId,
     hasPending: Boolean(pending),
     pendingStatus: pending?.status,
+    managedOrderNo: managedOrderNoResolved || null,
     userConfirmedPaid,
     returnResult,
     sandbox: isSandboxApi(),
@@ -906,15 +934,15 @@ export async function confirmKpayPayment(
   if (pending?.status === "failed") {
     return {
       success: false,
-      error: "Payment was cancelled or failed. No ticket was issued.",
+      error: "Payment was cancelled. No ticket was issued — you can try again.",
       outcome: "cancelled",
     };
   }
 
-  // Brief wait for webhook, then query order API (official managedOrderState)
+  // Wait for success webhook / purchase (paid path). Cancel usually never gets a paid notify.
   if (process.env.VERCEL || process.env.KPAY_WAIT_WEBHOOK === "true") {
-    for (let i = 0; i < 3; i++) {
-      await sleep(700);
+    for (let i = 0; i < 4; i++) {
+      await sleep(800);
       pending = await getPendingPayment(paymentId);
       if (pending?.status === "paid" || (await isWebhookPaid(paymentId))) {
         return {
@@ -941,14 +969,24 @@ export async function confirmKpayPayment(
     }
   }
 
-  const managedOrderNo = pending?.managedOrderNo || undefined;
-  // Query order API a few times — cancel often becomes closed/cancelled after a short delay
+  // Re-resolve after wait (pending may refresh from DB)
+  pending = (await getPendingPayment(paymentId)) || pending;
+  const managedOrderNo =
+    pending?.managedOrderNo ||
+    managedOrderNoFromPaymentUrl(pending?.paymentUrl) ||
+    managedOrderNoResolved;
+
   let st: "paid" | "failed" | "unknown" = "unknown";
   for (let i = 0; i < 3; i++) {
     st = await lookupOrderPayStatus(paymentId, managedOrderNo);
-    console.log("[KPay] Order status poll", { paymentId, attempt: i + 1, st });
+    console.log("[KPay] Order status poll", {
+      paymentId,
+      managedOrderNo: managedOrderNo || null,
+      attempt: i + 1,
+      st,
+    });
     if (st === "paid" || st === "failed") break;
-    await sleep(1200);
+    await sleep(1000);
   }
 
   if (st === "paid") {
@@ -964,7 +1002,7 @@ export async function confirmKpayPayment(
     if (pending) await markPendingFailed(paymentId);
     return {
       success: false,
-      error: "Payment was cancelled or failed. No ticket was issued.",
+      error: "Payment was cancelled. No ticket was issued — you can try again.",
       outcome: "cancelled",
     };
   }
@@ -972,8 +1010,6 @@ export async function confirmKpayPayment(
   const requireApi = process.env.KPAY_REQUIRE_API_CONFIRM === "true";
 
   // ONLY safe non-webhook path: user explicitly tapped “I paid”.
-  // Never auto-trust bare return — KPay cancel and success share the same URL
-  // (?session=…&language=en_US), so auto-finalize issues free tickets on cancel.
   if (userConfirmedPaid && !requireApi) {
     console.warn("[KPay] USER confirmed paid — finalizing", paymentId);
     if (pending) await markPendingPaid(paymentId);
@@ -984,7 +1020,6 @@ export async function confirmKpayPayment(
     };
   }
 
-  // Explicit opt-in only (not default) — will free-ticket on cancel
   if (process.env.KPAY_AUTO_CONFIRM_RETURN === "true" && !requireApi) {
     console.warn("[KPay] KPAY_AUTO_CONFIRM_RETURN=true — finalizing", paymentId);
     if (pending) await markPendingPaid(paymentId);
@@ -995,19 +1030,19 @@ export async function confirmKpayPayment(
     };
   }
 
-  console.warn("[KPay] Refusing finalize (need webhook or user confirm)", {
+  // No paid webhook + no paid order result → treat as not completed (cancel/abandon).
+  // Success path relies on webhook/order paid above; do not auto-issue tickets here.
+  if (pending) await markPendingFailed(paymentId);
+  console.warn("[KPay] Not paid after return — treating as cancelled/not completed", {
     paymentId,
-    returnResult,
-    userConfirmedPaid,
-    hasPending: Boolean(pending),
-    requireApi,
+    managedOrderNo: managedOrderNo || null,
     orderStatus: st,
   });
   return {
     success: false,
-    outcome: "unknown",
+    outcome: "cancelled",
     error:
-      "Payment not confirmed yet (no paid webhook / order still pending). If you completed payment, tap “I paid — get my tickets”. If you cancelled, tap “I cancelled — no ticket”.",
+      "Payment was not completed. No ticket was issued — you can try again.",
   };
 }
 

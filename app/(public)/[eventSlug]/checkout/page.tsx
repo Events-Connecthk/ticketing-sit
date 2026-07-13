@@ -590,10 +590,21 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
             {error && !needsManualConfirm && (
               <div className="mb-4 rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-700 space-y-2">
                 <p>{error}</p>
-                {/cancell?ed|not issued/i.test(error) && (
+                {/cancell?ed|not completed|not issued/i.test(error) && (
                   <p className="text-xs text-red-600/80">
                     You can pay again with the button below when ready.
                   </p>
+                )}
+                {/* Escape hatch if webhook was late but user really paid */}
+                {/not completed|cancelled/i.test(error) && hasReturnSession && (
+                  <button
+                    type="button"
+                    className="text-xs underline text-red-800/80"
+                    disabled={isProcessing}
+                    onClick={handleManualPaid}
+                  >
+                    I already paid — check again
+                  </button>
                 )}
               </div>
             )}
