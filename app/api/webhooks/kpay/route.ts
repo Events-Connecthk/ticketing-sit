@@ -63,11 +63,16 @@ function extractPaymentFields(body: any): {
       : {};
   const root = body && typeof body === "object" ? body : {};
 
+  // KPay package note: callback may use managedMerchantOrderNo (= create managedOutTradeNo)
   const managedOutTradeNo = pickStr(
     data.managedOutTradeNo,
     root.managedOutTradeNo,
+    data.managedMerchantOrderNo,
+    root.managedMerchantOrderNo,
     data.managed_out_trade_no,
-    root.managed_out_trade_no
+    root.managed_out_trade_no,
+    data.managed_merchant_order_no,
+    root.managed_merchant_order_no
   );
   const managedOrderNo = pickStr(
     data.managedOrderNo,

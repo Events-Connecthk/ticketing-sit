@@ -75,9 +75,21 @@ const PRIVATE_KEY = loadKeyMaterial(
   ["KPAY_MERCHANT_PRIVATE_KEY_PATH", "KPAY_PRIVATE_KEY_PATH"]
 );
 
+// KPay *platform* public key (file name like 8521…_kpay_public_key.pem).
+// NOT the merchant public key — merchant public is only for KPay's side / unused by us.
 const PLATFORM_PUBLIC_KEY = loadKeyMaterial(
-  ["KPAY_PLATFORM_PUBLIC_KEY", "KPAY_MERCHANT_PLATFORM_PUBLIC_KEY"],
-  ["KPAY_PLATFORM_PUBLIC_KEY_PATH", "KPAY_MERCHANT_PLATFORM_PUBLIC_KEY_PATH"]
+  [
+    "KPAY_PLATFORM_PUBLIC_KEY",
+    "KPAY_PUBLIC_KEY",
+    "KPAY_KPAY_PUBLIC_KEY",
+    "KPAY_MERCHANT_PLATFORM_PUBLIC_KEY",
+  ],
+  [
+    "KPAY_PLATFORM_PUBLIC_KEY_PATH",
+    "KPAY_PUBLIC_KEY_PATH",
+    "KPAY_KPAY_PUBLIC_KEY_PATH",
+    "KPAY_MERCHANT_PLATFORM_PUBLIC_KEY_PATH",
+  ]
 );
 const APP_ID = process.env.KPAY_APP_ID || "";
 
@@ -1172,15 +1184,16 @@ export async function verifyKpayWebhook(
   if (webhookRelaxed()) {
     console.warn(
       "[KPay] Webhook signature verify failed — allowing (UAT/relaxed). " +
-        "Ensure KPAY_PLATFORM_PUBLIC_KEY is the KPay platform public key " +
-        "(from KPay: *kpay_public_key*.pem), NOT the merchant public key."
+        "Fix: set KPAY_PLATFORM_PUBLIC_KEY (or KPAY_PUBLIC_KEY) to the file " +
+        "named like 8521…_kpay_public_key.pem from KPay — NOT 8521…_public_key.pem " +
+        "(merchant public). See KPay minimal-module references/environment-variables.md."
     );
     return true;
   }
 
   console.warn(
     "[KPay] Webhook signature verification failed (strict). " +
-      "Check KPAY_PLATFORM_PUBLIC_KEY is KPay platform public PEM."
+      "Need KPay platform public PEM (*kpay_public_key*), not merchant public."
   );
   return false;
 }
