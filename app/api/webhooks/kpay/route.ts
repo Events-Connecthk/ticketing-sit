@@ -101,6 +101,20 @@ export async function POST(request: NextRequest) {
     }
 
     const signature = extractSignature(request, body);
+    const timestamp =
+      request.headers.get("K-Timestamp") ||
+      request.headers.get("k-timestamp") ||
+      "";
+    const nonce =
+      request.headers.get("K-Nonce-Str") ||
+      request.headers.get("k-nonce-str") ||
+      "";
+    // Path KPay called (may include query); default to our route
+    const pathWithQuery =
+      request.nextUrl?.pathname +
+        (request.nextUrl?.search || "") ||
+      "/api/webhooks/kpay";
+
     console.log("[KPay Webhook] Received", {
       hasSignature: Boolean(signature),
       type: body?.type,
@@ -110,10 +124,18 @@ export async function POST(request: NextRequest) {
         body?.data && typeof body.data === "object"
           ? Object.keys(body.data)
           : [],
+      pathWithQuery,
       rawPreview: rawText?.slice(0, 400),
     });
 
-    const valid = await verifyKpayWebhook(body, signature);
+    const valid = await verifyKpayWebhook(body, signature, {
+      rawBody: rawText,
+      method: "POST",
+      pathWithQuery,
+      timestamp,
+      nonce,
+      merchantCode: String(body?.merchantCode || "").trim() || undefined,
+    });
     if (!valid) {
       console.warn("[KPay Webhook] Invalid signature — rejecting");
       return NextResponse.json({ error: "Invalid signature" }, { status: 401 });

@@ -18,6 +18,7 @@ import { readFileSync, existsSync } from "fs";
 import path from "path";
 import { OrderCart, PaymentInitiationResult } from "@/types";
 import {
+  buildOfficialSignatureText,
   buildSignPayload,
   randomNonce,
   signWithPrivateKey,
@@ -181,16 +182,22 @@ async function kpayRequest<T = any>(
   requestBody?: string;
   signMode?: string;
 }> {
-  const url = `${API_BASE}${path.startsWith("/") ? path : `/${path}`}`;
-  const rawBody = body ? JSON.stringify(body) : "";
+  // path may already include ?query for GET result lookups
+  const pathWithQuery = path.startsWith("/") ? path : `/${path}`;
+  const url = `${API_BASE}${pathWithQuery}`;
+  // Compact JSON (no spaces) — must match bytes signed and sent (KPay example)
+  const rawBody = body
+    ? JSON.stringify(body)
+    : "";
   const timestamp = Date.now().toString();
   const nonce = randomNonce(32);
+  // Official: METHOD + URI + timestamp + nonce + MID + body (see KPay archive)
   const signMode =
-    opts?.signMode || process.env.KPAY_SIGN_PAYLOAD || "timestamp_nonce_body";
+    opts?.signMode || process.env.KPAY_SIGN_PAYLOAD || "official";
 
   const headers: Record<string, string> = {
-    // Docs intro: application/json;charset=UTF-8
-    "Content-Type": "application/json;charset=UTF-8",
+    // KPay example uses application/json (no charset)
+    "Content-Type": "application/json",
     "K-Merchant-Code": MERCHANT_CODE,
     "K-Timestamp": timestamp,
     "K-Nonce-Str": nonce,
@@ -201,8 +208,7 @@ async function kpayRequest<T = any>(
     headers["K-App-Id"] = APP_ID;
   }
 
-  if (PRIVATE_KEY && (rawBody || method === "GET")) {
-    const pathOnly = path.startsWith("/") ? path : `/${path}`;
+  if (PRIVATE_KEY) {
     const payload = buildSignPayload({
       mode: signMode,
       timestamp,
@@ -211,7 +217,8 @@ async function kpayRequest<T = any>(
       rawBody: method === "GET" ? "" : rawBody,
       bodyObject: body,
       method,
-      path: pathOnly,
+      path: pathWithQuery,
+      appId: APP_ID || undefined,
     });
     headers["K-Signature"] = signWithPrivateKey(payload, PRIVATE_KEY);
   }
@@ -379,27 +386,40 @@ async function cartToItemList(cart: OrderCart) {
   return lines;
 }
 
-/** Build signed GET checkout URL after create returns managedOrderNo */
+/**
+ * Build signed GET checkout URL after create returns managedOrderNo.
+ * Official: sign URI_WITH_QUERY without K-Signature, then append signature.
+ * Query order matches KPay Python example 02_open_web_checkout_test.py
+ */
 function buildWebCheckoutUrl(managedOrderNo: string): string {
   const timestamp = Date.now().toString();
   const nonce = randomNonce(32);
-  const payload = buildSignPayload({
+
+  // Deterministic order — must match signed URI
+  const parts: string[] = [
+    `managedOrderNo=${encodeURIComponent(managedOrderNo)}`,
+    `language=${encodeURIComponent(LANGUAGE)}`,
+    `K-Merchant-Code=${encodeURIComponent(MERCHANT_CODE)}`,
+  ];
+  if (APP_ID) {
+    parts.push(`K-App-Id=${encodeURIComponent(APP_ID)}`);
+  }
+  parts.push(`K-Nonce-Str=${encodeURIComponent(nonce)}`);
+  parts.push(`K-Timestamp=${encodeURIComponent(timestamp)}`);
+
+  const unsignedQuery = parts.join("&");
+  const uriWithQuery = `${WEB_CHECKOUT_PATH}?${unsignedQuery}`;
+  const payload = buildOfficialSignatureText({
+    method: "GET",
+    uriWithQuery,
     timestamp,
     nonce,
     merchantCode: MERCHANT_CODE,
-    rawBody: "",
+    body: "",
+    appId: APP_ID || undefined,
   });
   const signature = signWithPrivateKey(payload, PRIVATE_KEY);
-  const qs = new URLSearchParams({
-    managedOrderNo,
-    language: LANGUAGE,
-    "K-Merchant-Code": MERCHANT_CODE,
-    "K-Nonce-Str": nonce,
-    "K-Timestamp": timestamp,
-    "K-Signature": signature,
-  });
-  if (APP_ID) qs.set("K-App-Id", APP_ID);
-  return `${API_BASE}${WEB_CHECKOUT_PATH}?${qs.toString()}`;
+  return `${API_BASE}${uriWithQuery}&K-Signature=${encodeURIComponent(signature)}`;
 }
 
 function formatKpayUserError(code: number, msg: string): string {
@@ -409,7 +429,7 @@ function formatKpayUserError(code: number, msg: string): string {
       `KPay rejected the request signature (Invalid signature). ` +
       `Check Vercel env: KPAY_MERCHANT_PRIVATE_KEY (full PEM), KPAY_MERCHANT_CODE, ` +
       `KPAY_API_BASE_URL=https://payment.uat.kpay-group.com. ` +
-      `Optional: set KPAY_SIGN_PAYLOAD=body_only if support confirms that mode.`
+      `Uses official sign text METHOD+URI+timestamp+nonce+MID+body. Confirm key registration if still failing.`
     );
   }
   if (m.includes("未知錯誤") || code === 50001) {
@@ -494,8 +514,8 @@ export async function initiateKpayPayment(
       data?: { managedOrderNo?: string; [k: string]: unknown };
     };
 
-    // Try sign modes until create succeeds (docs don't spell the exact string-to-sign)
-    const preferred = process.env.KPAY_SIGN_PAYLOAD || "timestamp_nonce_body";
+    // Official string-to-sign from KPay archive (default: official)
+    const preferred = process.env.KPAY_SIGN_PAYLOAD || "official";
     const modes = [
       preferred,
       ...KPAY_SIGN_MODES.filter((m) => m !== preferred),
@@ -534,6 +554,7 @@ export async function initiateKpayPayment(
       const sigFail =
         /signature|sign|签名|驗簽|验签|invalid/i.test(attemptMsg) ||
         attemptCode === 40001 ||
+        attemptCode === 40002 ||
         attemptCode === 401;
       if (!sigFail && attemptCode && attemptCode !== SUCCESS_CODE) break;
     }
@@ -937,11 +958,21 @@ function webhookRelaxed(): boolean {
 }
 
 /**
- * Verify KPay async notification signature using Merchant Platform Public Key.
+ * Verify KPay async notification using KPay platform public key.
+ * Official text (same order as API requests):
+ *   POST\n{uriWithQuery}\n{timestamp}\n{nonce}\n{merchantCode}\n{rawBody}\n
  */
 export async function verifyKpayWebhook(
   payload: unknown,
-  signature: string
+  signature: string,
+  meta?: {
+    rawBody?: string;
+    method?: string;
+    pathWithQuery?: string;
+    timestamp?: string;
+    nonce?: string;
+    merchantCode?: string;
+  }
 ): Promise<boolean> {
   if (!signature) {
     if (webhookRelaxed()) {
@@ -964,28 +995,41 @@ export async function verifyKpayWebhook(
     return false;
   }
 
-  const raw =
-    typeof payload === "string" ? payload : JSON.stringify(payload ?? {});
+  // Prefer exact raw body (do not re-JSON.stringify)
+  const rawBody =
+    meta?.rawBody ??
+    (typeof payload === "string" ? payload : JSON.stringify(payload ?? {}));
 
-  if (verifyWithPublicKey(raw, signature, PLATFORM_PUBLIC_KEY)) {
-    return true;
+  const bodyObj =
+    typeof payload === "object" && payload
+      ? (payload as Record<string, unknown>)
+      : {};
+  const merchantCode =
+    meta?.merchantCode ||
+    String(bodyObj.merchantCode || MERCHANT_CODE || "").trim();
+  const method = (meta?.method || "POST").toUpperCase();
+  const pathWithQuery = meta?.pathWithQuery || "/api/webhooks/kpay";
+  const timestamp = meta?.timestamp || "";
+  const nonce = meta?.nonce || "";
+
+  if (timestamp && nonce && merchantCode) {
+    const text = buildOfficialSignatureText({
+      method,
+      uriWithQuery: pathWithQuery,
+      timestamp,
+      nonce,
+      merchantCode,
+      body: rawBody,
+      appId: APP_ID || undefined,
+    });
+    if (verifyWithPublicKey(text, signature, PLATFORM_PUBLIC_KEY)) {
+      return true;
+    }
   }
 
-  if (payload && typeof payload === "object") {
-    const data = (payload as any).data ?? payload;
-    if (data && typeof data === "object") {
-      const sorted = Object.keys(data)
-        .filter((k) => k !== "sign" && k !== "signature")
-        .sort()
-        .map(
-          (k) =>
-            `${k}=${typeof data[k] === "object" ? JSON.stringify(data[k]) : data[k]}`
-        )
-        .join("&");
-      if (verifyWithPublicKey(sorted, signature, PLATFORM_PUBLIC_KEY)) {
-        return true;
-      }
-    }
+  // Legacy fallbacks (older deploys / incomplete headers)
+  if (verifyWithPublicKey(rawBody, signature, PLATFORM_PUBLIC_KEY)) {
+    return true;
   }
 
   if (webhookRelaxed()) {

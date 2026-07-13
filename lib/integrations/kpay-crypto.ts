@@ -1,15 +1,17 @@
 /**
- * KPay SHA256-RSA helpers (Merchant Mode).
+ * KPay SHA256-RSA helpers (Merchant Mode) — All Hosted Checkout
  *
- * Spec (from KPay docs email):
- * - REST + JSON
- * - SHA256-RSA asymmetric digital signature
- * - Headers: K-Nonce-Str, K-Merchant-Code, K-Signature, K-Timestamp, K-Language
- * - Keys provided in PKCS#8 format
+ * Official string-to-sign (from KPay minimal module examples):
  *
- * String-to-sign (configurable):
- *   default = `${timestamp}\n${nonce}\n${rawBody}`
- * Adjust KPAY_SIGN_PAYLOAD if KPay support gives a different rule.
+ *   METHOD\n
+ *   URI_WITH_QUERY\n
+ *   K-Timestamp\n
+ *   K-Nonce-Str\n
+ *   K-Merchant-Code\n
+ *   [K-App-Id\n]   // only if app id is used (service provider)
+ *   BODY\n         // empty string for GET, but trailing newline always kept
+ *
+ * RSA-SHA256, PKCS#1 v1.5, Base64. K-Signature is never part of the signed text.
  */
 
 import crypto from "crypto";
@@ -18,14 +20,15 @@ export function normalizePem(key: string, type: "PRIVATE KEY" | "PUBLIC KEY"): s
   const trimmed = key.trim().replace(/\\n/g, "\n");
   if (trimmed.includes("BEGIN")) return trimmed;
 
-  // Bare base64 — wrap as PKCS#8 PEM
+  // Bare base64 — wrap as PKCS#8 / SPKI PEM
   const body = trimmed.replace(/\s+/g, "");
   const lines = body.match(/.{1,64}/g) || [];
   return `-----BEGIN ${type}-----\n${lines.join("\n")}\n-----END ${type}-----`;
 }
 
 export function randomNonce(length = 32): string {
-  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+  const chars =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
   const bytes = crypto.randomBytes(length);
   let out = "";
   for (let i = 0; i < length; i++) {
@@ -35,14 +38,37 @@ export function randomNonce(length = 32): string {
 }
 
 /**
- * Build the payload that is RSA-SHA256 signed.
- * Modes (KPay docs vary; we try several on create if needed):
- *  - timestamp_nonce_body (default): timestamp\\nnonce\\nbody
- *  - timestamp_nonce_body_crlf: same with \\r\\n
- *  - body_only: raw JSON body
- *  - concat: timestamp + nonce + body (no separators)
- *  - merchant_timestamp_nonce_body: MID\\ntimestamp\\nnonce\\nbody
- *  - sorted_params: sorted k=v of headers + body fields
+ * Official KPay signature text (merchant mode).
+ * Matches Python `build_signature_text` in KPay examples.
+ */
+export function buildOfficialSignatureText(opts: {
+  method: string;
+  /** Path + optional query only (no scheme/host), e.g. /v1/managed/order/add */
+  uriWithQuery: string;
+  timestamp: string;
+  nonce: string;
+  merchantCode: string;
+  /** Raw body string for POST; empty string for GET */
+  body: string;
+  appId?: string;
+}): string {
+  const method = (opts.method || "POST").toUpperCase();
+  const lines = [
+    method,
+    opts.uriWithQuery,
+    opts.timestamp,
+    opts.nonce,
+    opts.merchantCode,
+  ];
+  if (opts.appId) {
+    lines.push(opts.appId);
+  }
+  lines.push(opts.body ?? "");
+  return lines.join("\n") + "\n";
+}
+
+/**
+ * @deprecated Prefer buildOfficialSignatureText. Kept for env override only.
  */
 export function buildSignPayload(opts: {
   mode?: string;
@@ -53,78 +79,78 @@ export function buildSignPayload(opts: {
   bodyObject?: Record<string, unknown>;
   method?: string;
   path?: string;
+  appId?: string;
 }): string {
-  const mode = (opts.mode || process.env.KPAY_SIGN_PAYLOAD || "timestamp_nonce_body").toLowerCase();
+  const mode = (
+    opts.mode ||
+    process.env.KPAY_SIGN_PAYLOAD ||
+    "official"
+  ).toLowerCase();
 
+  // Official KPay format (default)
+  if (
+    mode === "official" ||
+    mode === "method_uri_timestamp_nonce_merchant_body" ||
+    mode === "kpay_official"
+  ) {
+    return buildOfficialSignatureText({
+      method: opts.method || "POST",
+      uriWithQuery: opts.path || "",
+      timestamp: opts.timestamp,
+      nonce: opts.nonce,
+      merchantCode: opts.merchantCode,
+      body: opts.rawBody ?? "",
+      appId: opts.appId,
+    });
+  }
+
+  // Legacy guesses (only if KPAY_SIGN_PAYLOAD is set explicitly)
   if (mode === "body_only") {
     return opts.rawBody;
   }
-
   if (mode === "concat" || mode === "timestamp_nonce_body_nosep") {
     return `${opts.timestamp}${opts.nonce}${opts.rawBody}`;
   }
-
   if (mode === "timestamp_nonce_body_crlf") {
     return `${opts.timestamp}\r\n${opts.nonce}\r\n${opts.rawBody}`;
   }
-
   if (mode === "merchant_timestamp_nonce_body") {
     return `${opts.merchantCode}\n${opts.timestamp}\n${opts.nonce}\n${opts.rawBody}`;
   }
-
-  // method + path + timestamp + nonce + body (some gateways)
-  if (mode === "method_path_timestamp_nonce_body" && opts.method && opts.path) {
-    return `${opts.method}\n${opts.path}\n${opts.timestamp}\n${opts.nonce}\n${opts.rawBody}`;
+  if (mode === "timestamp_nonce_body") {
+    return `${opts.timestamp}\n${opts.nonce}\n${opts.rawBody}`;
   }
-
-  if (mode === "path_timestamp_nonce_body" && opts.path) {
-    return `${opts.path}\n${opts.timestamp}\n${opts.nonce}\n${opts.rawBody}`;
-  }
-
-  // only timestamp\nnonce (empty body even for POST) — rare
   if (mode === "timestamp_nonce_only") {
     return `${opts.timestamp}\n${opts.nonce}\n`;
   }
 
-  if (mode === "sorted_params") {
-    const map: Record<string, string> = {
-      "K-Merchant-Code": opts.merchantCode,
-      "K-Nonce-Str": opts.nonce,
-      "K-Timestamp": opts.timestamp,
-    };
-    if (opts.bodyObject) {
-      for (const [k, v] of Object.entries(opts.bodyObject)) {
-        if (v === undefined || v === null || k === "sign" || k === "signature") continue;
-        map[k] = typeof v === "object" ? JSON.stringify(v) : String(v);
-      }
-    }
-    return Object.keys(map)
-      .sort()
-      .map((k) => `${k}=${map[k]}`)
-      .join("&");
-  }
-
-  // default: timestamp\nnonce\nbody
-  return `${opts.timestamp}\n${opts.nonce}\n${opts.rawBody}`;
+  // Default to official
+  return buildOfficialSignatureText({
+    method: opts.method || "POST",
+    uriWithQuery: opts.path || "",
+    timestamp: opts.timestamp,
+    nonce: opts.nonce,
+    merchantCode: opts.merchantCode,
+    body: opts.rawBody ?? "",
+    appId: opts.appId,
+  });
 }
 
-/** Modes to try when create returns Invalid signature */
+/** Prefer official only; legacy list only if explicitly needed */
 export const KPAY_SIGN_MODES = [
+  "official",
   "timestamp_nonce_body",
   "body_only",
-  "concat",
-  "timestamp_nonce_body_crlf",
   "merchant_timestamp_nonce_body",
-  "sorted_params",
-  "method_path_timestamp_nonce_body",
-  "path_timestamp_nonce_body",
-  "timestamp_nonce_only",
 ] as const;
 
-export function signWithPrivateKey(payload: string, privateKeyPem: string): string {
+export function signWithPrivateKey(
+  payload: string,
+  privateKeyPem: string
+): string {
   const key = normalizePem(privateKeyPem, "PRIVATE KEY");
   const signer = crypto.createSign("RSA-SHA256");
-  signer.update(payload);
+  signer.update(payload, "utf8");
   signer.end();
   return signer.sign(key, "base64");
 }
@@ -137,7 +163,7 @@ export function verifyWithPublicKey(
   try {
     const key = normalizePem(publicKeyPem, "PUBLIC KEY");
     const verifier = crypto.createVerify("RSA-SHA256");
-    verifier.update(payload);
+    verifier.update(payload, "utf8");
     verifier.end();
     return verifier.verify(key, signatureBase64, "base64");
   } catch (err) {
