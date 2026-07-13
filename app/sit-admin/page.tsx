@@ -1958,19 +1958,27 @@ export default function AdminDashboard() {
                 {ticketTypesForm.length > 0 && (
                   <div className="border rounded-xl divide-y mb-4">
                     {ticketTypesForm.map((t, idx) => (
-                      <div key={idx} className="p-3 flex flex-col gap-2 text-sm">
-                        <div className="flex flex-wrap md:flex-nowrap items-center gap-3">
-                          <div className="flex-1 font-medium">{t.name} <span className="font-mono text-xs text-zinc-400">({t.id})</span></div>
-                          <div>
+                      <div key={idx} className="p-3 sm:p-4 flex flex-col gap-3 text-sm">
+                        <div className="font-medium">
+                          {t.name}{" "}
+                          <span className="font-mono text-xs text-zinc-400">
+                            (ID: {t.id})
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+                          <label className="flex flex-col gap-0.5 text-[11px] text-zinc-500">
+                            Price ({t.currency || "HKD"})
                             <input
                               type="number"
                               value={t.price}
-                              onChange={(e) => updateTicketPrice(t.id, parseFloat(e.target.value) || 0)}
-                              className="w-24 border rounded px-2 py-1 text-right"
+                              onChange={(e) =>
+                                updateTicketPrice(t.id, parseFloat(e.target.value) || 0)
+                              }
+                              className="w-full border rounded-lg px-2 py-1.5 text-sm text-zinc-900 text-right"
                             />
-                            <span className="ml-1 text-xs text-zinc-500">{t.currency}</span>
-                          </div>
-                          <div className="text-xs">
+                          </label>
+                          <label className="flex flex-col gap-0.5 text-[11px] text-zinc-500">
+                            Max per order
                             <input
                               type="number"
                               value={t.maxPerOrder ?? 6}
@@ -1982,20 +1990,21 @@ export default function AdminDashboard() {
                                   )
                                 );
                               }}
-                              className="w-12 border rounded px-1 py-0.5 text-center"
+                              className="w-full border rounded-lg px-2 py-1.5 text-sm text-zinc-900 text-center"
                               min="1"
-                              title="Max per order"
                             />
-                            <span className="ml-0.5 text-zinc-500">max/order</span>
-                          </div>
-                          <div className="text-xs">
+                          </label>
+                          <label className="flex flex-col gap-0.5 text-[11px] text-zinc-500">
+                            Stock (empty = unlimited)
                             <input
                               type="number"
                               value={t.quantityAvailable ?? ""}
                               onChange={(e) => {
                                 const raw = e.target.value;
                                 const val =
-                                  raw === "" ? undefined : Math.max(0, parseInt(raw) || 0);
+                                  raw === ""
+                                    ? undefined
+                                    : Math.max(0, parseInt(raw) || 0);
                                 setTicketTypesForm(
                                   ticketTypesForm.map((tt) =>
                                     tt.id === t.id
@@ -2004,44 +2013,32 @@ export default function AdminDashboard() {
                                   )
                                 );
                               }}
-                              className="w-16 border rounded px-1 py-0.5 text-center"
+                              className="w-full border rounded-lg px-2 py-1.5 text-sm text-zinc-900 text-center"
                               min="0"
                               placeholder="∞"
-                              title="Total available (empty = unlimited)"
                             />
-                            <span className="ml-0.5 text-zinc-500">stock</span>
-                          </div>
-                          <div className="text-xs">
+                          </label>
+                          <label className="flex flex-col gap-0.5 text-[11px] text-zinc-500">
+                            Scan redemptions allowed
                             <input
                               type="number"
                               value={t.redemptionLimit ?? 1}
                               onChange={(e) => {
                                 const val = parseInt(e.target.value) || 1;
-                                setTicketTypesForm(ticketTypesForm.map(tt => tt.id === t.id ? { ...tt, redemptionLimit: val } : tt));
+                                setTicketTypesForm(
+                                  ticketTypesForm.map((tt) =>
+                                    tt.id === t.id
+                                      ? { ...tt, redemptionLimit: val }
+                                      : tt
+                                  )
+                                );
                               }}
-                              className="w-12 border rounded px-1 py-0.5 text-center"
+                              className="w-full border rounded-lg px-2 py-1.5 text-sm text-zinc-900 text-center"
                               min="1"
                             />
-                            <span className="ml-0.5 text-zinc-500">redemptions</span>
-                          </div>
-                          <button
-                            onClick={() => toggleTicketType(t.id)}
-                            className={`px-3 py-1 rounded text-xs ${t.enabled !== false ? "bg-emerald-100 text-emerald-700" : "bg-zinc-200 text-zinc-600"}`}
-                          >
-                            {t.enabled !== false ? "Enabled" : "Disabled"}
-                          </button>
-                          <button onClick={() => removeTicketType(t.id)} className="text-red-500 text-xs px-2">Remove</button>
-                          <button
-                            onClick={() => addDiscountToTicket(t.id)}
-                            className="text-xs px-2 py-1 border rounded hover:bg-white"
-                          >
-                            + Discount
-                          </button>
-                        </div>
-                        <div className="flex flex-wrap items-center gap-2 text-xs pl-0 sm:pl-1">
-                          <span className="text-zinc-500 shrink-0">Valid dates (HK):</span>
-                          <label className="flex items-center gap-1">
-                            <span className="text-zinc-400">from</span>
+                          </label>
+                          <label className="flex flex-col gap-0.5 text-[11px] text-zinc-500">
+                            Valid from (HK)
                             <input
                               type="date"
                               value={t.validFrom || ""}
@@ -2057,12 +2054,11 @@ export default function AdminDashboard() {
                                   )
                                 )
                               }
-                              className="border rounded px-1.5 py-0.5"
-                              title="Valid from (inclusive). Empty = no start limit"
+                              className="w-full border rounded-lg px-2 py-1.5 text-sm text-zinc-900"
                             />
                           </label>
-                          <label className="flex items-center gap-1">
-                            <span className="text-zinc-400">to</span>
+                          <label className="flex flex-col gap-0.5 text-[11px] text-zinc-500">
+                            Valid to (HK)
                             <input
                               type="date"
                               value={t.validTo || ""}
@@ -2078,12 +2074,36 @@ export default function AdminDashboard() {
                                   )
                                 )
                               }
-                              className="border rounded px-1.5 py-0.5"
-                              title="Valid to (inclusive). Empty = no end limit"
+                              className="w-full border rounded-lg px-2 py-1.5 text-sm text-zinc-900"
                             />
                           </label>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => toggleTicketType(t.id)}
+                            className={`px-3 py-1.5 rounded text-xs ${t.enabled !== false ? "bg-emerald-100 text-emerald-700" : "bg-zinc-200 text-zinc-600"}`}
+                          >
+                            {t.enabled !== false ? "On sale" : "Hidden"}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => addDiscountToTicket(t.id)}
+                            className="text-xs px-2 py-1.5 border rounded hover:bg-white"
+                          >
+                            + Ticket discount rule
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => removeTicketType(t.id)}
+                            className="text-red-500 text-xs px-2 py-1.5"
+                          >
+                            Remove type
+                          </button>
                           {!t.validFrom && !t.validTo && (
-                            <span className="text-zinc-400">any day</span>
+                            <span className="text-[11px] text-zinc-400">
+                              Scanner: valid any day
+                            </span>
                           )}
                         </div>
 
@@ -2108,91 +2128,130 @@ export default function AdminDashboard() {
 
                 {/* Add new ticket type */}
                 <div className="border rounded-xl p-4 bg-zinc-50">
-                  <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-                    <input
-                      placeholder="ID (e.g. ga)"
-                      value={newTicket.id}
-                      onChange={(e) => setNewTicket({ ...newTicket, id: e.target.value })}
-                      className="border px-3 py-2 rounded text-sm"
-                    />
-                    <input
-                      placeholder="Name"
-                      value={newTicket.name}
-                      onChange={(e) => setNewTicket({ ...newTicket, name: e.target.value })}
-                      className="border px-3 py-2 rounded text-sm"
-                    />
-                    <input
-                      type="number"
-                      placeholder="Price"
-                      value={newTicket.price}
-                      onChange={(e) => setNewTicket({ ...newTicket, price: parseFloat(e.target.value) || 0 })}
-                      className="border px-3 py-2 rounded text-sm"
-                    />
-                    <input
-                      type="number"
-                      placeholder="Max per order"
-                      value={newTicket.maxPerOrder ?? 6}
-                      onChange={(e) =>
-                        setNewTicket({
-                          ...newTicket,
-                          maxPerOrder: Math.max(1, parseInt(e.target.value) || 6),
-                        })
-                      }
-                      className="border px-3 py-2 rounded text-sm"
-                      min="1"
-                    />
-                    <input
-                      type="number"
-                      placeholder="Stock (blank = ∞)"
-                      value={newTicket.quantityAvailable ?? ""}
-                      onChange={(e) => {
-                        const raw = e.target.value;
-                        setNewTicket({
-                          ...newTicket,
-                          quantityAvailable:
-                            raw === "" ? undefined : Math.max(0, parseInt(raw) || 0),
-                        });
-                      }}
-                      className="border px-3 py-2 rounded text-sm"
-                      min="0"
-                    />
-                    <input
-                      type="number"
-                      placeholder="Redemptions"
-                      value={newTicket.redemptionLimit ?? 1}
-                      onChange={(e) => setNewTicket({ ...newTicket, redemptionLimit: parseInt(e.target.value) || 1 })}
-                      className="border px-3 py-2 rounded text-sm"
-                      min="1"
-                    />
-                    <label className="text-xs text-zinc-500 flex flex-col gap-0.5">
-                      Valid from
+                  <p className="text-xs font-medium text-zinc-700 mb-3">Add new ticket type</p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                    <label className="flex flex-col gap-0.5 text-[11px] text-zinc-500">
+                      Type ID (unique, e.g. d-1)
+                      <input
+                        placeholder="d-1"
+                        value={newTicket.id}
+                        onChange={(e) => setNewTicket({ ...newTicket, id: e.target.value })}
+                        className="border px-3 py-2 rounded-lg text-sm text-zinc-900 font-mono"
+                      />
+                    </label>
+                    <label className="flex flex-col gap-0.5 text-[11px] text-zinc-500">
+                      Display name
+                      <input
+                        placeholder="Day 1"
+                        value={newTicket.name}
+                        onChange={(e) => setNewTicket({ ...newTicket, name: e.target.value })}
+                        className="border px-3 py-2 rounded-lg text-sm text-zinc-900"
+                      />
+                    </label>
+                    <label className="flex flex-col gap-0.5 text-[11px] text-zinc-500">
+                      Price (HKD)
+                      <input
+                        type="number"
+                        placeholder="0"
+                        value={newTicket.price}
+                        onChange={(e) =>
+                          setNewTicket({
+                            ...newTicket,
+                            price: parseFloat(e.target.value) || 0,
+                          })
+                        }
+                        className="border px-3 py-2 rounded-lg text-sm text-zinc-900"
+                      />
+                    </label>
+                    <label className="flex flex-col gap-0.5 text-[11px] text-zinc-500">
+                      Max per order
+                      <input
+                        type="number"
+                        placeholder="6"
+                        value={newTicket.maxPerOrder ?? 6}
+                        onChange={(e) =>
+                          setNewTicket({
+                            ...newTicket,
+                            maxPerOrder: Math.max(1, parseInt(e.target.value) || 6),
+                          })
+                        }
+                        className="border px-3 py-2 rounded-lg text-sm text-zinc-900"
+                        min="1"
+                      />
+                    </label>
+                    <label className="flex flex-col gap-0.5 text-[11px] text-zinc-500">
+                      Stock total (empty = unlimited)
+                      <input
+                        type="number"
+                        placeholder="∞"
+                        value={newTicket.quantityAvailable ?? ""}
+                        onChange={(e) => {
+                          const raw = e.target.value;
+                          setNewTicket({
+                            ...newTicket,
+                            quantityAvailable:
+                              raw === ""
+                                ? undefined
+                                : Math.max(0, parseInt(raw) || 0),
+                          });
+                        }}
+                        className="border px-3 py-2 rounded-lg text-sm text-zinc-900"
+                        min="0"
+                      />
+                    </label>
+                    <label className="flex flex-col gap-0.5 text-[11px] text-zinc-500">
+                      Scan redemptions allowed
+                      <input
+                        type="number"
+                        placeholder="1"
+                        value={newTicket.redemptionLimit ?? 1}
+                        onChange={(e) =>
+                          setNewTicket({
+                            ...newTicket,
+                            redemptionLimit: parseInt(e.target.value) || 1,
+                          })
+                        }
+                        className="border px-3 py-2 rounded-lg text-sm text-zinc-900"
+                        min="1"
+                      />
+                    </label>
+                    <label className="flex flex-col gap-0.5 text-[11px] text-zinc-500">
+                      Valid from (HK date)
                       <input
                         type="date"
                         value={newTicket.validFrom || ""}
                         onChange={(e) =>
                           setNewTicket({ ...newTicket, validFrom: e.target.value })
                         }
-                        className="border px-2 py-1.5 rounded text-sm text-zinc-800"
+                        className="border px-3 py-2 rounded-lg text-sm text-zinc-900"
                       />
                     </label>
-                    <label className="text-xs text-zinc-500 flex flex-col gap-0.5">
-                      Valid to
+                    <label className="flex flex-col gap-0.5 text-[11px] text-zinc-500">
+                      Valid to (HK date)
                       <input
                         type="date"
                         value={newTicket.validTo || ""}
                         onChange={(e) =>
                           setNewTicket({ ...newTicket, validTo: e.target.value })
                         }
-                        className="border px-2 py-1.5 rounded text-sm text-zinc-800"
+                        className="border px-3 py-2 rounded-lg text-sm text-zinc-900"
                       />
                     </label>
-                    <button onClick={addTicketType} className="bg-white border rounded-lg text-sm hover:bg-white/80 col-span-2 md:col-span-1">
-                      + Add Type
-                    </button>
+                    <div className="flex items-end">
+                      <button
+                        type="button"
+                        onClick={addTicketType}
+                        className="w-full bg-white border rounded-lg text-sm py-2 hover:bg-zinc-50 font-medium"
+                      >
+                        + Add ticket type
+                      </button>
+                    </div>
                   </div>
-                  <p className="text-[10px] text-zinc-500 mt-2">
-                    Unique IDs per event. Stock = total tickets for sale (empty = unlimited).
-                    Valid from/to = which calendar day(s) the scanner will accept (HK timezone). Empty = any day.
+                  <p className="text-[10px] text-zinc-500 mt-3 leading-relaxed">
+                    <strong>Type ID</strong> must be unique per event.{" "}
+                    <strong>Stock</strong> = total for sale (empty = unlimited).{" "}
+                    <strong>Scan redemptions</strong> = how many times door can scan one ticket.{" "}
+                    <strong>Valid from/to</strong> = scanner only accepts on those days (HK). Leave empty = any day.
                   </p>
                 </div>
               </div>
