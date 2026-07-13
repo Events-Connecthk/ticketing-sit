@@ -23,6 +23,7 @@ import {
   randomNonce,
   signWithPrivateKey,
   verifyWithPublicKey,
+  publicKeyFingerprint,
   KPAY_SIGN_MODES,
 } from "./kpay-crypto";
 import {
@@ -1167,29 +1168,39 @@ export async function verifyKpayWebhook(
     )
   );
 
-  if (timestamp && nonce && merchantCode) {
+  const ts = String(timestamp).trim();
+  const nn = String(nonce).trim();
+  const mid = String(merchantCode).trim();
+
+  if (ts && nn && mid) {
     for (const uri of pathCandidates) {
+      // Official LF form
       const text = buildOfficialSignatureText({
         method,
         uriWithQuery: uri,
-        timestamp,
-        nonce,
-        merchantCode,
+        timestamp: ts,
+        nonce: nn,
+        merchantCode: mid,
         body: rawBody,
-        // Merchant mode: omit app id unless configured for SP mode
         appId: APP_ID || undefined,
       });
       if (verifyWithPublicKey(text, signature, PLATFORM_PUBLIC_KEY)) {
+        console.log("[KPay] Webhook signature OK", { uri });
         return true;
       }
-      // Also try without app id even if APP_ID set (notify may omit it)
+      // CRLF variant (some gateways)
+      const textCrlf = text.replace(/\n/g, "\r\n");
+      if (verifyWithPublicKey(textCrlf, signature, PLATFORM_PUBLIC_KEY)) {
+        console.log("[KPay] Webhook signature OK (crlf)", { uri });
+        return true;
+      }
       if (APP_ID) {
         const textNoApp = buildOfficialSignatureText({
           method,
           uriWithQuery: uri,
-          timestamp,
-          nonce,
-          merchantCode,
+          timestamp: ts,
+          nonce: nn,
+          merchantCode: mid,
           body: rawBody,
         });
         if (verifyWithPublicKey(textNoApp, signature, PLATFORM_PUBLIC_KEY)) {
@@ -1199,25 +1210,35 @@ export async function verifyKpayWebhook(
     }
   }
 
-  // Legacy: body-only (unlikely for official notify)
+  // Legacy: body-only
   if (verifyWithPublicKey(rawBody, signature, PLATFORM_PUBLIC_KEY)) {
     return true;
   }
 
+  const fp = publicKeyFingerprint(PLATFORM_PUBLIC_KEY);
+  // Local reference fingerprint for secrets/kpay_platform_public.pem (if that file is correct)
+  const expectedLocalHint = "8a9e560422c1ba0b";
+
   if (webhookRelaxed()) {
     console.warn(
-      "[KPay] Webhook signature verify failed — allowing (UAT/relaxed). " +
-        "Fix: set KPAY_PLATFORM_PUBLIC_KEY (or KPAY_PUBLIC_KEY) to the file " +
-        "named like 8521…_kpay_public_key.pem from KPay — NOT 8521…_public_key.pem " +
-        "(merchant public). See KPay minimal-module references/environment-variables.md."
+      "[KPay] Webhook signature verify failed — allowing (UAT/relaxed).",
+      {
+        platformKeyPubSha16: fp,
+        matchesKnownLocalKpayKey: fp === expectedLocalHint,
+        keyBytes: PLATFORM_PUBLIC_KEY.length,
+        tip:
+          fp === expectedLocalHint
+            ? "Key fingerprint matches local kpay public file — string-to-sign or encoding may differ; still safe on UAT relaxed."
+            : "Key fingerprint does NOT match local secrets/kpay_platform_public.pem — re-paste KPAY_PLATFORM_PUBLIC_KEY on Vercel from that file and redeploy.",
+      }
     );
     return true;
   }
 
-  console.warn(
-    "[KPay] Webhook signature verification failed (strict). " +
-      "Need KPay platform public PEM (*kpay_public_key*), not merchant public."
-  );
+  console.warn("[KPay] Webhook signature verification failed (strict).", {
+    platformKeyPubSha16: fp,
+    matchesKnownLocalKpayKey: fp === expectedLocalHint,
+  });
   return false;
 }
 

@@ -16,14 +16,47 @@
 
 import crypto from "crypto";
 
-export function normalizePem(key: string, type: "PRIVATE KEY" | "PUBLIC KEY"): string {
-  const trimmed = key.trim().replace(/\\n/g, "\n");
+export function normalizePem(
+  key: string,
+  type: "PRIVATE KEY" | "PUBLIC KEY" | "RSA PUBLIC KEY" | "CERTIFICATE"
+): string {
+  let trimmed = key.trim().replace(/\\n/g, "\n");
+  // Vercel / dotenv sometimes wrap values in quotes
+  if (
+    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+    (trimmed.startsWith("'") && trimmed.endsWith("'"))
+  ) {
+    trimmed = trimmed.slice(1, -1).trim().replace(/\\n/g, "\n");
+  }
   if (trimmed.includes("BEGIN")) return trimmed;
 
   // Bare base64 — wrap as PKCS#8 / SPKI PEM
   const body = trimmed.replace(/\s+/g, "");
   const lines = body.match(/.{1,64}/g) || [];
   return `-----BEGIN ${type}-----\n${lines.join("\n")}\n-----END ${type}-----`;
+}
+
+/** Safe fingerprint of a public key (no material logged). */
+export function publicKeyFingerprint(publicKeyPem: string): string {
+  try {
+    const candidates = [
+      normalizePem(publicKeyPem, "PUBLIC KEY"),
+      normalizePem(publicKeyPem, "CERTIFICATE"),
+      normalizePem(publicKeyPem, "RSA PUBLIC KEY"),
+    ];
+    for (const pem of candidates) {
+      try {
+        const key = crypto.createPublicKey(pem);
+        const der = key.export({ type: "spki", format: "der" });
+        return crypto.createHash("sha256").update(der).digest("hex").slice(0, 16);
+      } catch {
+        // try next form
+      }
+    }
+    return "unreadable";
+  } catch {
+    return "unreadable";
+  }
 }
 
 export function randomNonce(length = 32): string {
@@ -160,14 +193,25 @@ export function verifyWithPublicKey(
   signatureBase64: string,
   publicKeyPem: string
 ): boolean {
-  try {
-    const key = normalizePem(publicKeyPem, "PUBLIC KEY");
-    const verifier = crypto.createVerify("RSA-SHA256");
-    verifier.update(payload, "utf8");
-    verifier.end();
-    return verifier.verify(key, signatureBase64, "base64");
-  } catch (err) {
-    console.error("[KPay Crypto] verify failed:", err);
-    return false;
+  const sig = String(signatureBase64 || "")
+    .trim()
+    .replace(/\s+/g, "")
+    .replace(/-/g, "+")
+    .replace(/_/g, "/"); // allow URL-safe base64
+  const keyForms = [
+    normalizePem(publicKeyPem, "PUBLIC KEY"),
+    normalizePem(publicKeyPem, "CERTIFICATE"),
+    normalizePem(publicKeyPem, "RSA PUBLIC KEY"),
+  ];
+  for (const key of keyForms) {
+    try {
+      const verifier = crypto.createVerify("RSA-SHA256");
+      verifier.update(payload, "utf8");
+      verifier.end();
+      if (verifier.verify(key, sig, "base64")) return true;
+    } catch {
+      // try next key form
+    }
   }
+  return false;
 }
