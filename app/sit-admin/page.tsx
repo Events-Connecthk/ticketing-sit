@@ -851,10 +851,17 @@ export default function AdminDashboard() {
       }
     } catch (err: any) {
       console.error(err);
-      if (err?.message?.includes('Body exceeded') || err?.digest?.includes('413')) {
-        toast.error("Body size limit error (still 1MB). Stop dev server, run 'Remove-Item -Recurse -Force .next', then 'npm run dev'. Make sure next.config.ts has experimental.serverActions.bodySizeLimit.");
+      const m = String(err?.message || "");
+      if (m.includes("Body exceeded") || err?.digest?.includes("413")) {
+        toast.error(
+          "File too large for server action limit. Try a smaller image or re-crop smaller."
+        );
+      } else if (m.includes("unexpected response") || m.includes("Failed to fetch")) {
+        toast.error(
+          "Server upload failed (session expired or storage not set up). Re-login admin, then ensure Supabase Storage bucket event-assets exists and is public."
+        );
       } else {
-        toast.error("Failed to upload template: " + (err?.message || "unknown error"));
+        toast.error("Failed to upload template: " + (m || "unknown error"));
       }
     }
 

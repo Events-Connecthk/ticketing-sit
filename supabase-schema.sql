@@ -194,6 +194,16 @@ CREATE INDEX IF NOT EXISTS idx_pending_kpay_created ON pending_kpay_payments(cre
 
 ALTER TABLE pending_kpay_payments ENABLE ROW LEVEL SECURITY;
 
+-- =========================================
+-- STORAGE: event banners + ticket templates
+-- =========================================
+-- Vercel cannot write to public/ at runtime. Uploads go to Supabase Storage.
+-- Dashboard: Storage → New bucket → name: event-assets → Public: ON
+-- Or via SQL (if storage schema allows):
+--   insert into storage.buckets (id, name, public) values ('event-assets', 'event-assets', true)
+--     on conflict (id) do update set public = true;
+-- Service role (SUPABASE_SERVICE_ROLE_KEY) bypasses storage RLS for uploads.
+
 -- No anon access — only service_role from server
 DROP POLICY IF EXISTS "Block anon pending kpay" ON pending_kpay_payments;
 CREATE POLICY "Block anon pending kpay"

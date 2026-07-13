@@ -408,52 +408,143 @@ export async function getPurchaseByReference(ref: string): Promise<any> {
   }
 }
 
+const EVENT_ASSETS_BUCKET = "event-assets";
+
 /**
  * Upload event banner or ticket template.
- * Supports images (jpg/png/webp) and PDF (for ticket backgrounds).
- * Saves to public/images/events/
+ * Production (Vercel): Supabase Storage (public bucket) — filesystem is read-only.
+ * Local dev: falls back to public/images/events/ if Storage unavailable.
  */
-export async function uploadEventBanner(formData: FormData): Promise<{ success: boolean; path?: string; error?: string }> {
+export async function uploadEventBanner(
+  formData: FormData
+): Promise<{ success: boolean; path?: string; error?: string }> {
   try {
-    await requireAdmin();
+    try {
+      await requireAdmin();
+    } catch {
+      return {
+        success: false,
+        error: "Admin session expired. Sign out and sign in again, then retry upload.",
+      };
+    }
+
     const file = formData.get("file") as File | null;
     if (!file) {
       return { success: false, error: "No file provided" };
     }
 
-    // Basic validation - images or PDF
     const isImage = file.type.startsWith("image/");
-    const isPdf = file.type === "application/pdf" || (file.name || "").toLowerCase().endsWith(".pdf");
+    const isPdf =
+      file.type === "application/pdf" ||
+      (file.name || "").toLowerCase().endsWith(".pdf");
 
     if (!isImage && !isPdf) {
-      return { success: false, error: "Only image files (JPG/PNG/WEBP) or PDF are allowed" };
+      return {
+        success: false,
+        error: "Only image files (JPG/PNG/WEBP) or PDF are allowed",
+      };
     }
 
-    const maxSize = 10 * 1024 * 1024; // 10MB (PDFs allowed)
+    const maxSize = 10 * 1024 * 1024;
     if (file.size > maxSize) {
       return { success: false, error: "File too large (max 10MB)" };
     }
 
     const slug = (formData.get("slug") as string) || "event";
-    const safeSlug = slug.replace(/[^a-z0-9-]/gi, "-").toLowerCase();
+    const safeSlug = slug.replace(/[^a-z0-9-]/gi, "-").toLowerCase() || "event";
 
     const bytes = await file.arrayBuffer();
     const buffer = Buffer.from(bytes);
 
-    const ext = (file.name.split(".").pop() || "jpg").toLowerCase();
+    let ext = (file.name.split(".").pop() || "jpg").toLowerCase().replace(/[^a-z0-9]/g, "");
+    if (!ext || ext.length > 5) {
+      ext = isPdf ? "pdf" : "jpg";
+    }
     const filename = `${safeSlug}-${Date.now()}.${ext}`;
+    const contentType =
+      file.type ||
+      (isPdf ? "application/pdf" : ext === "png" ? "image/png" : "image/jpeg");
 
-    const uploadDir = path.join(process.cwd(), "public", "images", "events");
+    // --- Prefer Supabase Storage (works on Vercel) ---
+    const supabaseAdmin = getSupabaseAdmin();
+    if (supabaseAdmin) {
+      // Ensure public bucket exists (ignore "already exists")
+      try {
+        const { data: buckets } = await supabaseAdmin.storage.listBuckets();
+        const exists = (buckets || []).some((b) => b.name === EVENT_ASSETS_BUCKET);
+        if (!exists) {
+          const { error: createErr } = await supabaseAdmin.storage.createBucket(
+            EVENT_ASSETS_BUCKET,
+            { public: true, fileSizeLimit: maxSize }
+          );
+          if (createErr) {
+            console.warn(
+              "[uploadEventBanner] createBucket:",
+              createErr.message
+            );
+          }
+        }
+      } catch (e) {
+        console.warn("[uploadEventBanner] list/create bucket:", e);
+      }
+
+      const objectPath = `events/${safeSlug}/${filename}`;
+      const { error: upErr } = await supabaseAdmin.storage
+        .from(EVENT_ASSETS_BUCKET)
+        .upload(objectPath, buffer, {
+          contentType,
+          upsert: true,
+        });
+
+      if (upErr) {
+        console.error("[uploadEventBanner] storage upload:", upErr);
+        // Common: bucket missing / RLS / not public
+        return {
+          success: false,
+          error:
+            `Storage upload failed: ${upErr.message}. ` +
+            `In Supabase → Storage, create a public bucket named "${EVENT_ASSETS_BUCKET}" ` +
+            `(or grant service role upload).`,
+        };
+      }
+
+      const { data: pub } = supabaseAdmin.storage
+        .from(EVENT_ASSETS_BUCKET)
+        .getPublicUrl(objectPath);
+
+      if (!pub?.publicUrl) {
+        return {
+          success: false,
+          error: "Upload succeeded but could not get public URL",
+        };
+      }
+
+      return { success: true, path: pub.publicUrl };
+    }
+
+    // --- Local filesystem fallback (dev only; Vercel has no durable public write) ---
+    if (process.env.VERCEL) {
+      return {
+        success: false,
+        error:
+          "SUPABASE_SERVICE_ROLE_KEY is required for uploads on Vercel (cannot write to public/).",
+      };
+    }
+
+    const uploadDir = path.join(
+      process.cwd(),
+      "public",
+      "images",
+      "events"
+    );
     await mkdir(uploadDir, { recursive: true });
-
     const filePath = path.join(uploadDir, filename);
     await writeFile(filePath, buffer);
-
-    const publicPath = `/images/events/${filename}`;
-    return { success: true, path: publicPath };
+    return { success: true, path: `/images/events/${filename}` };
   } catch (err) {
     console.error("[uploadEventBanner]", err);
-    return { success: false, error: "Failed to save image" };
+    const msg = err instanceof Error ? err.message : "Failed to save image";
+    return { success: false, error: msg };
   }
 }
 
