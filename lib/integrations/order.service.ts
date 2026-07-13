@@ -111,49 +111,78 @@ export async function processSuccessfulPurchase(
 
     console.log("[OrderService] Saving purchase to DB...");
     const savedRecord = await savePurchase(purchaseRecord);
-    console.log("[OrderService] Purchase saved:", savedRecord.id);
+    // Prefer DB order ref if insert was a race/duplicate (23505 → existing row)
+    const finalOrderRef =
+      savedRecord.order_reference || orderReference;
+    if (paymentReference) {
+      processedPaymentRefs.set(paymentReference, finalOrderRef);
+    }
+    console.log(
+      "[OrderService] Purchase saved:",
+      savedRecord.id,
+      finalOrderRef
+    );
 
     // Return success immediately so checkout can redirect to success page
     const successResult = {
       success: true,
-      orderReference,
+      orderReference: finalOrderRef,
       metadata: {
         purchaseId: savedRecord.id,
         emailSent: false,
         pdfGenerated: false,
+        duplicate:
+          Boolean(savedRecord.order_reference) &&
+          savedRecord.order_reference !== orderReference,
       },
     };
 
-    // Fire and forget the heavy parts (PDF + email) so redirect isn't blocked
-    (async () => {
-      try {
-        const baseUrl = (
-          process.env.NEXT_PUBLIC_SITE_URL ||
-          (process.env.VERCEL_PROJECT_PRODUCTION_URL
-            ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL.replace(/^https?:\/\//, "")}`
-            : "") ||
-          "http://localhost:3000"
-        ).replace(/\/$/, "");
-        const downloadUrl = cart.totalAmount > 0 
-          ? `${baseUrl}/${event.slug}/success?ref=${orderReference}&amount=${cart.totalAmount}` 
-          : undefined;
+    // Fire and forget PDF/email only for first insert (not webhook/return race)
+    if (!successResult.metadata.duplicate) {
+      (async () => {
+        try {
+          const baseUrl = (
+            process.env.NEXT_PUBLIC_SITE_URL ||
+            (process.env.VERCEL_PROJECT_PRODUCTION_URL
+              ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL.replace(/^https?:\/\//, "")}`
+              : "") ||
+            "http://localhost:3000"
+          ).replace(/\/$/, "");
+          const downloadUrl =
+            cart.totalAmount > 0
+              ? `${baseUrl}/${event.slug}/success?ref=${finalOrderRef}&amount=${cart.totalAmount}`
+              : undefined;
 
-        console.log("[OrderService] Sending confirmation email (background)...");
-        const emailResult = await sendConfirmationEmail({
-          to: cart.buyer.email,
-          buyerName: cart.buyer.name,
-          event,
-          orderReference: orderReference,
-          totalAmount: cart.totalAmount,
-          currency: cart.currency,
-          ticketCount: ticketUnits.length || totalTickets,
-          downloadUrl,
-        });
-        console.log("[OrderService] Email result (background):", emailResult.success);
-      } catch (bgError) {
-        console.error("[OrderService] Background email error (non-blocking):", bgError);
-      }
-    })();
+          console.log(
+            "[OrderService] Sending confirmation email (background)..."
+          );
+          const emailResult = await sendConfirmationEmail({
+            to: cart.buyer.email,
+            buyerName: cart.buyer.name,
+            event,
+            orderReference: finalOrderRef,
+            totalAmount: cart.totalAmount,
+            currency: cart.currency,
+            ticketCount: ticketUnits.length || totalTickets,
+            downloadUrl,
+          });
+          console.log(
+            "[OrderService] Email result (background):",
+            emailResult.success
+          );
+        } catch (bgError) {
+          console.error(
+            "[OrderService] Background email error (non-blocking):",
+            bgError
+          );
+        }
+      })();
+    } else {
+      console.log(
+        "[OrderService] Skip duplicate email — purchase already existed",
+        finalOrderRef
+      );
+    }
 
     return successResult;
   } catch (error) {

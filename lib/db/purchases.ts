@@ -40,15 +40,29 @@ interface SavePurchaseInput extends Partial<Omit<PurchaseRecord, "id">> {
   id?: string | number; // allow passing id for update operations (e.g. marking redeemed)
 }
 
-export async function savePurchase(input: SavePurchaseInput): Promise<PurchaseRecord> {
+/** Prefer service role on server (webhook/return); fall back to anon for browser. */
+async function getPurchaseWriteClient() {
+  try {
+    const { getSupabaseAdmin } = await import("@/lib/supabase/server");
+    const admin = getSupabaseAdmin();
+    if (admin) return { client: admin, isAdmin: true };
+  } catch {
+    // ignore
+  }
   const client = getSupabase();
+  return client ? { client, isAdmin: false } : null;
+}
+
+export async function savePurchase(input: SavePurchaseInput): Promise<PurchaseRecord> {
+  const write = await getPurchaseWriteClient();
 
   const record: PurchaseRecord = {
     ...(input as any),
     bought_at: input.bought_at || new Date().toISOString(),
   } as PurchaseRecord;
 
-  if (client) {
+  if (write) {
+    const { client, isAdmin } = write;
     const hasExistingId = record.id != null;
 
     if (hasExistingId) {
@@ -82,43 +96,84 @@ export async function savePurchase(input: SavePurchaseInput): Promise<PurchaseRe
       const insertPayload: any = { ...baseRecord };
       delete insertPayload.id; // never send id on insert (let DB generate)
 
-      // Do pure INSERT (no .select()) because anon SELECT is blocked by RLS.
-      // We don't need the DB id back for the public flow (order_reference is used instead).
-      const { error: insertError } = await client
-        .from("purchases")
-        .insert(insertPayload);
-
+      // Admin can insert+select; anon insert only (RLS blocks select)
       let data: any = null;
-      let error = insertError;
+      let error: any = null;
 
-      if (insertError && insertError.code === 'PGRST204' && (insertError.message || '').includes('column')) {
-        // Graceful fallback for missing columns
-        console.warn("[DB] Supabase schema missing new purchase columns (applied_discount_code etc). Retrying without them. Run ALTER from supabase-schema.sql.");
+      if (isAdmin) {
+        const res = await client
+          .from("purchases")
+          .insert(insertPayload)
+          .select()
+          .single();
+        data = res.data;
+        error = res.error;
+      } else {
+        const res = await client.from("purchases").insert(insertPayload);
+        error = res.error;
+        if (!error) data = { ...insertPayload };
+      }
+
+      if (error && error.code === "PGRST204" && (error.message || "").includes("column")) {
+        console.warn(
+          "[DB] Supabase schema missing new purchase columns. Retrying without discount fields."
+        );
         const safePayload = { ...insertPayload };
         delete safePayload.applied_discount_code;
         delete safePayload.discount_amount;
-
-        const { error: retryError } = await client
-          .from("purchases")
-          .insert(safePayload);
-
-        error = retryError;
-
-        // We still don't have data, but insert succeeded (or not)
-        if (!retryError) {
-          data = { ...insertPayload }; // use what we sent
+        if (isAdmin) {
+          const retry = await client
+            .from("purchases")
+            .insert(safePayload)
+            .select()
+            .single();
+          data = retry.data;
+          error = retry.error;
+        } else {
+          const retry = await client.from("purchases").insert(safePayload);
+          error = retry.error;
+          if (!error) data = { ...safePayload };
         }
-      } else if (!insertError) {
-        data = { ...insertPayload };
+      }
+
+      // Race: webhook + browser return both insert same payment_reference
+      if (error && error.code === "23505" && insertPayload.payment_reference) {
+        console.log(
+          "[DB] Duplicate payment_reference — loading existing purchase (idempotent)",
+          insertPayload.payment_reference
+        );
+        const existing = await getPurchaseByPaymentReference(
+          String(insertPayload.payment_reference)
+        );
+        if (existing) {
+          if (
+            !memoryStore.some(
+              (m) => m.payment_reference === existing.payment_reference
+            )
+          ) {
+            memoryStore.push(existing);
+          }
+          return existing;
+        }
       }
 
       if (error) {
         console.error("[DB] Supabase insert failed for purchase:", error);
-        console.warn("[DB] Purchase saved to memory only (check RLS on 'purchases' table).");
+        console.warn(
+          "[DB] Purchase saved to memory only (check RLS on 'purchases' table)."
+        );
       } else if (data) {
-        // Keep in memory as backup
-        const withId: PurchaseRecord = { ...data, id: data.id ?? memoryStore.length + 1 } as PurchaseRecord;
-        if (!memoryStore.some(m => m.email === withId.email && m.bought_at === withId.bought_at)) {
+        const withId: PurchaseRecord = {
+          ...data,
+          id: data.id ?? memoryStore.length + 1,
+        } as PurchaseRecord;
+        if (
+          !memoryStore.some(
+            (m) =>
+              m.payment_reference &&
+              m.payment_reference === withId.payment_reference
+          )
+        ) {
           memoryStore.push(withId);
         }
         return withId;
