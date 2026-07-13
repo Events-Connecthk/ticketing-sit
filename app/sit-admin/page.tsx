@@ -1146,9 +1146,16 @@ export default function AdminDashboard() {
       redemptionLimit: newTicket.redemptionLimit || 1,
       validFrom: newTicket.validFrom?.trim() || undefined,
       validTo: newTicket.validTo?.trim() || undefined,
-      description: "",
+      description: newTicket.description || "",
       enabled: newTicket.enabled !== false,
+      discounts: newTicket.discounts
+        ? newTicket.discounts.map((d) => ({ ...d }))
+        : undefined,
     };
+    if (ticketTypesForm.some((x) => x.id === t.id)) {
+      alert(`Ticket ID "${t.id}" already exists. Choose another ID.`);
+      return;
+    }
     setTicketTypesForm([...ticketTypesForm, t]);
     setNewTicket({
       id: "",
@@ -1161,6 +1168,8 @@ export default function AdminDashboard() {
       validFrom: "",
       validTo: "",
       enabled: true,
+      discounts: undefined,
+      description: "",
     });
   }
 
@@ -1169,36 +1178,49 @@ export default function AdminDashboard() {
   }
 
   /**
-   * Duplicate a ticket type: same price/stock/redemptions/discounts.
-   * Name and valid dates are left for the admin to set (name prefilled as Copy of …).
+   * Load a ticket type into the “Add new” form (not added to the list yet).
+   * Copies price/stock/redemptions/discounts; leaves name + valid dates empty for you.
    */
   function duplicateTicketType(id: string) {
     const src = ticketTypesForm.find((t) => t.id === id);
     if (!src) return;
 
     const used = new Set(ticketTypesForm.map((t) => t.id));
-    let newId = `${src.id}-copy`;
+    let suggestId = `${src.id}-copy`;
     let n = 2;
-    while (used.has(newId)) {
-      newId = `${src.id}-copy-${n}`;
+    while (used.has(suggestId)) {
+      suggestId = `${src.id}-copy-${n}`;
       n += 1;
     }
 
-    const dup: TicketType = {
-      ...src,
-      id: newId,
-      name: `Copy of ${src.name}`,
-      validFrom: undefined,
-      validTo: undefined,
+    setNewTicket({
+      id: suggestId,
+      name: "", // you set the name
+      price: src.price,
+      currency: src.currency || "HKD",
+      maxPerOrder: src.maxPerOrder ?? 6,
+      quantityAvailable: src.quantityAvailable,
+      redemptionLimit: src.redemptionLimit ?? 1,
+      validFrom: "",
+      validTo: "",
+      enabled: src.enabled !== false,
       discounts: (src.discounts || []).map((d) => ({
         ...d,
         id: `${d.id}-dup-${Date.now().toString(36)}`,
       })),
-    };
+      description: src.description || "",
+    });
 
-    setTicketTypesForm([...ticketTypesForm, dup]);
-    toast.message("Ticket type duplicated", {
-      description: "Edit name and valid dates, then Save Event.",
+    toast.message("Ticket details copied into the form below", {
+      description:
+        "Enter a name (and ID if you want), set valid dates if needed, then click “+ Add ticket type”.",
+    });
+
+    // Scroll to add form
+    requestAnimationFrame(() => {
+      document
+        .getElementById("add-ticket-type-form")
+        ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
     });
   }
 
@@ -2328,9 +2350,9 @@ export default function AdminDashboard() {
                             type="button"
                             onClick={() => duplicateTicketType(t.id)}
                             className="text-xs px-2 py-1.5 border rounded hover:bg-blue-50 text-blue-700 inline-flex items-center gap-1"
-                            title="Duplicate (same price, stock, discounts; set name & dates)"
+                            title="Copy into form below (not added until you click Add)"
                           >
-                            <Copy className="h-3 w-3" /> Duplicate
+                            <Copy className="h-3 w-3" /> Copy to form
                           </button>
                           <button
                             type="button"
@@ -2365,9 +2387,21 @@ export default function AdminDashboard() {
                   </div>
                 )}
 
-                {/* Add new ticket type */}
-                <div className="border rounded-xl p-4 bg-zinc-50">
-                  <p className="text-xs font-medium text-zinc-700 mb-3">Add new ticket type</p>
+                {/* Add new ticket type (also used when duplicating) */}
+                <div
+                  id="add-ticket-type-form"
+                  className="border rounded-xl p-4 bg-zinc-50"
+                >
+                  <p className="text-xs font-medium text-zinc-700 mb-1">
+                    Add new ticket type
+                  </p>
+                  {(newTicket.discounts?.length || 0) > 0 && (
+                    <p className="text-[11px] text-blue-700 mb-2">
+                      Copied from another type — including{" "}
+                      {newTicket.discounts!.length} discount rule(s). Fill in{" "}
+                      <strong>name</strong> (and dates if needed), then add.
+                    </p>
+                  )}
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                     <label className="flex flex-col gap-0.5 text-[11px] text-zinc-500">
                       Type ID (unique, e.g. d-1)
