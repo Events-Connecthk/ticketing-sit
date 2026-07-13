@@ -800,11 +800,92 @@ export default function AdminDashboard() {
     setBannerCropSrc(null);
   }
 
-  /** Prefer API route (reliable for PDF + larger files on Vercel). */
+  /**
+   * Upload admin assets.
+   * - Small images: can go through server
+   * - PDFs / larger files: signed URL → browser uploads straight to Supabase (avoids Vercel 413 ~4.5MB)
+   */
   async function uploadAdminAsset(
     file: File
   ): Promise<{ success: boolean; path?: string; error?: string }> {
     const slugForName = eventForm.slug || editingEvent?.slug || "event";
+    const isPdf =
+      file.type === "application/pdf" ||
+      file.name.toLowerCase().endsWith(".pdf");
+    // Prefer signed direct upload for PDFs and anything over ~3MB
+    const useSigned = isPdf || file.size > 3 * 1024 * 1024;
+
+    if (useSigned) {
+      try {
+        const contentType =
+          file.type ||
+          (isPdf
+            ? "application/pdf"
+            : file.name.toLowerCase().endsWith(".png")
+              ? "image/png"
+              : "image/jpeg");
+
+        const signRes = await fetch("/api/admin/upload", {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            mode: "sign",
+            filename: file.name || (isPdf ? "template.pdf" : "banner.jpg"),
+            contentType,
+            slug: slugForName,
+            size: file.size,
+          }),
+        });
+
+        const signData = await signRes.json().catch(() => ({}));
+        if (!signRes.ok || !signData.success) {
+          return {
+            success: false,
+            error:
+              signData.error ||
+              `Could not start upload (HTTP ${signRes.status})`,
+          };
+        }
+
+        // Direct to Supabase — does not pass through Vercel body limit
+        const putRes = await fetch(signData.signedUrl as string, {
+          method: "PUT",
+          headers: {
+            "Content-Type": signData.contentType || contentType,
+          },
+          body: file,
+        });
+
+        if (!putRes.ok) {
+          const t = await putRes.text().catch(() => "");
+          console.error("[upload] signed PUT failed", putRes.status, t);
+          return {
+            success: false,
+            error:
+              `Direct storage upload failed (HTTP ${putRes.status}). ` +
+              `Allow application/pdf on bucket event-assets if this is a PDF.`,
+          };
+        }
+
+        if (!signData.publicUrl) {
+          return {
+            success: false,
+            error: "Upload OK but missing public URL",
+          };
+        }
+        return { success: true, path: signData.publicUrl as string };
+      } catch (err) {
+        console.error(err);
+        return {
+          success: false,
+          error:
+            err instanceof Error ? err.message : "Signed upload failed",
+        };
+      }
+    }
+
+    // Small non-PDF: multipart through our API
     const formData = new FormData();
     formData.append("file", file);
     formData.append("slug", slugForName);
@@ -815,10 +896,23 @@ export default function AdminDashboard() {
       credentials: "same-origin",
     });
 
-    let data: { success?: boolean; path?: string; error?: string } = {};
+    let data: {
+      success?: boolean;
+      path?: string;
+      error?: string;
+      code?: string;
+    } = {};
     try {
       data = await res.json();
     } catch {
+      // 413 often returns empty/HTML body
+      if (res.status === 413) {
+        return {
+          success: false,
+          error:
+            "File too large for server hop (Vercel 413). Retry — large files should use direct storage upload.",
+        };
+      }
       return {
         success: false,
         error: `Upload failed (HTTP ${res.status}). Sign in again or check storage.`,

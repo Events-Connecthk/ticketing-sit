@@ -1,14 +1,58 @@
 /**
  * Upload event banners / ticket templates to Supabase Storage.
- * Shared by server actions and /api/admin/upload (PDF-friendly).
+ * Shared by server actions and /api/admin/upload.
  */
 import { writeFile, mkdir } from "fs/promises";
 import path from "path";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { getSupabaseAdmin } from "@/lib/supabase/server";
 
 export const EVENT_ASSETS_BUCKET = "event-assets";
+const MAX_SIZE = 10 * 1024 * 1024;
+
+const ALLOWED_MIME = [
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "image/gif",
+  "application/pdf",
+];
 
 export type UploadResult = { success: boolean; path?: string; error?: string };
+
+export async function ensureEventAssetsBucket(
+  supabaseAdmin: SupabaseClient
+): Promise<void> {
+  try {
+    const { data: buckets } = await supabaseAdmin.storage.listBuckets();
+    const exists = (buckets || []).some((b) => b.name === EVENT_ASSETS_BUCKET);
+    if (!exists) {
+      const { error: createErr } = await supabaseAdmin.storage.createBucket(
+        EVENT_ASSETS_BUCKET,
+        {
+          public: true,
+          fileSizeLimit: MAX_SIZE,
+          allowedMimeTypes: ALLOWED_MIME,
+        }
+      );
+      if (createErr) {
+        console.warn("[event-assets] createBucket:", createErr.message);
+      }
+    } else {
+      try {
+        await supabaseAdmin.storage.updateBucket(EVENT_ASSETS_BUCKET, {
+          public: true,
+          fileSizeLimit: MAX_SIZE,
+          allowedMimeTypes: ALLOWED_MIME,
+        });
+      } catch {
+        // ignore
+      }
+    }
+  } catch (e) {
+    console.warn("[event-assets] bucket ensure:", e);
+  }
+}
 
 export async function uploadEventAsset(opts: {
   bytes: ArrayBuffer | Uint8Array;
@@ -16,13 +60,12 @@ export async function uploadEventAsset(opts: {
   contentType: string;
   slug: string;
 }): Promise<UploadResult> {
-  const maxSize = 10 * 1024 * 1024;
   const data =
     opts.bytes instanceof Uint8Array
       ? opts.bytes
       : new Uint8Array(opts.bytes);
 
-  if (data.byteLength > maxSize) {
+  if (data.byteLength > MAX_SIZE) {
     return { success: false, error: "File too large (max 10MB)" };
   }
 
@@ -52,49 +95,7 @@ export async function uploadEventAsset(opts: {
 
   const supabaseAdmin = getSupabaseAdmin();
   if (supabaseAdmin) {
-    try {
-      const { data: buckets } = await supabaseAdmin.storage.listBuckets();
-      const exists = (buckets || []).some((b) => b.name === EVENT_ASSETS_BUCKET);
-      if (!exists) {
-        const { error: createErr } = await supabaseAdmin.storage.createBucket(
-          EVENT_ASSETS_BUCKET,
-          {
-            public: true,
-            fileSizeLimit: maxSize,
-            // Allow images + PDF (do not restrict to images only)
-            allowedMimeTypes: [
-              "image/jpeg",
-              "image/png",
-              "image/webp",
-              "image/gif",
-              "application/pdf",
-            ],
-          }
-        );
-        if (createErr) {
-          console.warn("[event-assets] createBucket:", createErr.message);
-        }
-      } else {
-        // Ensure PDF is allowed if bucket was created image-only
-        try {
-          await supabaseAdmin.storage.updateBucket(EVENT_ASSETS_BUCKET, {
-            public: true,
-            fileSizeLimit: maxSize,
-            allowedMimeTypes: [
-              "image/jpeg",
-              "image/png",
-              "image/webp",
-              "image/gif",
-              "application/pdf",
-            ],
-          });
-        } catch {
-          // ignore — older projects may not allow update
-        }
-      }
-    } catch (e) {
-      console.warn("[event-assets] bucket ensure:", e);
-    }
+    await ensureEventAssetsBucket(supabaseAdmin);
 
     const objectPath = `events/${safeSlug}/${storedName}`;
     const { error: upErr } = await supabaseAdmin.storage
@@ -131,12 +132,10 @@ export async function uploadEventAsset(opts: {
   if (process.env.VERCEL) {
     return {
       success: false,
-      error:
-        "SUPABASE_SERVICE_ROLE_KEY is required for uploads on Vercel.",
+      error: "SUPABASE_SERVICE_ROLE_KEY is required for uploads on Vercel.",
     };
   }
 
-  // Local filesystem fallback
   const uploadDir = path.join(process.cwd(), "public", "images", "events");
   await mkdir(uploadDir, { recursive: true });
   const filePath = path.join(uploadDir, storedName);
