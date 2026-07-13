@@ -4,16 +4,51 @@ import { writeFile, mkdir } from "fs/promises";
 import path from "path";
 import { getSupabaseAdmin } from "@/lib/supabase/server";
 import { EventConfig, PurchaseRecord } from "@/types";
+import {
+  clearAdminSession,
+  createAdminSession,
+  getExpectedAdminPassword,
+  isAdminSessionValid,
+  requireAdmin,
+  safeEqual,
+} from "@/lib/security/admin-session";
+import { checkRateLimit } from "@/lib/security/rate-limit";
 
-// Server-side admin password verification.
-// The secret lives only on the server (process.env.ADMIN_PASSWORD).
-// Never exposed to client bundle.
-export async function verifyAdminPassword(inputPassword: string): Promise<boolean> {
-  const expected =
-    process.env.ADMIN_PASSWORD ||
-    process.env.NEXT_PUBLIC_ADMIN_PASSWORD ||
-    "sit-admin-2026";
-  return inputPassword === expected;
+/**
+ * Login: verify password (rate-limited) and set httpOnly session cookie.
+ * Do not use NEXT_PUBLIC_* for the real password.
+ */
+export async function verifyAdminPassword(
+  inputPassword: string
+): Promise<boolean> {
+  const rl = checkRateLimit("admin-login", { limit: 8, windowMs: 15 * 60 * 1000 });
+  if (!rl.ok) {
+    console.warn("[Admin] Login rate limited");
+    return false;
+  }
+
+  const expected = getExpectedAdminPassword();
+  if (!expected) {
+    console.error(
+      "[Admin] ADMIN_PASSWORD is not set. Refusing login in production-safe mode."
+    );
+    return false;
+  }
+
+  const ok = safeEqual(String(inputPassword || ""), expected);
+  if (ok) {
+    await createAdminSession();
+  }
+  return ok;
+}
+
+/** Restore UI login state after refresh if cookie still valid. */
+export async function checkAdminSession(): Promise<boolean> {
+  return isAdminSessionValid();
+}
+
+export async function logoutAdmin(): Promise<void> {
+  await clearAdminSession();
 }
 
 function mapRowToEventConfig(data: any): EventConfig {
@@ -77,6 +112,7 @@ export async function getEventTicketSoldCounts(
  */
 export async function adminGetAllEvents(): Promise<EventConfig[]> {
   try {
+    await requireAdmin();
     const supabaseAdmin = getSupabaseAdmin();
     if (!supabaseAdmin) {
       const { getAllEvents } = await import("@/lib/db/events");
@@ -103,6 +139,7 @@ export async function adminGetAllEvents(): Promise<EventConfig[]> {
  */
 export async function adminSaveEvent(event: EventConfig): Promise<EventConfig | null> {
   try {
+    await requireAdmin();
     const cleanEvent = {
       ...event,
       slug: event.slug.toLowerCase().trim(),
@@ -186,6 +223,7 @@ export async function adminSaveEvent(event: EventConfig): Promise<EventConfig | 
  */
 export async function adminDeleteEvent(slug: string): Promise<boolean> {
   try {
+    await requireAdmin();
     const supabaseAdmin = getSupabaseAdmin();
     if (!supabaseAdmin) return false;
 
@@ -210,6 +248,7 @@ export async function adminGetAllPurchases(filters?: {
   search?: string;
 }): Promise<PurchaseRecord[]> {
   try {
+    await requireAdmin();
     const supabaseAdmin = getSupabaseAdmin();
     if (!supabaseAdmin) return [];
 
@@ -248,6 +287,7 @@ export async function adminGetAllPurchases(filters?: {
  */
 export async function adminSavePurchase(input: Partial<PurchaseRecord> & { id?: string | number }): Promise<PurchaseRecord | null> {
   try {
+    await requireAdmin();
     const hasId = input.id != null;
 
     const supabaseAdmin = getSupabaseAdmin();
@@ -322,6 +362,13 @@ export async function getPurchaseByReference(ref: string): Promise<any> {
   if (!ref || ref === "N/A") return null;
   const r = ref.trim();
 
+  // Public scan page — soft rate limit only (not admin-gated)
+  const rl = checkRateLimit(`public-lookup:${r.slice(0, 32)}`, {
+    limit: 60,
+    windowMs: 60 * 1000,
+  });
+  if (!rl.ok) return null;
+
   const { purchaseMatchesRef } = await import("@/lib/tickets/serials");
 
   const supabaseAdmin = getSupabaseAdmin();
@@ -368,6 +415,7 @@ export async function getPurchaseByReference(ref: string): Promise<any> {
  */
 export async function uploadEventBanner(formData: FormData): Promise<{ success: boolean; path?: string; error?: string }> {
   try {
+    await requireAdmin();
     const file = formData.get("file") as File | null;
     if (!file) {
       return { success: false, error: "No file provided" };

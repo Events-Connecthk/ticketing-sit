@@ -402,6 +402,23 @@ export default function AdminDashboard() {
     }
   }, [isAuthenticated, activeTab]);
 
+  // Restore session cookie after refresh (httpOnly cookie set by server)
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const { checkAdminSession } = await import("./actions");
+        const ok = await checkAdminSession();
+        if (!cancelled && ok) setIsAuthenticated(true);
+      } catch {
+        /* ignore */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   // Check Supabase config once authenticated
   useEffect(() => {
     if (isAuthenticated) {
@@ -419,13 +436,21 @@ export default function AdminDashboard() {
       setIsAuthenticated(true);
       setPassword("");
     } else {
-      alert("Incorrect password");
+      alert(
+        "Incorrect password or login temporarily locked. Use ADMIN_PASSWORD from Vercel/env (not the public demo password)."
+      );
     }
   }
 
   // Stop camera when signing out
-  function handleSignOut() {
+  async function handleSignOut() {
     stopCameraScanner();
+    try {
+      const { logoutAdmin } = await import("./actions");
+      await logoutAdmin();
+    } catch {
+      /* ignore */
+    }
     setIsAuthenticated(false);
   }
 

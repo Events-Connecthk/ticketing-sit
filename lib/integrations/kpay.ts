@@ -1021,8 +1021,13 @@ export async function confirmKpayPayment(
 
   const requireApi = process.env.KPAY_REQUIRE_API_CONFIRM === "true";
 
-  // ONLY safe non-webhook path: user explicitly tapped “I paid”.
-  if (userConfirmedPaid && !requireApi) {
+  // Manual “I paid” only on UAT/sandbox (or explicit opt-in). Never on real PROD host by default.
+  const allowManualPaid =
+    process.env.KPAY_ALLOW_MANUAL_PAID === "true" ||
+    isSandboxApi() ||
+    !isProduction();
+
+  if (userConfirmedPaid && !requireApi && allowManualPaid) {
     console.warn("[KPay] USER confirmed paid — finalizing", paymentId);
     if (pending) await markPendingPaid(paymentId);
     return {
@@ -1031,8 +1036,17 @@ export async function confirmKpayPayment(
       outcome: "paid",
     };
   }
+  if (userConfirmedPaid && !allowManualPaid) {
+    console.warn("[KPay] Manual paid blocked on PROD — need webhook/order API");
+    return {
+      success: false,
+      outcome: "unknown",
+      error:
+        "Payment not confirmed by KPay yet. Wait a moment and refresh, or contact support with your session id.",
+    };
+  }
 
-  if (process.env.KPAY_AUTO_CONFIRM_RETURN === "true" && !requireApi) {
+  if (process.env.KPAY_AUTO_CONFIRM_RETURN === "true" && !requireApi && allowManualPaid) {
     console.warn("[KPay] KPAY_AUTO_CONFIRM_RETURN=true — finalizing", paymentId);
     if (pending) await markPendingPaid(paymentId);
     return {
@@ -1068,12 +1082,21 @@ function isSandboxApi(): boolean {
 }
 
 function webhookRelaxed(): boolean {
-  // Sandbox + Day-1: allow missing/wrong signature so notify can complete
-  return (
-    process.env.KPAY_WEBHOOK_RELAXED === "true" ||
-    isSandboxApi() ||
-    !isProduction()
-  );
+  // Explicit force-on
+  if (process.env.KPAY_WEBHOOK_RELAXED === "true") return true;
+  // Explicit force-off (recommended once KPay platform public key is set)
+  if (process.env.KPAY_WEBHOOK_RELAXED === "false") return false;
+  // Never relax against real PROD KPay host
+  const base = (process.env.KPAY_API_BASE_URL || API_BASE || "").toLowerCase();
+  if (
+    base.includes("payment.kpay-group.com") &&
+    !base.includes("payment.uat") &&
+    !base.includes("sandbox")
+  ) {
+    return false;
+  }
+  // UAT / local: allow soft verify until platform public key is confirmed
+  return isSandboxApi() || !isProduction();
 }
 
 /**

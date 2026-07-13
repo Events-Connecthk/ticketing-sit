@@ -9,6 +9,10 @@ import {
   recordWebhookPaid,
 } from "@/lib/integrations/pending-payments";
 import { getPurchaseByPaymentReference } from "@/lib/db/purchases";
+import {
+  checkRateLimit,
+  clientIpFromHeaders,
+} from "@/lib/security/rate-limit";
 
 /**
  * KPay async notification (webhook)
@@ -126,6 +130,19 @@ function extractPaymentFields(body: any): {
 
 export async function POST(request: NextRequest) {
   try {
+    const ip = clientIpFromHeaders(request.headers);
+    const rl = checkRateLimit(`kpay-webhook:${ip}`, {
+      limit: 120,
+      windowMs: 60 * 1000,
+    });
+    if (!rl.ok) {
+      console.warn("[KPay Webhook] Rate limited", { ip, retry: rl.retryAfterSec });
+      return NextResponse.json(
+        { error: "Too many requests" },
+        { status: 429, headers: { "Retry-After": String(rl.retryAfterSec) } }
+      );
+    }
+
     const rawText = await request.text();
     let body: any = {};
     try {
