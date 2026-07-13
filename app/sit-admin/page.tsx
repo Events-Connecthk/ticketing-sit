@@ -800,16 +800,43 @@ export default function AdminDashboard() {
     setBannerCropSrc(null);
   }
 
-  async function uploadCroppedBanner(file: File) {
+  /** Prefer API route (reliable for PDF + larger files on Vercel). */
+  async function uploadAdminAsset(
+    file: File
+  ): Promise<{ success: boolean; path?: string; error?: string }> {
     const slugForName = eventForm.slug || editingEvent?.slug || "event";
     const formData = new FormData();
     formData.append("file", file);
     formData.append("slug", slugForName);
 
-    try {
-      const { uploadEventBanner } = await import("./actions");
-      const result = await uploadEventBanner(formData);
+    const res = await fetch("/api/admin/upload", {
+      method: "POST",
+      body: formData,
+      credentials: "same-origin",
+    });
 
+    let data: { success?: boolean; path?: string; error?: string } = {};
+    try {
+      data = await res.json();
+    } catch {
+      return {
+        success: false,
+        error: `Upload failed (HTTP ${res.status}). Sign in again or check storage.`,
+      };
+    }
+
+    if (!res.ok || !data.success) {
+      return {
+        success: false,
+        error: data.error || `Upload failed (HTTP ${res.status})`,
+      };
+    }
+    return { success: true, path: data.path };
+  }
+
+  async function uploadCroppedBanner(file: File) {
+    try {
+      const result = await uploadAdminAsset(file);
       if (result.success && result.path) {
         setEventForm((prev) => ({ ...prev, image: result.path! }));
         toast.success("Banner cropped & uploaded");
@@ -828,21 +855,17 @@ export default function AdminDashboard() {
     if (!file) return;
 
     if (file.size > 10 * 1024 * 1024) {
-      toast.error("Template too large (max 10MB for image or PDF) - the file you selected is " + (file.size / (1024*1024)).toFixed(1) + "MB");
+      toast.error(
+        "Template too large (max 10MB) — file is " +
+          (file.size / (1024 * 1024)).toFixed(1) +
+          "MB"
+      );
       e.target.value = "";
       return;
     }
 
-    const slugForName = eventForm.slug || editingEvent?.slug || "event";
-
-    const formData = new FormData();
-    formData.append("file", file);
-    formData.append("slug", slugForName);
-
     try {
-      const { uploadEventBanner } = await import("./actions");
-      const result = await uploadEventBanner(formData);
-
+      const result = await uploadAdminAsset(file);
       if (result.success && result.path) {
         setEventForm((prev) => ({ ...prev, ticketTemplate: result.path! }));
         toast.success("Ticket template background uploaded");
@@ -851,18 +874,9 @@ export default function AdminDashboard() {
       }
     } catch (err: any) {
       console.error(err);
-      const m = String(err?.message || "");
-      if (m.includes("Body exceeded") || err?.digest?.includes("413")) {
-        toast.error(
-          "File too large for server action limit. Try a smaller image or re-crop smaller."
-        );
-      } else if (m.includes("unexpected response") || m.includes("Failed to fetch")) {
-        toast.error(
-          "Server upload failed (session expired or storage not set up). Re-login admin, then ensure Supabase Storage bucket event-assets exists and is public."
-        );
-      } else {
-        toast.error("Failed to upload template: " + (m || "unknown error"));
-      }
+      toast.error(
+        "Failed to upload template: " + (err?.message || "unknown error")
+      );
     }
 
     e.target.value = "";
