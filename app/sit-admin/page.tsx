@@ -91,7 +91,12 @@ export default function AdminDashboard() {
   const [isScanningCamera, setIsScanningCamera] = useState(false);
   const videoRef = React.useRef<HTMLVideoElement>(null);
   const canvasRef = React.useRef<HTMLCanvasElement>(null);
-  const scanIntervalRef = React.useRef<any>(null);
+  const scanIntervalRef = React.useRef<ReturnType<typeof setInterval> | null>(
+    null
+  );
+  /** Prevents double-fire / stale scanRef blocking 2nd+ QR auto-redeem */
+  const lastHandledQrRef = React.useRef<string>("");
+  const scanBusyRef = React.useRef(false);
 
   async function loadPurchases() {
     setLoading(true);
@@ -372,29 +377,37 @@ export default function AdminDashboard() {
 
   // ===== Camera QR Scanner (only available to logged-in admins) =====
   async function startCameraScanner() {
+    // Allow next QR even if same serial as previous (show fully-redeemed / wrong-date)
+    lastHandledQrRef.current = "";
+    scanBusyRef.current = false;
     setIsScanningCamera(true);
-    setScanMessage("Starting camera... Point at a ticket QR code.");
-    setScanResult(null);
+    setScanFeedback(
+      "Starting camera… Point at a ticket QR. Each scan auto check-in (or shows invalid reason).",
+      "info"
+    );
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "environment" } // prefer back camera
+        video: { facingMode: "environment" }, // prefer back camera
       });
 
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
         await videoRef.current.play();
 
-        // Start decoding loop
         if (scanIntervalRef.current) clearInterval(scanIntervalRef.current);
 
+        // Read refs (not React state) so 2nd+ scans are not blocked by stale scanRef
         scanIntervalRef.current = setInterval(() => {
           scanQRFromVideo();
-        }, 300); // check ~3x per second
+        }, 300);
       }
     } catch (err) {
       console.error("Camera error:", err);
-      setScanMessage("Could not access camera. Use manual entry instead (or grant camera permission).");
+      setScanFeedback(
+        "Could not access camera. Use manual entry instead (or grant camera permission).",
+        "error"
+      );
       setIsScanningCamera(false);
     }
   }
@@ -406,13 +419,15 @@ export default function AdminDashboard() {
     }
     if (videoRef.current && videoRef.current.srcObject) {
       const tracks = (videoRef.current.srcObject as MediaStream).getTracks();
-      tracks.forEach(t => t.stop());
+      tracks.forEach((t) => t.stop());
       videoRef.current.srcObject = null;
     }
     setIsScanningCamera(false);
   }
 
   function scanQRFromVideo() {
+    if (scanBusyRef.current) return;
+
     const video = videoRef.current;
     const canvas = canvasRef.current;
     if (!video || !canvas || video.readyState !== video.HAVE_ENOUGH_DATA) return;
@@ -427,28 +442,37 @@ export default function AdminDashboard() {
     const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
     const code = jsQR(imageData.data, imageData.width, imageData.height);
 
-    if (code && code.data) {
-      // Extract ref from URL or raw value
-      let extractedRef = code.data;
-      try {
-        const url = new URL(code.data, window.location.origin);
-        const refParam = url.searchParams.get("ref");
-        if (refParam) extractedRef = refParam;
-      } catch {
-        // not a full URL, treat the data as the ref
-      }
+    if (!code?.data) return;
 
-      if (extractedRef && extractedRef !== scanRef) {
-        setScanRef(extractedRef);
-        stopCameraScanner();
-        setScanFeedback(`QR detected: ${extractedRef}. Checking in...`, "info");
-        // Door workflow: redeem (includes date + limit checks), then refresh
-        void (async () => {
-          await redeemTicket(extractedRef);
-          await loadPurchases();
-        })();
-      }
+    let extractedRef = code.data.trim();
+    try {
+      const url = new URL(code.data, window.location.origin);
+      const refParam = url.searchParams.get("ref");
+      if (refParam) extractedRef = refParam.trim();
+    } catch {
+      // raw ref
     }
+
+    if (!extractedRef) return;
+    // Ignore same code in consecutive frames (but allow after Start Camera again)
+    if (extractedRef === lastHandledQrRef.current) return;
+
+    lastHandledQrRef.current = extractedRef;
+    scanBusyRef.current = true;
+
+    setScanRef(extractedRef);
+    stopCameraScanner(); // same as first scan — close camera every time
+    setScanFeedback(`QR detected: ${extractedRef}. Checking in…`, "info");
+
+    void (async () => {
+      try {
+        // Always attempt redeem; redeemTicket shows invalid + reason if not allowed
+        await redeemTicket(extractedRef);
+        await loadPurchases();
+      } finally {
+        scanBusyRef.current = false;
+      }
+    })();
   }
 
   // Reload purchases when viewing purchases or attendance
