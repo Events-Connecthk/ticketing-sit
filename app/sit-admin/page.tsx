@@ -16,6 +16,7 @@ import * as XLSX from "xlsx";
 import { Download, Search, RefreshCw, Plus, Edit2, Trash2, ToggleLeft, ToggleRight } from "lucide-react";
 import { toast } from "sonner";
 import { formatHkDateTime, formatHkTime } from "@/lib/time/hk";
+import { BannerCropModal } from "@/components/admin/BannerCropModal";
 
 /**
  * Admin Dashboard
@@ -769,13 +770,38 @@ export default function AdminDashboard() {
     setEndTime("");
   }
 
-  // Handle banner image file upload (saves via server action to public/images/events/)
-  async function handleBannerImageUpload(e: React.ChangeEvent<HTMLInputElement>) {
+  // Banner crop modal state
+  const [bannerCropSrc, setBannerCropSrc] = useState<string | null>(null);
+  const [bannerCropName, setBannerCropName] = useState("banner.jpg");
+
+  // Pick file → open crop UI (does not upload until Apply)
+  function handleBannerImageUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      toast.error("Please choose an image file (JPG/PNG/WEBP)");
+      e.target.value = "";
+      return;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      toast.error("Image too large (max 10MB)");
+      e.target.value = "";
+      return;
+    }
+    if (bannerCropSrc) URL.revokeObjectURL(bannerCropSrc);
+    const url = URL.createObjectURL(file);
+    setBannerCropSrc(url);
+    setBannerCropName(file.name || "banner.jpg");
+    e.target.value = "";
+  }
 
+  function closeBannerCrop() {
+    if (bannerCropSrc) URL.revokeObjectURL(bannerCropSrc);
+    setBannerCropSrc(null);
+  }
+
+  async function uploadCroppedBanner(file: File) {
     const slugForName = eventForm.slug || editingEvent?.slug || "event";
-
     const formData = new FormData();
     formData.append("file", file);
     formData.append("slug", slugForName);
@@ -786,7 +812,8 @@ export default function AdminDashboard() {
 
       if (result.success && result.path) {
         setEventForm((prev) => ({ ...prev, image: result.path! }));
-        toast.success("Image uploaded");
+        toast.success("Banner cropped & uploaded");
+        closeBannerCrop();
       } else {
         toast.error(result.error || "Upload failed");
       }
@@ -794,9 +821,6 @@ export default function AdminDashboard() {
       console.error(err);
       toast.error("Failed to upload image");
     }
-
-    // reset the file input so same file can be selected again if needed
-    e.target.value = "";
   }
 
   async function handleTicketTemplateUpload(e: React.ChangeEvent<HTMLInputElement>) {
@@ -1034,6 +1058,14 @@ export default function AdminDashboard() {
 
   return (
     <div className="min-h-screen bg-zinc-50 overflow-x-hidden">
+      {bannerCropSrc && (
+        <BannerCropModal
+          imageSrc={bannerCropSrc}
+          fileName={bannerCropName}
+          onCancel={closeBannerCrop}
+          onConfirm={uploadCroppedBanner}
+        />
+      )}
       <div className="border-b bg-white">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4 sm:py-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0">
@@ -1802,9 +1834,9 @@ export default function AdminDashboard() {
                       placeholder="/images/events/my-banner.jpg or https://example.com/banner.jpg"
                       className="w-full border rounded-lg px-3 py-2 text-sm"
                     />
-                    <div className="flex items-center gap-3">
+                    <div className="flex flex-wrap items-center gap-3">
                       <label className="cursor-pointer inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 text-sm hover:bg-zinc-50">
-                        📷 Upload image
+                        Upload &amp; crop image
                         <input
                           type="file"
                           accept="image/*"
@@ -1812,7 +1844,9 @@ export default function AdminDashboard() {
                           onChange={handleBannerImageUpload}
                         />
                       </label>
-                      <span className="text-[10px] text-zinc-500">JPG, PNG, WEBP up to 5MB. Or paste a path/URL above.</span>
+                      <span className="text-[10px] text-zinc-500">
+                        Opens crop tool (pan, zoom, aspect). JPG/PNG/WEBP up to 10MB.
+                      </span>
                     </div>
                     {eventForm.image && (
                       <div className="mt-1">
@@ -1820,7 +1854,7 @@ export default function AdminDashboard() {
                         <img
                           src={eventForm.image}
                           alt="Banner preview"
-                          className="max-h-32 rounded-lg border object-cover"
+                          className="w-full max-h-40 rounded-lg border object-cover"
                           onError={(e) => {
                             (e.target as HTMLImageElement).style.display = "none";
                           }}
@@ -1835,7 +1869,9 @@ export default function AdminDashboard() {
                       </div>
                     )}
                   </div>
-                  <p className="text-[10px] text-zinc-500 mt-1">This will be used as the hero banner on the event page.</p>
+                  <p className="text-[10px] text-zinc-500 mt-1">
+                    Hero banner on the event page. Crop before upload for clean mobile/desktop framing.
+                  </p>
                 </div>
 
                 {/* Payment toggle */}
