@@ -13,7 +13,7 @@ import {
 } from "./actions";
 import { getDefaultDemoEvent } from "@/lib/config/events";
 import * as XLSX from "xlsx";
-import { Download, Search, RefreshCw, Plus, Edit2, Trash2, ToggleLeft, ToggleRight } from "lucide-react";
+import { Download, Search, RefreshCw, Plus, Edit2, Trash2, ToggleLeft, ToggleRight, Copy } from "lucide-react";
 import { toast } from "sonner";
 import { formatHkDateTime, formatHkTime } from "@/lib/time/hk";
 import { BannerCropModal } from "@/components/admin/BannerCropModal";
@@ -714,6 +714,94 @@ export default function AdminDashboard() {
     setShowEventModal(true);
   }
 
+  function parseEventTime(ev: EventConfig) {
+    if (ev.time) {
+      const parts = ev.time.split(/[–-]/).map((p) => p.trim());
+      if (parts.length >= 2) {
+        setStartTime(parts[0]);
+        setEndTime(parts[1]);
+      } else {
+        setStartTime(ev.time);
+        setEndTime("");
+      }
+    } else {
+      setStartTime("");
+      setEndTime("");
+    }
+  }
+
+  function makeUniqueSlug(base: string): string {
+    const root =
+      (base || "event")
+        .replace(/[^a-z0-9-]/gi, "-")
+        .toLowerCase()
+        .replace(/-+/g, "-")
+        .replace(/^-|-$/g, "") || "event";
+    let candidate = `${root}-copy`;
+    if (!events.some((e) => e.slug === candidate)) return candidate;
+    candidate = `${root}-copy-${Date.now().toString(36)}`;
+    return candidate;
+  }
+
+  /**
+   * Duplicate event: same tickets, stock, redemptions, promo codes, form fields, banner.
+   * User must set a new name + event dates; ticket valid-from/to are cleared.
+   */
+  function openDuplicateEvent(ev: EventConfig) {
+    setEditingEvent(null); // create mode (new slug)
+    setEventForm({
+      slug: makeUniqueSlug(ev.slug),
+      name: `Copy of ${ev.name}`,
+      description: ev.description || "",
+      date: "", // set new dates
+      endDate: "",
+      time: ev.time || "",
+      location: ev.location || "",
+      image: ev.image || "",
+      enabled: false, // draft until ready
+      paymentEnabled: ev.paymentEnabled !== false,
+      ticketTemplate: ev.ticketTemplate || "",
+    });
+    setTicketTypesForm(
+      (ev.ticketTypes || []).map((t) => ({
+        ...t,
+        validFrom: undefined,
+        validTo: undefined,
+        discounts: (t.discounts || []).map((d) => ({
+          ...d,
+          id: `${d.id}-dup-${Date.now().toString(36)}`,
+        })),
+      }))
+    );
+    setBuyerFormFields(
+      (ev.buyerFormFields || []).map((f) => ({ ...f }))
+    );
+    setDiscountCodesForm(
+      (ev.discountCodes || []).map((dc) => ({
+        ...dc,
+        id: `dc-dup-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+      }))
+    );
+    setNewTicket({
+      id: "",
+      name: "",
+      price: 0,
+      currency: "HKD",
+      maxPerOrder: 6,
+      quantityAvailable: undefined,
+      redemptionLimit: 1,
+      validFrom: "",
+      validTo: "",
+      enabled: true,
+    });
+    parseEventTime(ev);
+    setShowEventModal(true);
+    toast.message("Event duplicated — set name & dates, then Save", {
+      description:
+        "Ticket types, promo codes, and discounts are copied. Ticket valid dates cleared.",
+    });
+  }
+
   // Open modal to edit existing
   function openEditEvent(ev: EventConfig) {
     setEditingEvent(ev);
@@ -744,20 +832,7 @@ export default function AdminDashboard() {
       enabled: true,
     });
 
-    // Parse time range if present (e.g. "18:30 – 23:00")
-    if (ev.time) {
-      const parts = ev.time.split(/[–-]/).map((p) => p.trim());
-      if (parts.length >= 2) {
-        setStartTime(parts[0]);
-        setEndTime(parts[1]);
-      } else {
-        setStartTime(ev.time);
-        setEndTime("");
-      }
-    } else {
-      setStartTime("");
-      setEndTime("");
-    }
+    parseEventTime(ev);
 
     setShowEventModal(true);
   }
@@ -1524,13 +1599,20 @@ export default function AdminDashboard() {
                         </button>
                       </td>
                       <td className="p-4 text-right">
-                        <div className="flex justify-end gap-2">
+                        <div className="flex justify-end gap-1 sm:gap-2">
                           <button
                             onClick={() => openEditEvent(ev)}
                             className="p-2 rounded-lg hover:bg-zinc-100 text-zinc-600"
                             title="Edit"
                           >
                             <Edit2 className="h-4 w-4" />
+                          </button>
+                          <button
+                            onClick={() => openDuplicateEvent(ev)}
+                            className="p-2 rounded-lg hover:bg-blue-50 text-blue-700"
+                            title="Duplicate (same tickets & discounts; set new name & dates)"
+                          >
+                            <Copy className="h-4 w-4" />
                           </button>
                           <button
                             onClick={() => handleDeleteEvent(ev.slug)}
