@@ -3,6 +3,7 @@ import { verifyKpayWebhook } from "@/lib/integrations/kpay";
 import { processSuccessfulPurchase } from "@/lib/integrations/order.service";
 import {
   getPendingPayment,
+  getPendingByManagedOrderNo,
   markPendingPaid,
   deletePendingPayment,
   recordWebhookPaid,
@@ -11,7 +12,7 @@ import { getPurchaseByPaymentReference } from "@/lib/db/purchases";
 
 /**
  * KPay async notification (webhook)
- * notifyUrl: https://ticketing-sit.vercel.app/api/webhooks/kpay
+ * notifyUrl: https://ticketing-sit.connecthk.org/api/webhooks/kpay
  */
 
 export const runtime = "nodejs";
@@ -19,9 +20,9 @@ export const dynamic = "force-dynamic";
 
 function extractSignature(request: NextRequest, body: any): string {
   return (
-    request.headers.get("x-kpay-signature") ||
     request.headers.get("K-Signature") ||
     request.headers.get("k-signature") ||
+    request.headers.get("x-kpay-signature") ||
     request.headers.get("x-signature") ||
     body?.signature ||
     body?.sign ||
@@ -30,60 +31,88 @@ function extractSignature(request: NextRequest, body: any): string {
   );
 }
 
+function pickStr(...vals: unknown[]): string | undefined {
+  for (const v of vals) {
+    if (v === undefined || v === null) continue;
+    const s = String(v).trim();
+    if (s) return s;
+  }
+  return undefined;
+}
+
 /**
- * Official notify payload (docs):
- *   managedOutTradeNo, managedOrderNo, outTradeNo, orderNo
- *   transactionState: 1 Pending, 2 Success, 3 Failed, 4 Refunded, 5 Cancelled
+ * Official notify fields (All Hosted):
+ *   managedOutTradeNo — merchant session (our SIT…)
+ *   managedOrderNo    — KPay hosted order no
+ *   outTradeNo        — merchant payment order no (may differ)
+ *   orderNo           — KPay payment order no
+ *   transactionState  — 2 success, 5 cancel, …
  */
 function extractPaymentFields(body: any): {
+  managedOutTradeNo?: string;
+  managedOrderNo?: string;
   outTradeNo?: string;
-  paymentId?: string;
+  orderNo?: string;
   status?: string;
   success: boolean;
   failed: boolean;
 } {
-  const data = body?.data ?? body ?? {};
+  const data =
+    body?.data && typeof body.data === "object" && !Array.isArray(body.data)
+      ? body.data
+      : {};
+  const root = body && typeof body === "object" ? body : {};
 
-  // Prefer merchant managed out-trade-no (our SIT… session id)
-  const outTradeNo =
-    String(
-      data.managedOutTradeNo ||
-        body?.managedOutTradeNo ||
-        data.outTradeNo ||
-        body?.outTradeNo ||
-        ""
-    ).trim() || undefined;
-
-  const paymentId =
-    String(
-      data.managedOrderNo ||
-        body?.managedOrderNo ||
-        data.orderNo ||
-        body?.orderNo ||
-        outTradeNo ||
-        ""
-    ).trim() || undefined;
+  const managedOutTradeNo = pickStr(
+    data.managedOutTradeNo,
+    root.managedOutTradeNo,
+    data.managed_out_trade_no,
+    root.managed_out_trade_no
+  );
+  const managedOrderNo = pickStr(
+    data.managedOrderNo,
+    root.managedOrderNo,
+    data.managed_order_no,
+    root.managed_order_no
+  );
+  const outTradeNo = pickStr(
+    data.outTradeNo,
+    root.outTradeNo,
+    data.out_trade_no,
+    root.out_trade_no
+  );
+  const orderNo = pickStr(
+    data.orderNo,
+    root.orderNo,
+    data.order_no,
+    root.order_no
+  );
 
   const txState = Number(
-    data.transactionState ?? body?.transactionState ?? data.result ?? NaN
+    data.transactionState ??
+      root.transactionState ??
+      data.result ??
+      root.result ??
+      NaN
   );
   const status = String(
     data.transactionStateDesc ||
+      root.transactionStateDesc ||
       data.status ||
-      body?.eventType ||
-      body?.type ||
+      root.eventType ||
+      root.type ||
       txState ||
       ""
   );
 
-  // Docs: 2 = Successfully Processed
   const success = txState === 2;
-  // Docs: 3 Failed, 5 Cancelled (and 4 Refunded is not a new paid)
   const failed = txState === 3 || txState === 5 || txState === 4;
 
   return {
+    managedOutTradeNo,
+    managedOrderNo,
     outTradeNo,
-    paymentId,
+    orderNo,
     status,
     success: success && !failed,
     failed,
@@ -109,22 +138,21 @@ export async function POST(request: NextRequest) {
       request.headers.get("K-Nonce-Str") ||
       request.headers.get("k-nonce-str") ||
       "";
-    // Path KPay called (may include query); default to our route
     const pathWithQuery =
-      request.nextUrl?.pathname +
-        (request.nextUrl?.search || "") ||
+      `${request.nextUrl?.pathname || "/api/webhooks/kpay"}${request.nextUrl?.search || ""}` ||
       "/api/webhooks/kpay";
 
     console.log("[KPay Webhook] Received", {
       hasSignature: Boolean(signature),
-      type: body?.type,
-      code: body?.code,
+      type: body?.type || body?.eventType,
       keys: Object.keys(body || {}),
       dataKeys:
         body?.data && typeof body.data === "object"
           ? Object.keys(body.data)
           : [],
       pathWithQuery,
+      hasTimestamp: Boolean(timestamp),
+      hasNonce: Boolean(nonce),
       rawPreview: rawText?.slice(0, 400),
     });
 
@@ -134,26 +162,57 @@ export async function POST(request: NextRequest) {
       pathWithQuery,
       timestamp,
       nonce,
-      merchantCode: String(body?.merchantCode || "").trim() || undefined,
+      merchantCode: pickStr(body?.merchantCode, body?.data?.merchantCode),
     });
     if (!valid) {
       console.warn("[KPay Webhook] Invalid signature — rejecting");
       return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
     }
 
-    const { outTradeNo, paymentId, success, failed, status } =
-      extractPaymentFields(body);
+    const fields = extractPaymentFields(body);
+    const {
+      managedOutTradeNo,
+      managedOrderNo,
+      outTradeNo,
+      orderNo,
+      success,
+      failed,
+      status,
+    } = fields;
+
+    // Resolve our checkout session (SIT…) — never use KPay orderNo alone as cart key
+    let pending =
+      (managedOutTradeNo
+        ? await getPendingPayment(managedOutTradeNo)
+        : null) ||
+      (outTradeNo ? await getPendingPayment(outTradeNo) : null) ||
+      (managedOrderNo
+        ? await getPendingByManagedOrderNo(managedOrderNo)
+        : null);
+
+    const sessionId =
+      pending?.outTradeNo ||
+      managedOutTradeNo ||
+      (outTradeNo?.startsWith("SIT") ? outTradeNo : undefined) ||
+      undefined;
 
     console.log("[KPay Webhook] Parsed", {
+      managedOutTradeNo,
+      managedOrderNo,
       outTradeNo,
-      paymentId,
+      orderNo,
+      sessionId: sessionId || null,
+      hasPending: Boolean(pending),
       success,
       failed,
       status,
     });
 
     if (failed || !success) {
-      console.log("[KPay Webhook] Non-success notification — acknowledged");
+      console.log("[KPay Webhook] Non-success notification — acknowledged", {
+        status,
+        failed,
+      });
       return NextResponse.json({
         received: true,
         processed: false,
@@ -162,12 +221,10 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    const ref = outTradeNo || paymentId;
-    if (!ref) {
-      console.warn("[KPay Webhook] Missing outTradeNo/paymentId", {
+    if (!sessionId && !managedOrderNo && !orderNo) {
+      console.warn("[KPay Webhook] Missing order identifiers", {
         bodyPreview: JSON.stringify(body).slice(0, 500),
       });
-      // Still 200 so KPay stops retrying unusable payloads
       return NextResponse.json({
         received: true,
         processed: false,
@@ -176,16 +233,21 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Always stamp paid so browser return can finalize even if cart row was lost
-    await recordWebhookPaid(ref);
-    if (outTradeNo && paymentId && outTradeNo !== paymentId) {
-      await recordWebhookPaid(outTradeNo);
+    // Stamp paid on merchant session (and SIT aliases) so return URL can finalize
+    if (sessionId) {
+      await recordWebhookPaid(sessionId);
     }
+    if (managedOutTradeNo && managedOutTradeNo !== sessionId) {
+      await recordWebhookPaid(managedOutTradeNo);
+    }
+    // Also alias managedOrderNo → paid lookup only if we already know the SIT session
+    // (avoid orphan paid flags under pure KPay numbers when cart is missing)
 
-    const existing = await getPurchaseByPaymentReference(ref);
+    const payRef = sessionId || managedOutTradeNo || outTradeNo || orderNo!;
+    const existing = await getPurchaseByPaymentReference(payRef);
     if (existing) {
       console.log("[KPay Webhook] Already purchased", existing.order_reference);
-      await deletePendingPayment(ref);
+      if (sessionId) await deletePendingPayment(sessionId);
       return NextResponse.json({
         received: true,
         processed: false,
@@ -194,17 +256,26 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    const pending = await getPendingPayment(ref);
+    if (!pending && sessionId) {
+      pending = await getPendingPayment(sessionId);
+    }
+
     const cart = pending?.cart;
     const hasRealCart = Boolean(
-      cart && cart.eventSlug && cart.buyer?.email && (cart.tickets?.length || 0) > 0
+      cart &&
+        cart.eventSlug &&
+        cart.buyer?.email &&
+        (cart.tickets?.length || 0) > 0
     );
 
     if (!hasRealCart) {
-      // Paid flag stored; checkout return will issue tickets with session cart
       console.log(
         "[KPay Webhook] Paid recorded; waiting for browser return with cart",
-        ref
+        {
+          sessionId: sessionId || null,
+          managedOrderNo: managedOrderNo || null,
+          payRef,
+        }
       );
       return NextResponse.json({
         received: true,
@@ -214,15 +285,13 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    await markPendingPaid(ref);
+    if (sessionId) await markPendingPaid(sessionId);
 
-    const result = await processSuccessfulPurchase(
-      cart!,
-      paymentId || ref
-    );
+    // Payment reference for DB/tickets: merchant session (SIT…), not KPay orderNo
+    const result = await processSuccessfulPurchase(cart!, sessionId || payRef);
 
     if (result.success) {
-      await deletePendingPayment(ref);
+      if (sessionId) await deletePendingPayment(sessionId);
       console.log("[KPay Webhook] Purchase processed", result.orderReference);
     } else {
       console.error(

@@ -226,6 +226,40 @@ export async function getPendingPayment(
   return store.get(outTradeNo) || null;
 }
 
+/** Resolve cart when notify has managedOrderNo but we need the merchant SIT session. */
+export async function getPendingByManagedOrderNo(
+  managedOrderNo: string
+): Promise<PendingPayment | null> {
+  if (!managedOrderNo?.trim()) return null;
+  const target = managedOrderNo.trim();
+  hydrateLocal();
+  purgeExpired();
+
+  for (const rec of store.values()) {
+    if (rec.managedOrderNo && rec.managedOrderNo === target) return rec;
+    if (rec.paymentUrl?.includes(target)) return rec;
+  }
+
+  if (supabaseTableMissing) return null;
+  const admin = getSupabaseAdmin();
+  if (!admin) return null;
+  try {
+    const { data, error } = await admin
+      .from(TABLE)
+      .select("*")
+      .eq("managed_order_no", target)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error || !data) return null;
+    const rec = rowToPending(data);
+    if (rec) store.set(rec.outTradeNo, rec);
+    return rec;
+  } catch {
+    return null;
+  }
+}
+
 export async function markPendingPaid(
   outTradeNo: string
 ): Promise<PendingPayment | null> {

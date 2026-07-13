@@ -1119,34 +1119,69 @@ export async function verifyKpayWebhook(
   const timestamp = meta?.timestamp || "";
   const nonce = meta?.nonce || "";
 
+  // Try official notify string-to-sign (merchant mode: no App-Id line)
+  // Path variants: full pathWithQuery, pathname only, trailing-slash trim
+  const pathCandidates = Array.from(
+    new Set(
+      [
+        pathWithQuery,
+        pathWithQuery.split("?")[0],
+        "/api/webhooks/kpay",
+        pathWithQuery.replace(/\/$/, "") || pathWithQuery,
+      ].filter(Boolean)
+    )
+  );
+
   if (timestamp && nonce && merchantCode) {
-    const text = buildOfficialSignatureText({
-      method,
-      uriWithQuery: pathWithQuery,
-      timestamp,
-      nonce,
-      merchantCode,
-      body: rawBody,
-      appId: APP_ID || undefined,
-    });
-    if (verifyWithPublicKey(text, signature, PLATFORM_PUBLIC_KEY)) {
-      return true;
+    for (const uri of pathCandidates) {
+      const text = buildOfficialSignatureText({
+        method,
+        uriWithQuery: uri,
+        timestamp,
+        nonce,
+        merchantCode,
+        body: rawBody,
+        // Merchant mode: omit app id unless configured for SP mode
+        appId: APP_ID || undefined,
+      });
+      if (verifyWithPublicKey(text, signature, PLATFORM_PUBLIC_KEY)) {
+        return true;
+      }
+      // Also try without app id even if APP_ID set (notify may omit it)
+      if (APP_ID) {
+        const textNoApp = buildOfficialSignatureText({
+          method,
+          uriWithQuery: uri,
+          timestamp,
+          nonce,
+          merchantCode,
+          body: rawBody,
+        });
+        if (verifyWithPublicKey(textNoApp, signature, PLATFORM_PUBLIC_KEY)) {
+          return true;
+        }
+      }
     }
   }
 
-  // Legacy fallbacks (older deploys / incomplete headers)
+  // Legacy: body-only (unlikely for official notify)
   if (verifyWithPublicKey(rawBody, signature, PLATFORM_PUBLIC_KEY)) {
     return true;
   }
 
   if (webhookRelaxed()) {
     console.warn(
-      "[KPay] Webhook signature verify failed — allowing (sandbox/relaxed)"
+      "[KPay] Webhook signature verify failed — allowing (UAT/relaxed). " +
+        "Ensure KPAY_PLATFORM_PUBLIC_KEY is the KPay platform public key " +
+        "(from KPay: *kpay_public_key*.pem), NOT the merchant public key."
     );
     return true;
   }
 
-  console.warn("[KPay] Webhook signature verification failed");
+  console.warn(
+    "[KPay] Webhook signature verification failed (strict). " +
+      "Check KPAY_PLATFORM_PUBLIC_KEY is KPay platform public PEM."
+  );
   return false;
 }
 
