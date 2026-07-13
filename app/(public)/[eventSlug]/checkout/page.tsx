@@ -324,11 +324,35 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
         return;
       }
 
-      // Still no notify — intermediate page fallback
+      const outcome = String(result.metadata?.outcome || "");
+      const errText = String(result.error || "");
+      const looksCancelled =
+        outcome === "cancelled" ||
+        /cancell?ed|failed\. No ticket|not issued/i.test(errText);
+
+      // Clear cancel: no dual-button confusion
+      if (looksCancelled) {
+        finalizedSessionsRef.current.add(`cancel:${paymentReference}`);
+        try {
+          sessionStorage.removeItem(`kpay_cart_${paymentReference}`);
+          sessionStorage.removeItem("pendingKpaySession");
+        } catch {
+          /* ignore */
+        }
+        setNeedsManualConfirm(false);
+        setError(
+          result.error ||
+            "Payment was cancelled. No ticket was issued — you can try again."
+        );
+        return;
+      }
+
+      // Still unknown (order pending / no webhook) — keep safety buttons
       finalizedSessionsRef.current.delete(paymentReference);
       setNeedsManualConfirm(true);
       setError(
-        "Waiting for payment result timed out (no notify from KPay yet). If you completed payment, tap “I paid”. If you cancelled, tap “I cancelled”."
+        result.error ||
+          "We could not tell yet if payment completed. If you paid, tap “I paid”. If you left without paying, tap “I cancelled”."
       );
     } catch (e) {
       console.error("[Checkout] Return finalize error:", e);
@@ -528,11 +552,13 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
             {needsManualConfirm && hasReturnSession && (
               <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-4 space-y-3">
                 <div>
-                  <p className="font-medium text-amber-950">Confirm payment result</p>
+                  <p className="font-medium text-amber-950">
+                    Did you finish payment?
+                  </p>
                   <p className="text-sm text-amber-900/80 mt-1">
-                    KPay returned without a paid/cancel flag and did not send a usable
-                    webhook status. This is expected on their sandbox until notify/status
-                    APIs work. Choose correctly:
+                    KPay sent you back without a clear paid/cancel flag (same return URL
+                    for both). We checked the order status but it is still pending. Pick
+                    what you did — no ticket is issued unless you confirm payment.
                   </p>
                 </div>
                 <div className="flex flex-col gap-2">
@@ -562,8 +588,13 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
             )}
 
             {error && !needsManualConfirm && (
-              <div className="mb-4 rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-700">
+              <div className="mb-4 rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-700 space-y-2">
                 <p>{error}</p>
+                {/cancell?ed|not issued/i.test(error) && (
+                  <p className="text-xs text-red-600/80">
+                    You can pay again with the button below when ready.
+                  </p>
+                )}
               </div>
             )}
 

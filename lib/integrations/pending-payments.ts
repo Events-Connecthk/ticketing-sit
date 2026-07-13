@@ -239,6 +239,19 @@ export async function markPendingPaid(
   return rec;
 }
 
+export async function markPendingFailed(
+  outTradeNo: string
+): Promise<PendingPayment | null> {
+  hydrateLocal();
+  let rec = store.get(outTradeNo) || (await dbGet(outTradeNo));
+  if (!rec) return null;
+  rec = { ...rec, status: "failed" };
+  store.set(outTradeNo, rec);
+  persistLocal();
+  await dbUpdateStatus(outTradeNo, "failed");
+  return rec;
+}
+
 /**
  * Record that KPay notify said this outTradeNo is paid — even if cart row is missing.
  * Return URL can then finalize using the browser cart.

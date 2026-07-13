@@ -253,15 +253,25 @@ export async function finalizeAfterPayment(
       return {
         success: true,
         orderReference: already.order_reference,
-        metadata: { via: "existing_purchase" },
+        metadata: { via: "existing_purchase", outcome: "paid" },
       };
     }
     return {
       success: false,
       error: confirmation.error || "Payment not confirmed",
+      metadata: {
+        outcome: confirmation.outcome || "unknown",
+      },
     };
   }
 
   // This is the critical post-payment pipeline (DB + email + PDF generation)
-  return processSuccessfulPurchase(cart, confirmation.paymentReference);
+  const done = await processSuccessfulPurchase(
+    cart,
+    confirmation.paymentReference
+  );
+  return {
+    ...done,
+    metadata: { ...done.metadata, outcome: "paid" },
+  };
 }

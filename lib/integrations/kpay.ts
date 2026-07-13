@@ -28,6 +28,7 @@ import {
 import {
   getPendingPayment,
   markPendingPaid,
+  markPendingFailed,
   savePendingPayment,
   isWebhookPaid,
 } from "./pending-payments";
@@ -797,6 +798,8 @@ async function lookupOrderPayStatus(
  * Auto-success only via: webhook paid, or order API paid.
  * Optional: userConfirmedPaid (explicit UI button after return) — never auto on page load.
  */
+export type KpayConfirmOutcome = "paid" | "cancelled" | "unknown";
+
 export async function confirmKpayPayment(
   paymentId: string,
   opts?: {
@@ -804,9 +807,19 @@ export async function confirmKpayPayment(
     /** True only when user taps “I completed payment” — not on automatic redirect */
     userConfirmedPaid?: boolean;
   }
-): Promise<{ success: boolean; paymentReference?: string; error?: string }> {
+): Promise<{
+  success: boolean;
+  paymentReference?: string;
+  error?: string;
+  /** paid = issue tickets; cancelled = clean cancel UI; unknown = need user/webhook */
+  outcome?: KpayConfirmOutcome;
+}> {
   if (!paymentId) {
-    return { success: false, error: "Missing payment session identifier" };
+    return {
+      success: false,
+      error: "Missing payment session identifier",
+      outcome: "unknown",
+    };
   }
 
   const returnResult: KpayReturnResult = opts?.returnResult || "unknown";
@@ -815,9 +828,15 @@ export async function confirmKpayPayment(
   // Explicit cancel from cancelUrl — never issue tickets
   if (returnResult === "cancel") {
     console.log("[KPay] Return marked cancel for", paymentId);
+    try {
+      await markPendingFailed(paymentId);
+    } catch {
+      /* ignore */
+    }
     return {
       success: false,
       error: "Payment was cancelled. No ticket was issued — you can try again.",
+      outcome: "cancelled",
     };
   }
 
@@ -827,15 +846,27 @@ export async function confirmKpayPayment(
     paymentId.startsWith("SIM-") ||
     paymentId.startsWith("FREE-")
   ) {
-    return { success: true, paymentReference: paymentId };
+    return {
+      success: true,
+      paymentReference: paymentId,
+      outcome: "paid",
+    };
   }
 
   if (!hasCredentials()) {
     if (isProduction()) {
-      return { success: false, error: "KPay not configured" };
+      return {
+        success: false,
+        error: "KPay not configured",
+        outcome: "unknown",
+      };
     }
     console.log("[KPay] Simulation confirm for", paymentId);
-    return { success: true, paymentReference: paymentId };
+    return {
+      success: true,
+      paymentReference: paymentId,
+      outcome: "paid",
+    };
   }
 
   // Already fulfilled (webhook may have completed first on Vercel)
@@ -844,7 +875,11 @@ export async function confirmKpayPayment(
     const existing = await getPurchaseByPaymentReference(paymentId);
     if (existing) {
       console.log("[KPay] Purchase already exists for", paymentId);
-      return { success: true, paymentReference: paymentId };
+      return {
+        success: true,
+        paymentReference: paymentId,
+        outcome: "paid",
+      };
     }
   } catch {
     // ignore
@@ -862,22 +897,31 @@ export async function confirmKpayPayment(
 
   if (pending?.status === "paid" || (await isWebhookPaid(paymentId))) {
     console.log("[KPay] Webhook/pending paid for", paymentId);
-    return { success: true, paymentReference: paymentId };
+    return {
+      success: true,
+      paymentReference: paymentId,
+      outcome: "paid",
+    };
   }
   if (pending?.status === "failed") {
     return {
       success: false,
       error: "Payment was cancelled or failed. No ticket was issued.",
+      outcome: "cancelled",
     };
   }
 
-  // Brief wait for webhook (KPay sandbox often never sends notify to merchants)
+  // Brief wait for webhook, then query order API (official managedOrderState)
   if (process.env.VERCEL || process.env.KPAY_WAIT_WEBHOOK === "true") {
     for (let i = 0; i < 3; i++) {
       await sleep(700);
       pending = await getPendingPayment(paymentId);
       if (pending?.status === "paid" || (await isWebhookPaid(paymentId))) {
-        return { success: true, paymentReference: paymentId };
+        return {
+          success: true,
+          paymentReference: paymentId,
+          outcome: "paid",
+        };
       }
       try {
         const { getPurchaseByPaymentReference } = await import(
@@ -885,7 +929,11 @@ export async function confirmKpayPayment(
         );
         const existing = await getPurchaseByPaymentReference(paymentId);
         if (existing) {
-          return { success: true, paymentReference: paymentId };
+          return {
+            success: true,
+            paymentReference: paymentId,
+            outcome: "paid",
+          };
         }
       } catch {
         // ignore
@@ -894,16 +942,30 @@ export async function confirmKpayPayment(
   }
 
   const managedOrderNo = pending?.managedOrderNo || undefined;
-  const st = await lookupOrderPayStatus(paymentId, managedOrderNo);
+  // Query order API a few times — cancel often becomes closed/cancelled after a short delay
+  let st: "paid" | "failed" | "unknown" = "unknown";
+  for (let i = 0; i < 3; i++) {
+    st = await lookupOrderPayStatus(paymentId, managedOrderNo);
+    console.log("[KPay] Order status poll", { paymentId, attempt: i + 1, st });
+    if (st === "paid" || st === "failed") break;
+    await sleep(1200);
+  }
+
   if (st === "paid") {
     console.log("[KPay] Order API confirmed PAID for", paymentId);
     if (pending) await markPendingPaid(paymentId);
-    return { success: true, paymentReference: paymentId };
+    return {
+      success: true,
+      paymentReference: paymentId,
+      outcome: "paid",
+    };
   }
   if (st === "failed") {
+    if (pending) await markPendingFailed(paymentId);
     return {
       success: false,
       error: "Payment was cancelled or failed. No ticket was issued.",
+      outcome: "cancelled",
     };
   }
 
@@ -915,14 +977,22 @@ export async function confirmKpayPayment(
   if (userConfirmedPaid && !requireApi) {
     console.warn("[KPay] USER confirmed paid — finalizing", paymentId);
     if (pending) await markPendingPaid(paymentId);
-    return { success: true, paymentReference: paymentId };
+    return {
+      success: true,
+      paymentReference: paymentId,
+      outcome: "paid",
+    };
   }
 
   // Explicit opt-in only (not default) — will free-ticket on cancel
   if (process.env.KPAY_AUTO_CONFIRM_RETURN === "true" && !requireApi) {
     console.warn("[KPay] KPAY_AUTO_CONFIRM_RETURN=true — finalizing", paymentId);
     if (pending) await markPendingPaid(paymentId);
-    return { success: true, paymentReference: paymentId };
+    return {
+      success: true,
+      paymentReference: paymentId,
+      outcome: "paid",
+    };
   }
 
   console.warn("[KPay] Refusing finalize (need webhook or user confirm)", {
@@ -931,11 +1001,13 @@ export async function confirmKpayPayment(
     userConfirmedPaid,
     hasPending: Boolean(pending),
     requireApi,
+    orderStatus: st,
   });
   return {
     success: false,
+    outcome: "unknown",
     error:
-      "Payment not confirmed (KPay did not notify paid vs cancel). If you completed payment, tap “I paid — get my tickets”. If you cancelled, tap “I cancelled — no ticket”.",
+      "Payment not confirmed yet (no paid webhook / order still pending). If you completed payment, tap “I paid — get my tickets”. If you cancelled, tap “I cancelled — no ticket”.",
   };
 }
 
