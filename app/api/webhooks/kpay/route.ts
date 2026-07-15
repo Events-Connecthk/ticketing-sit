@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { verifyKpayWebhook } from "@/lib/integrations/kpay";
+import {
+  verifyKpayWebhook,
+  lookupOrderPayStatus,
+} from "@/lib/integrations/kpay";
 import { processSuccessfulPurchase } from "@/lib/integrations/order.service";
 import {
   getPendingPayment,
@@ -241,6 +244,43 @@ export async function POST(request: NextRequest) {
         reason: failed ? "failed_status" : "not_success",
         code: 10000,
       });
+    }
+
+    // Double-check with order API when possible (handles timeout UI + late pay):
+    // - paid → issue tickets (even if user saw "timed out" earlier — money taken)
+    // - failed/expired with no paid payment → do not issue
+    // - unknown → trust this success notify (Alipay can lag)
+    if (sessionId || managedOrderNo) {
+      try {
+        const st = await lookupOrderPayStatus(
+          sessionId || managedOutTradeNo || "",
+          managedOrderNo
+        );
+        console.log("[KPay Webhook] Order status double-check", {
+          sessionId: sessionId || null,
+          managedOrderNo: managedOrderNo || null,
+          st,
+        });
+        if (st === "failed") {
+          console.log(
+            "[KPay Webhook] Notify said success but order query is expired/closed/not paid — not issuing tickets",
+            { sessionId, managedOrderNo, status }
+          );
+          return NextResponse.json({
+            received: true,
+            processed: false,
+            reason: "order_not_paid_on_query",
+            code: 10000,
+          });
+        }
+        if (st === "paid") {
+          console.log(
+            "[KPay Webhook] Order confirmed PAID (may be late pay after timeout UI)"
+          );
+        }
+      } catch (e) {
+        console.warn("[KPay Webhook] Order double-check failed, trusting notify:", e);
+      }
     }
 
     if (!sessionId && !managedOrderNo && !orderNo) {

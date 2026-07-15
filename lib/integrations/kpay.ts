@@ -759,8 +759,9 @@ function managedOrderNoFromPaymentUrl(url?: string): string | undefined {
 /**
  * Official query: GET /v1/managed/order/result
  * managedOrderState: 1 Pending, 2 Paid, 3 Expired, 4 Refunded, 5 Closed
+ * Exported for webhook double-check (timeout / late Alipay notify).
  */
-async function lookupOrderPayStatus(
+export async function lookupOrderPayStatus(
   paymentId: string,
   managedOrderNo?: string
 ): Promise<"paid" | "failed" | "unknown"> {
