@@ -352,6 +352,177 @@ export async function adminSavePurchase(input: Partial<PurchaseRecord> & { id?: 
   }
 }
 
+export type ManualIssueInput = {
+  eventSlug: string;
+  tickets: Array<{ ticketTypeId: string; quantity: number }>;
+  buyer: { name: string; phone: string; email: string };
+  /** cash | bank_transfer | fps | alipay_offline | wechat_offline | free | other */
+  paymentMethod: string;
+  /** Optional proof note (FPS ref, receipt no., etc.) */
+  note?: string;
+  /** Leave undefined to use catalog price × qty */
+  amountOverride?: number;
+  currency?: string;
+};
+
+/**
+ * Admin-only: issue tickets for cash / offline payments after verifying proof.
+ * Runs the same fulfillment pipeline as KPay (purchase row + email + serials).
+ */
+export async function adminIssueManualTickets(
+  input: ManualIssueInput
+): Promise<{
+  success: boolean;
+  orderReference?: string;
+  paymentReference?: string;
+  error?: string;
+  amount?: number;
+  ticketCount?: number;
+}> {
+  try {
+    await requireAdmin();
+
+    const eventSlug = String(input.eventSlug || "").trim();
+    const name = String(input.buyer?.name || "").trim();
+    const phone = String(input.buyer?.phone || "").trim();
+    const email = String(input.buyer?.email || "").trim();
+    const paymentMethod = String(input.paymentMethod || "cash")
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, "_")
+      .slice(0, 40);
+    const note = String(input.note || "").trim().slice(0, 120);
+
+    if (!eventSlug) {
+      return { success: false, error: "Select an event." };
+    }
+    if (!name) {
+      return { success: false, error: "Buyer name is required." };
+    }
+    if (!email || !email.includes("@")) {
+      return { success: false, error: "Valid buyer email is required (for ticket delivery)." };
+    }
+    if (!phone) {
+      return { success: false, error: "Buyer phone is required." };
+    }
+
+    const tickets = (input.tickets || [])
+      .map((t) => ({
+        ticketTypeId: String(t.ticketTypeId || "").trim(),
+        quantity: Math.max(0, Math.floor(Number(t.quantity) || 0)),
+      }))
+      .filter((t) => t.ticketTypeId && t.quantity > 0);
+
+    if (tickets.length === 0) {
+      return { success: false, error: "Add at least one ticket with quantity > 0." };
+    }
+
+    const { loadEventBySlug } = await import("@/lib/config/events");
+    const event = await loadEventBySlug(eventSlug);
+    if (!event) {
+      return { success: false, error: "Event not found." };
+    }
+
+    const typeMap = new Map(
+      (event.ticketTypes || []).map((t) => [t.id, t])
+    );
+    let catalogTotal = 0;
+    let ticketCount = 0;
+    const currency =
+      String(input.currency || "").trim() ||
+      event.ticketTypes?.[0]?.currency ||
+      "HKD";
+
+    for (const line of tickets) {
+      const tt = typeMap.get(line.ticketTypeId);
+      if (!tt) {
+        return {
+          success: false,
+          error: `Unknown ticket type: ${line.ticketTypeId}`,
+        };
+      }
+      if (tt.enabled === false) {
+        return {
+          success: false,
+          error: `Ticket type "${tt.name}" is disabled.`,
+        };
+      }
+      catalogTotal += (Number(tt.price) || 0) * line.quantity;
+      ticketCount += line.quantity;
+    }
+
+    if (ticketCount > 50) {
+      return {
+        success: false,
+        error: "Max 50 tickets per manual issue. Split into multiple orders if needed.",
+      };
+    }
+
+    let totalAmount =
+      input.amountOverride != null && !Number.isNaN(Number(input.amountOverride))
+        ? Math.max(0, Number(input.amountOverride))
+        : catalogTotal;
+
+    // Free / complimentary force zero amount
+    if (paymentMethod === "free" || paymentMethod === "complimentary") {
+      totalAmount = 0;
+    }
+
+    const paymentReference = [
+      "MAN",
+      Date.now().toString(36).toUpperCase(),
+      Math.random().toString(36).slice(2, 6).toUpperCase(),
+      note ? note.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 24) : "",
+    ]
+      .filter(Boolean)
+      .join("-");
+
+    const cart = {
+      eventSlug,
+      tickets,
+      buyer: { name, phone, email },
+      totalAmount,
+      currency: totalAmount === 0 ? "FREE" : currency,
+    };
+
+    const { processSuccessfulPurchase } = await import(
+      "@/lib/integrations/order.service"
+    );
+    const result = await processSuccessfulPurchase(cart, paymentReference, {
+      paymentMethod:
+        paymentMethod === "free" || paymentMethod === "complimentary"
+          ? "free"
+          : paymentMethod || "manual",
+      orderPrefix: "MAN",
+    });
+
+    if (!result.success) {
+      return {
+        success: false,
+        error: result.error || "Failed to create tickets.",
+      };
+    }
+
+    return {
+      success: true,
+      orderReference: result.orderReference,
+      paymentReference,
+      amount: totalAmount,
+      ticketCount,
+    };
+  } catch (err: any) {
+    console.error("[Admin Actions] adminIssueManualTickets error:", err);
+    const msg = String(err?.message || err || "");
+    if (msg.toLowerCase().includes("admin") || msg.toLowerCase().includes("session")) {
+      return {
+        success: false,
+        error: "Admin session expired. Sign out and sign in again.",
+      };
+    }
+    return { success: false, error: msg || "Unexpected error issuing tickets." };
+  }
+}
+
 /**
  * Public-friendly server action to fetch a purchase by order ref, payment ref, or ticket serial.
  * Uses service role so it works even with strict RLS on SELECT for anon.

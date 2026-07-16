@@ -10,6 +10,7 @@ import {
   adminDeleteEvent,
   adminGetAllPurchases,
   adminSavePurchase,
+  adminIssueManualTickets,
 } from "./actions";
 import { getDefaultDemoEvent } from "@/lib/config/events";
 import * as XLSX from "xlsx";
@@ -39,7 +40,27 @@ export default function AdminDashboard() {
   const [eventFilter, setEventFilter] = useState("");
 
   // ===== NEW: Admin Tabs and Event Management =====
-  const [activeTab, setActiveTab] = useState<"purchases" | "events" | "scanner" | "attendance">("purchases");
+  const [activeTab, setActiveTab] = useState<
+    "purchases" | "events" | "scanner" | "attendance" | "issue"
+  >("purchases");
+
+  // ===== Manual ticket issue (cash / offline proof) =====
+  const [issueEventSlug, setIssueEventSlug] = useState("");
+  const [issueQtys, setIssueQtys] = useState<Record<string, number>>({});
+  const [issueBuyerName, setIssueBuyerName] = useState("");
+  const [issueBuyerPhone, setIssueBuyerPhone] = useState("");
+  const [issueBuyerEmail, setIssueBuyerEmail] = useState("");
+  const [issuePaymentMethod, setIssuePaymentMethod] = useState("cash");
+  const [issueNote, setIssueNote] = useState("");
+  const [issueAmountOverride, setIssueAmountOverride] = useState("");
+  const [issueSubmitting, setIssueSubmitting] = useState(false);
+  const [issueResult, setIssueResult] = useState<{
+    orderReference: string;
+    paymentReference?: string;
+    amount: number;
+    ticketCount: number;
+    eventSlug: string;
+  } | null>(null);
 
   const [events, setEvents] = useState<EventConfig[]>([]);
   const [eventsLoading, setEventsLoading] = useState(false);
@@ -490,7 +511,13 @@ export default function AdminDashboard() {
   }, [isAuthenticated, search, eventFilter]);
 
   useEffect(() => {
-    if (isAuthenticated && (activeTab === "events" || activeTab === "scanner" || activeTab === "attendance")) {
+    if (
+      isAuthenticated &&
+      (activeTab === "events" ||
+        activeTab === "scanner" ||
+        activeTab === "attendance" ||
+        activeTab === "issue")
+    ) {
       loadEvents();
     }
     // Stop camera if user leaves the scanner tab
@@ -671,6 +698,105 @@ export default function AdminDashboard() {
       }
     } finally {
       setEventsLoading(false);
+    }
+  }
+
+  const issueEvent = events.find((e) => e.slug === issueEventSlug) || null;
+
+  const issueCatalogTotal = (() => {
+    if (!issueEvent) return 0;
+    let sum = 0;
+    for (const tt of issueEvent.ticketTypes || []) {
+      const q = issueQtys[tt.id] || 0;
+      if (q > 0) sum += (Number(tt.price) || 0) * q;
+    }
+    return sum;
+  })();
+
+  const issueTicketCount = Object.values(issueQtys).reduce(
+    (s, q) => s + (Number(q) || 0),
+    0
+  );
+
+  function resetIssueForm() {
+    setIssueQtys({});
+    setIssueBuyerName("");
+    setIssueBuyerPhone("");
+    setIssueBuyerEmail("");
+    setIssuePaymentMethod("cash");
+    setIssueNote("");
+    setIssueAmountOverride("");
+    setIssueResult(null);
+  }
+
+  async function handleIssueTickets(e: React.FormEvent) {
+    e.preventDefault();
+    if (!issueEventSlug) {
+      toast.error("Select an event");
+      return;
+    }
+    const tickets = Object.entries(issueQtys)
+      .filter(([, q]) => (Number(q) || 0) > 0)
+      .map(([ticketTypeId, quantity]) => ({
+        ticketTypeId,
+        quantity: Math.floor(Number(quantity) || 0),
+      }));
+    if (tickets.length === 0) {
+      toast.error("Set quantity for at least one ticket type");
+      return;
+    }
+
+    setIssueSubmitting(true);
+    setIssueResult(null);
+    try {
+      const amountOverride =
+        issueAmountOverride.trim() === ""
+          ? undefined
+          : Number(issueAmountOverride);
+      if (
+        amountOverride !== undefined &&
+        (Number.isNaN(amountOverride) || amountOverride < 0)
+      ) {
+        toast.error("Amount override must be a valid number ≥ 0");
+        return;
+      }
+
+      const res = await adminIssueManualTickets({
+        eventSlug: issueEventSlug,
+        tickets,
+        buyer: {
+          name: issueBuyerName.trim(),
+          phone: issueBuyerPhone.trim(),
+          email: issueBuyerEmail.trim(),
+        },
+        paymentMethod: issuePaymentMethod,
+        note: issueNote.trim() || undefined,
+        amountOverride,
+      });
+
+      if (!res.success) {
+        toast.error(res.error || "Failed to issue tickets");
+        return;
+      }
+
+      toast.success(`Tickets issued: ${res.orderReference}`);
+      setIssueResult({
+        orderReference: res.orderReference || "",
+        paymentReference: res.paymentReference,
+        amount: res.amount ?? 0,
+        ticketCount: res.ticketCount ?? 0,
+        eventSlug: issueEventSlug,
+      });
+      // Keep buyer/event so ops can issue another similar order; clear qtys
+      setIssueQtys({});
+      setIssueNote("");
+      setIssueAmountOverride("");
+      loadPurchases();
+    } catch (err) {
+      console.error(err);
+      toast.error("Unexpected error issuing tickets");
+    } finally {
+      setIssueSubmitting(false);
     }
   }
 
@@ -1361,6 +1487,15 @@ export default function AdminDashboard() {
           >
             Attendance
           </button>
+          <button
+            onClick={() => {
+              setActiveTab("issue");
+              setIssueResult(null);
+            }}
+            className={`shrink-0 px-3 sm:px-6 py-3 font-medium text-xs sm:text-sm border-b-2 transition-all whitespace-nowrap ${activeTab === "issue" ? "border-amber-600 text-amber-800" : "border-transparent text-zinc-500 hover:text-zinc-700"}`}
+          >
+            Issue tickets
+          </button>
         </div>
       </div>
 
@@ -1994,6 +2129,267 @@ export default function AdminDashboard() {
           <p className="mt-4 text-xs text-zinc-500">
             Use the Scanner tab to check people in. Purchases/Registration shows status; this tab is the check-in log.
           </p>
+        </div>
+      )}
+
+      {/* ISSUE TICKETS — cash / offline payment after proof */}
+      {activeTab === "issue" && (
+        <div className="max-w-3xl mx-auto px-4 sm:px-6 py-6 sm:py-8">
+          <div className="mb-6">
+            <h2 className="text-xl font-semibold">Issue tickets manually</h2>
+            <p className="text-sm text-zinc-600 mt-1">
+              For cash, bank transfer, FPS, or any channel not on KPay. Verify payment proof first,
+              then enter buyer + ticket details. Same fulfillment as online: order row, serials, confirmation email.
+            </p>
+          </div>
+
+          {issueResult && (
+            <div className="mb-6 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 sm:p-5">
+              <p className="font-semibold text-emerald-900">Tickets issued</p>
+              <dl className="mt-2 grid gap-1 text-sm text-emerald-900/90">
+                <div>
+                  <span className="text-emerald-700">Order ref: </span>
+                  <span className="font-mono font-medium">{issueResult.orderReference}</span>
+                </div>
+                {issueResult.paymentReference && (
+                  <div>
+                    <span className="text-emerald-700">Payment ref: </span>
+                    <span className="font-mono text-xs">{issueResult.paymentReference}</span>
+                  </div>
+                )}
+                <div>
+                  <span className="text-emerald-700">Tickets: </span>
+                  {issueResult.ticketCount} ·{" "}
+                  <span className="text-emerald-700">Amount: </span>
+                  {issueResult.amount === 0
+                    ? "Free / complimentary"
+                    : `HKD ${issueResult.amount.toLocaleString()}`}
+                </div>
+              </dl>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <a
+                  href={`/${issueResult.eventSlug}/success?ref=${encodeURIComponent(issueResult.orderReference)}&amount=${issueResult.amount}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center rounded-lg bg-emerald-700 px-3 py-2 text-sm text-white hover:bg-emerald-800"
+                >
+                  Open ticket / success page
+                </a>
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigator.clipboard?.writeText(issueResult.orderReference);
+                    toast.success("Order ref copied");
+                  }}
+                  className="inline-flex items-center rounded-lg border border-emerald-300 bg-white px-3 py-2 text-sm text-emerald-900 hover:bg-emerald-50"
+                >
+                  Copy order ref
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab("purchases")}
+                  className="inline-flex items-center rounded-lg border border-emerald-300 bg-white px-3 py-2 text-sm text-emerald-900 hover:bg-emerald-50"
+                >
+                  View purchases
+                </button>
+              </div>
+            </div>
+          )}
+
+          <form
+            onSubmit={handleIssueTickets}
+            className="rounded-2xl border bg-white p-4 sm:p-6 space-y-6 shadow-sm"
+          >
+            <div>
+              <label className="text-xs font-medium text-zinc-500">Event</label>
+              <select
+                value={issueEventSlug}
+                onChange={(e) => {
+                  setIssueEventSlug(e.target.value);
+                  setIssueQtys({});
+                  setIssueAmountOverride("");
+                  setIssueResult(null);
+                }}
+                required
+                className="mt-1 w-full border rounded-lg px-3 py-2.5 text-sm bg-white"
+              >
+                <option value="">
+                  {eventsLoading ? "Loading events…" : "Select event…"}
+                </option>
+                {events.map((ev) => (
+                  <option key={ev.slug} value={ev.slug}>
+                    {ev.name} ({ev.slug})
+                    {ev.enabled === false ? " — disabled" : ""}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {issueEvent && (
+              <div>
+                <label className="text-xs font-medium text-zinc-500">Tickets</label>
+                <div className="mt-2 space-y-2">
+                  {(issueEvent.ticketTypes || []).length === 0 ? (
+                    <p className="text-sm text-amber-700">
+                      This event has no ticket types. Add them under Events first.
+                    </p>
+                  ) : (
+                    (issueEvent.ticketTypes || []).map((tt) => (
+                      <div
+                        key={tt.id}
+                        className={`flex flex-wrap items-center gap-3 rounded-xl border px-3 py-2.5 ${
+                          tt.enabled === false ? "opacity-50 bg-zinc-50" : "bg-zinc-50/50"
+                        }`}
+                      >
+                        <div className="min-w-0 flex-1">
+                          <div className="font-medium text-sm">{tt.name}</div>
+                          <div className="text-xs text-zinc-500 font-mono">
+                            {tt.id} · {tt.currency || "HKD"} {Number(tt.price) || 0}
+                            {tt.enabled === false ? " · disabled" : ""}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <label className="text-xs text-zinc-500">Qty</label>
+                          <input
+                            type="number"
+                            min={0}
+                            max={50}
+                            disabled={tt.enabled === false}
+                            value={issueQtys[tt.id] ?? 0}
+                            onChange={(e) =>
+                              setIssueQtys((prev) => ({
+                                ...prev,
+                                [tt.id]: Math.max(0, Math.floor(Number(e.target.value) || 0)),
+                              }))
+                            }
+                            className="w-20 border rounded-lg px-2 py-1.5 text-sm text-center"
+                          />
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+                {issueTicketCount > 0 && (
+                  <p className="mt-2 text-sm text-zinc-600">
+                    Catalog total:{" "}
+                    <strong>
+                      {issueEvent.ticketTypes?.[0]?.currency || "HKD"}{" "}
+                      {issueCatalogTotal.toLocaleString()}
+                    </strong>{" "}
+                    · {issueTicketCount} ticket{issueTicketCount === 1 ? "" : "s"}
+                  </p>
+                )}
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="sm:col-span-2">
+                <label className="text-xs font-medium text-zinc-500">Buyer name</label>
+                <input
+                  value={issueBuyerName}
+                  onChange={(e) => setIssueBuyerName(e.target.value)}
+                  required
+                  placeholder="Full name"
+                  className="mt-1 w-full border rounded-lg px-3 py-2 text-sm"
+                />
+              </div>
+              <div>
+                <label className="text-xs font-medium text-zinc-500">Phone</label>
+                <input
+                  value={issueBuyerPhone}
+                  onChange={(e) => setIssueBuyerPhone(e.target.value)}
+                  required
+                  type="tel"
+                  placeholder="+852 …"
+                  className="mt-1 w-full border rounded-lg px-3 py-2 text-sm"
+                />
+              </div>
+              <div>
+                <label className="text-xs font-medium text-zinc-500">Email</label>
+                <input
+                  value={issueBuyerEmail}
+                  onChange={(e) => setIssueBuyerEmail(e.target.value)}
+                  required
+                  type="email"
+                  placeholder="for ticket confirmation"
+                  className="mt-1 w-full border rounded-lg px-3 py-2 text-sm"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="text-xs font-medium text-zinc-500">Payment method</label>
+                <select
+                  value={issuePaymentMethod}
+                  onChange={(e) => setIssuePaymentMethod(e.target.value)}
+                  className="mt-1 w-full border rounded-lg px-3 py-2.5 text-sm bg-white"
+                >
+                  <option value="cash">Cash</option>
+                  <option value="bank_transfer">Bank transfer</option>
+                  <option value="fps">FPS</option>
+                  <option value="alipay_offline">Alipay (offline / proof)</option>
+                  <option value="wechat_offline">WeChat Pay (offline / proof)</option>
+                  <option value="other">Other</option>
+                  <option value="free">Free / complimentary</option>
+                </select>
+              </div>
+              <div>
+                <label className="text-xs font-medium text-zinc-500">
+                  Amount override (optional)
+                </label>
+                <input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={issueAmountOverride}
+                  onChange={(e) => setIssueAmountOverride(e.target.value)}
+                  placeholder={
+                    issuePaymentMethod === "free"
+                      ? "0 (free)"
+                      : `Default ${issueCatalogTotal}`
+                  }
+                  disabled={issuePaymentMethod === "free"}
+                  className="mt-1 w-full border rounded-lg px-3 py-2 text-sm disabled:bg-zinc-100"
+                />
+                <p className="mt-1 text-[11px] text-zinc-400">
+                  Leave blank to use catalog total. Free method forces 0.
+                </p>
+              </div>
+              <div className="sm:col-span-2">
+                <label className="text-xs font-medium text-zinc-500">
+                  Payment proof note (optional)
+                </label>
+                <input
+                  value={issueNote}
+                  onChange={(e) => setIssueNote(e.target.value)}
+                  placeholder="e.g. FPS ref, bank last 4 digits, receipt no."
+                  maxLength={120}
+                  className="mt-1 w-full border rounded-lg px-3 py-2 text-sm"
+                />
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-3 pt-2 border-t">
+              <button
+                type="submit"
+                disabled={issueSubmitting || !issueEventSlug || issueTicketCount === 0}
+                className="rounded-lg bg-amber-700 px-4 py-2.5 text-sm font-medium text-white hover:bg-amber-800 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {issueSubmitting ? "Issuing…" : "Issue tickets"}
+              </button>
+              <button
+                type="button"
+                onClick={resetIssueForm}
+                className="rounded-lg border px-4 py-2.5 text-sm text-zinc-700 hover:bg-zinc-50"
+              >
+                Clear form
+              </button>
+              <p className="text-xs text-zinc-500 w-full sm:w-auto sm:ml-auto">
+                Creates a <span className="font-mono">MAN-…</span> order. Buyer gets the usual confirmation email when possible.
+              </p>
+            </div>
+          </form>
         </div>
       )}
 

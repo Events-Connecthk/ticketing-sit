@@ -36,12 +36,17 @@ import { expandTicketsWithSerials } from "../tickets/serials";
 const processedPaymentRefs = new Map<string, string>(); // paymentRef → orderReference
 
 /**
- * Main entry point after a successful KPay payment.
- * Call this from the success callback / webhook handler.
+ * Main entry point after a successful payment (KPay webhook, free reg, or admin manual issue).
  */
 export async function processSuccessfulPurchase(
   cart: OrderCart,
-  paymentReference: string
+  paymentReference: string,
+  opts?: {
+    /** Override stored payment_method (e.g. cash, bank_transfer, kpay) */
+    paymentMethod?: string;
+    /** Order ref prefix; default KPY-, manual uses MAN- */
+    orderPrefix?: string;
+  }
 ): Promise<OrderCreationResult> {
   console.log("[OrderService] Starting post-payment processing for", cart.eventSlug, paymentReference);
 
@@ -84,13 +89,28 @@ export async function processSuccessfulPurchase(
     const totalTickets = cart.tickets.reduce((sum, t) => sum + t.quantity, 0);
 
     // 2. Persist our own purchase record (for admin dashboard, reporting, exports)
-    const orderReference = `KPY-${Date.now()}`;
+    const prefix =
+      opts?.orderPrefix ||
+      (paymentReference.startsWith("MAN-")
+        ? "MAN"
+        : paymentReference.startsWith("FREE")
+          ? "FREE"
+          : "KPY");
+    const orderReference = `${prefix}-${Date.now()}`;
     if (paymentReference) {
       processedPaymentRefs.set(paymentReference, orderReference);
     }
 
-    // One order row; many scannable serials KPY-…-001, -002, …
+    // One order row; many scannable serials …-001, -002, …
     const ticketUnits = expandTicketsWithSerials(orderReference, cart.tickets);
+
+    const paymentMethod =
+      opts?.paymentMethod ||
+      (paymentReference.startsWith("FREE")
+        ? "free"
+        : paymentReference.startsWith("MAN-")
+          ? "manual"
+          : "kpay");
 
     const purchaseRecord: Omit<PurchaseRecord, "id"> = {
       bought_at: new Date().toISOString(),
@@ -98,7 +118,7 @@ export async function processSuccessfulPurchase(
       phone: cart.buyer.phone,
       email: cart.buyer.email,
       number_of_tickets: ticketUnits.length || totalTickets,
-      payment_method: paymentReference.startsWith("FREE") ? "free" : "kpay",
+      payment_method: paymentMethod,
       amount: cart.totalAmount,
       currency: cart.currency,
       event_slug: cart.eventSlug,
