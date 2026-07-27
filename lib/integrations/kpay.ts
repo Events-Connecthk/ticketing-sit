@@ -238,12 +238,7 @@ async function kpayRequest<T = any>(
   }
 
   try {
-    const res = await fetch(url, {
-      method,
-      headers,
-      body: method === "POST" ? rawBody : undefined,
-      cache: "no-store",
-    });
+    const res = await kpayHttpFetch(method, url, headers, rawBody);
 
     const raw = await res.text();
     let data: T | null = null;
@@ -262,6 +257,9 @@ async function kpayRequest<T = any>(
               request: {
                 method,
                 url,
+                viaEgressProxy: Boolean(
+                  (process.env.KPAY_EGRESS_PROXY_URL || "").trim()
+                ),
                 headers: {
                   ...headers,
                   // Keep signature so KPay can match the call; do not log private key
@@ -307,6 +305,56 @@ async function kpayRequest<T = any>(
       signMode,
     };
   }
+}
+
+/**
+ * Direct fetch, or via cPanel egress proxy so KPay sees a fixed outbound IP.
+ *
+ * Env:
+ *   KPAY_EGRESS_PROXY_URL=https://your-cpanel-domain.com/kpay-egress-proxy.php
+ *   KPAY_EGRESS_PROXY_SECRET=<same as PROXY_SECRET in the PHP file>
+ */
+async function kpayHttpFetch(
+  method: "GET" | "POST",
+  url: string,
+  headers: Record<string, string>,
+  rawBody: string
+): Promise<Response> {
+  const proxyUrl = (process.env.KPAY_EGRESS_PROXY_URL || "").trim();
+  const proxySecret = (process.env.KPAY_EGRESS_PROXY_SECRET || "").trim();
+
+  if (!proxyUrl) {
+    return fetch(url, {
+      method,
+      headers,
+      body: method === "POST" ? rawBody : undefined,
+      cache: "no-store",
+    });
+  }
+
+  if (!proxySecret) {
+    console.error(
+      "[KPay] KPAY_EGRESS_PROXY_URL set but KPAY_EGRESS_PROXY_SECRET missing"
+    );
+    throw new Error("KPay egress proxy secret not configured");
+  }
+
+  console.log("[KPay] Using egress proxy for", method, url);
+
+  return fetch(proxyUrl, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Egress-Secret": proxySecret,
+    },
+    body: JSON.stringify({
+      method,
+      url,
+      headers,
+      body: method === "POST" ? rawBody : "",
+    }),
+    cache: "no-store",
+  });
 }
 
 function productIconUrl(): string {
