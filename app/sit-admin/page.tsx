@@ -41,8 +41,11 @@ export default function AdminDashboard() {
 
   // ===== NEW: Admin Tabs and Event Management =====
   const [activeTab, setActiveTab] = useState<
-    "purchases" | "events" | "scanner" | "attendance" | "issue"
+    "dashboard" | "purchases" | "events" | "scanner" | "attendance" | "issue"
   >("purchases");
+
+  /** Event stats dashboard */
+  const [dashEventSlug, setDashEventSlug] = useState("");
 
   // ===== Manual ticket issue (cash / offline proof) =====
   const [issueEventSlug, setIssueEventSlug] = useState("");
@@ -183,6 +186,109 @@ export default function AdminDashboard() {
     } catch {
       toast.error("Could not copy");
     }
+  }
+
+  const DASH_COLORS = [
+    "#0f766e",
+    "#b45309",
+    "#1d4ed8",
+    "#be123c",
+    "#7c3aed",
+    "#047857",
+    "#c2410c",
+    "#0369a1",
+  ];
+
+  /** Aggregate stats + chart data for the Dashboard tab (one event). */
+  function buildEventDashboard(eventSlug: string) {
+    const event = events.find((e) => e.slug === eventSlug) || null;
+    const rows = purchases.filter((p) => p.event_slug === eventSlug);
+
+    const soldByType: Record<string, number> = {};
+    let ticketsSold = 0;
+    let revenue = 0;
+    const byDay = new Map<string, { tickets: number; revenue: number; orders: number }>();
+
+    for (const p of rows) {
+      revenue += Number(p.amount) || 0;
+      const units = p.ticket_breakdown || [];
+      let orderTickets = 0;
+      if (units.length > 0) {
+        for (const u of units as any[]) {
+          const id = String(u.ticketTypeId || "unknown");
+          const q = u.serial ? 1 : Math.max(1, Number(u.quantity) || 1);
+          soldByType[id] = (soldByType[id] || 0) + q;
+          orderTickets += q;
+        }
+      } else {
+        orderTickets = Math.max(1, Number(p.number_of_tickets) || 1);
+        soldByType["_order"] = (soldByType["_order"] || 0) + orderTickets;
+      }
+      ticketsSold += orderTickets;
+
+      const day = (p.bought_at || "").slice(0, 10) || "unknown";
+      const prev = byDay.get(day) || { tickets: 0, revenue: 0, orders: 0 };
+      byDay.set(day, {
+        tickets: prev.tickets + orderTickets,
+        revenue: prev.revenue + (Number(p.amount) || 0),
+        orders: prev.orders + 1,
+      });
+    }
+
+    const typeRows = (event?.ticketTypes || []).map((tt, i) => {
+      const sold = soldByType[tt.id] || 0;
+      const cap =
+        tt.quantityAvailable != null && !Number.isNaN(Number(tt.quantityAvailable))
+          ? Number(tt.quantityAvailable)
+          : null;
+      const left = cap == null ? null : Math.max(0, cap - sold);
+      return {
+        id: tt.id,
+        name: tt.name,
+        sold,
+        cap,
+        left,
+        color: DASH_COLORS[i % DASH_COLORS.length],
+      };
+    });
+
+    // Types sold that are no longer on the event config
+    for (const [id, sold] of Object.entries(soldByType)) {
+      if (id === "_order") continue;
+      if (typeRows.some((t) => t.id === id)) continue;
+      typeRows.push({
+        id,
+        name: id,
+        sold,
+        cap: null,
+        left: null,
+        color: DASH_COLORS[typeRows.length % DASH_COLORS.length],
+      });
+    }
+    if (soldByType["_order"]) {
+      typeRows.push({
+        id: "_order",
+        name: "Unspecified (legacy)",
+        sold: soldByType["_order"],
+        cap: null,
+        left: null,
+        color: "#71717a",
+      });
+    }
+
+    const timeline = Array.from(byDay.entries())
+      .filter(([d]) => d !== "unknown")
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([date, v]) => ({ date, ...v }));
+
+    return {
+      event,
+      orderCount: rows.length,
+      ticketsSold,
+      revenue,
+      typeRows,
+      timeline,
+    };
   }
 
   function setScanFeedback(
@@ -535,9 +641,14 @@ export default function AdminDashboard() {
     })();
   }
 
-  // Reload purchases when viewing purchases or attendance
+  // Reload purchases when viewing purchases, attendance, or dashboard
   useEffect(() => {
-    if (isAuthenticated && (activeTab === "purchases" || activeTab === "attendance")) {
+    if (
+      isAuthenticated &&
+      (activeTab === "purchases" ||
+        activeTab === "attendance" ||
+        activeTab === "dashboard")
+    ) {
       loadPurchases();
     }
   }, [isAuthenticated, activeTab]);
@@ -555,7 +666,8 @@ export default function AdminDashboard() {
         activeTab === "scanner" ||
         activeTab === "attendance" ||
         activeTab === "issue" ||
-        activeTab === "purchases")
+        activeTab === "purchases" ||
+        activeTab === "dashboard")
     ) {
       loadEvents();
     }
@@ -564,6 +676,13 @@ export default function AdminDashboard() {
       stopCameraScanner();
     }
   }, [isAuthenticated, activeTab]);
+
+  // Default dashboard event when list loads
+  useEffect(() => {
+    if (!dashEventSlug && events.length > 0) {
+      setDashEventSlug(events[0].slug);
+    }
+  }, [events, dashEventSlug]);
 
   // Restore session cookie after refresh (httpOnly cookie set by server)
   useEffect(() => {
@@ -1500,6 +1619,12 @@ export default function AdminDashboard() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 pt-4 sm:pt-6">
         <div className="flex border-b overflow-x-auto no-scrollbar -mx-4 px-4 sm:mx-0 sm:px-0 gap-0">
           <button
+            onClick={() => setActiveTab("dashboard")}
+            className={`shrink-0 px-3 sm:px-6 py-3 font-medium text-xs sm:text-sm border-b-2 transition-all whitespace-nowrap ${activeTab === "dashboard" ? "border-violet-600 text-violet-800" : "border-transparent text-zinc-500 hover:text-zinc-700"}`}
+          >
+            Dashboard
+          </button>
+          <button
             onClick={() => setActiveTab("purchases")}
             className={`shrink-0 px-3 sm:px-6 py-3 font-medium text-xs sm:text-sm border-b-2 transition-all whitespace-nowrap ${activeTab === "purchases" ? "border-zinc-900 text-zinc-900" : "border-transparent text-zinc-500 hover:text-zinc-700"}`}
           >
@@ -1537,6 +1662,323 @@ export default function AdminDashboard() {
           </button>
         </div>
       </div>
+
+      {/* DASHBOARD — per-event stats + charts */}
+      {activeTab === "dashboard" && (() => {
+        const dash = dashEventSlug
+          ? buildEventDashboard(dashEventSlug)
+          : null;
+        const pieTotal =
+          dash?.typeRows.reduce((s, t) => s + t.sold, 0) || 0;
+        const maxDayTickets = Math.max(
+          1,
+          ...(dash?.timeline.map((d) => d.tickets) || [1])
+        );
+        const maxDayRevenue = Math.max(
+          1,
+          ...(dash?.timeline.map((d) => d.revenue) || [1])
+        );
+
+        // SVG pie paths
+        let pieAngle = -Math.PI / 2;
+        const pieSlices =
+          dash?.typeRows
+            .filter((t) => t.sold > 0)
+            .map((t) => {
+              const frac = pieTotal > 0 ? t.sold / pieTotal : 0;
+              const start = pieAngle;
+              const sweep = frac * Math.PI * 2;
+              pieAngle += sweep;
+              const end = pieAngle;
+              const r = 80;
+              const cx = 100;
+              const cy = 100;
+              const x1 = cx + r * Math.cos(start);
+              const y1 = cy + r * Math.sin(start);
+              const x2 = cx + r * Math.cos(end);
+              const y2 = cy + r * Math.sin(end);
+              const large = sweep > Math.PI ? 1 : 0;
+              const d =
+                frac >= 0.999
+                  ? `M ${cx} ${cy - r} A ${r} ${r} 0 1 1 ${cx - 0.01} ${cy - r} Z`
+                  : `M ${cx} ${cy} L ${x1} ${y1} A ${r} ${r} 0 ${large} 1 ${x2} ${y2} Z`;
+              return { ...t, d, frac };
+            }) || [];
+
+        return (
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-6">
+            <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4">
+              <div>
+                <h2 className="text-xl font-semibold">Event dashboard</h2>
+                <p className="text-sm text-zinc-600 mt-1">
+                  Tickets sold, remaining inventory, revenue, and simple charts. Admin only — does not change checkout.
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <select
+                  value={dashEventSlug}
+                  onChange={(e) => setDashEventSlug(e.target.value)}
+                  className="rounded-lg border px-3 py-2 text-sm bg-white min-w-[12rem]"
+                >
+                  <option value="">
+                    {eventsLoading ? "Loading events…" : "Select event…"}
+                  </option>
+                  {events.map((ev) => (
+                    <option key={ev.slug} value={ev.slug}>
+                      {ev.name} ({ev.slug})
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  onClick={() => {
+                    loadPurchases();
+                    loadEvents();
+                  }}
+                  disabled={loading || eventsLoading}
+                  className="flex items-center gap-2 rounded-lg border px-3 py-2 text-sm hover:bg-zinc-100"
+                >
+                  <RefreshCw
+                    className={`h-4 w-4 ${loading || eventsLoading ? "animate-spin" : ""}`}
+                  />
+                  Refresh
+                </button>
+              </div>
+            </div>
+
+            {!dashEventSlug && (
+              <div className="rounded-2xl border bg-white p-10 text-center text-zinc-400 text-sm">
+                Select an event to see stats.
+              </div>
+            )}
+
+            {dashEventSlug && dash && (
+              <>
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+                  <div className="rounded-2xl border bg-white p-4 sm:p-5">
+                    <div className="text-xs font-medium text-zinc-500">Tickets sold</div>
+                    <div className="mt-1 text-2xl sm:text-3xl font-semibold tabular-nums">
+                      {dash.ticketsSold}
+                    </div>
+                    <div className="text-[11px] text-zinc-400 mt-1">
+                      {dash.orderCount} order{dash.orderCount === 1 ? "" : "s"}
+                    </div>
+                  </div>
+                  <div className="rounded-2xl border bg-white p-4 sm:p-5">
+                    <div className="text-xs font-medium text-zinc-500">Revenue</div>
+                    <div className="mt-1 text-2xl sm:text-3xl font-semibold tabular-nums">
+                      HKD {dash.revenue.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                    </div>
+                    <div className="text-[11px] text-zinc-400 mt-1">Sum of purchase amounts</div>
+                  </div>
+                  <div className="rounded-2xl border bg-white p-4 sm:p-5">
+                    <div className="text-xs font-medium text-zinc-500">Ticket types</div>
+                    <div className="mt-1 text-2xl sm:text-3xl font-semibold tabular-nums">
+                      {dash.typeRows.filter((t) => t.id !== "_order").length}
+                    </div>
+                    <div className="text-[11px] text-zinc-400 mt-1">On this event</div>
+                  </div>
+                  <div className="rounded-2xl border bg-white p-4 sm:p-5">
+                    <div className="text-xs font-medium text-zinc-500">Inventory left</div>
+                    <div className="mt-1 text-2xl sm:text-3xl font-semibold tabular-nums">
+                      {(() => {
+                        const capped = dash.typeRows.filter((t) => t.cap != null);
+                        if (capped.length === 0) return "∞";
+                        return capped.reduce((s, t) => s + (t.left ?? 0), 0);
+                      })()}
+                    </div>
+                    <div className="text-[11px] text-zinc-400 mt-1">
+                      Types with a sales limit only
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  {/* Pie: sold by type */}
+                  <div className="rounded-2xl border bg-white p-4 sm:p-6">
+                    <h3 className="font-semibold text-sm">Sold by ticket type</h3>
+                    <p className="text-xs text-zinc-500 mt-0.5">Share of tickets sold</p>
+                    {pieTotal === 0 ? (
+                      <p className="mt-8 text-sm text-zinc-400 text-center">No sales yet for this event.</p>
+                    ) : (
+                      <div className="mt-4 flex flex-col sm:flex-row items-center gap-4">
+                        <svg viewBox="0 0 200 200" className="w-44 h-44 shrink-0">
+                          {pieSlices.map((s) => (
+                            <path key={s.id} d={s.d} fill={s.color} stroke="#fff" strokeWidth="1.5" />
+                          ))}
+                          {pieSlices.length === 0 && (
+                            <circle cx="100" cy="100" r="80" fill="#e4e4e7" />
+                          )}
+                        </svg>
+                        <ul className="space-y-2 text-sm w-full min-w-0">
+                          {dash.typeRows
+                            .filter((t) => t.sold > 0)
+                            .map((t) => (
+                              <li key={t.id} className="flex items-center gap-2">
+                                <span
+                                  className="w-3 h-3 rounded-sm shrink-0"
+                                  style={{ background: t.color }}
+                                />
+                                <span className="truncate flex-1">{t.name}</span>
+                                <span className="tabular-nums text-zinc-600 shrink-0">
+                                  {t.sold} ({pieTotal ? Math.round((t.sold / pieTotal) * 100) : 0}%)
+                                </span>
+                              </li>
+                            ))}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Inventory table */}
+                  <div className="rounded-2xl border bg-white p-4 sm:p-6">
+                    <h3 className="font-semibold text-sm">Inventory by type</h3>
+                    <p className="text-xs text-zinc-500 mt-0.5">
+                      Left = limit − sold (∞ if no limit set on the ticket type)
+                    </p>
+                    <div className="mt-4 overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="text-left text-xs text-zinc-500 border-b">
+                            <th className="pb-2 font-medium">Type</th>
+                            <th className="pb-2 font-medium text-right">Sold</th>
+                            <th className="pb-2 font-medium text-right">Limit</th>
+                            <th className="pb-2 font-medium text-right">Left</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y">
+                          {dash.typeRows.length === 0 ? (
+                            <tr>
+                              <td colSpan={4} className="py-6 text-center text-zinc-400">
+                                No ticket types on this event.
+                              </td>
+                            </tr>
+                          ) : (
+                            dash.typeRows.map((t) => (
+                              <tr key={t.id}>
+                                <td className="py-2.5 pr-2">
+                                  <span className="inline-flex items-center gap-2">
+                                    <span
+                                      className="w-2.5 h-2.5 rounded-sm shrink-0"
+                                      style={{ background: t.color }}
+                                    />
+                                    {t.name}
+                                  </span>
+                                </td>
+                                <td className="py-2.5 text-right tabular-nums font-medium">{t.sold}</td>
+                                <td className="py-2.5 text-right tabular-nums text-zinc-600">
+                                  {t.cap == null ? "∞" : t.cap}
+                                </td>
+                                <td
+                                  className={`py-2.5 text-right tabular-nums font-medium ${
+                                    t.left === 0
+                                      ? "text-red-600"
+                                      : t.left != null && t.left <= 50
+                                        ? "text-amber-600"
+                                        : "text-zinc-800"
+                                  }`}
+                                >
+                                  {t.left == null ? "∞" : t.left}
+                                </td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Sales over time */}
+                <div className="rounded-2xl border bg-white p-4 sm:p-6">
+                  <h3 className="font-semibold text-sm">Ticket sales over time</h3>
+                  <p className="text-xs text-zinc-500 mt-0.5">Tickets sold per day (by purchase date)</p>
+                  {!dash.timeline.length ? (
+                    <p className="mt-8 text-sm text-zinc-400 text-center">No dated sales to chart yet.</p>
+                  ) : (
+                    <div className="mt-6 overflow-x-auto">
+                      <div
+                        className="flex items-end gap-1.5 sm:gap-2 min-h-[180px] pb-8 relative"
+                        style={{ minWidth: Math.max(280, dash.timeline.length * 36) }}
+                      >
+                        {dash.timeline.map((d) => {
+                          const h = Math.max(4, (d.tickets / maxDayTickets) * 140);
+                          return (
+                            <div
+                              key={d.date}
+                              className="flex-1 flex flex-col items-center gap-1 min-w-[28px] group relative"
+                            >
+                              <span className="text-[10px] tabular-nums text-zinc-600 opacity-0 group-hover:opacity-100 transition-opacity absolute -top-5 whitespace-nowrap">
+                                {d.tickets} · HKD {d.revenue}
+                              </span>
+                              <div
+                                className="w-full max-w-[40px] rounded-t-md bg-violet-600/90 hover:bg-violet-700 transition-colors"
+                                style={{ height: h }}
+                                title={`${d.date}: ${d.tickets} tickets, HKD ${d.revenue}, ${d.orders} orders`}
+                              />
+                              <span className="text-[9px] text-zinc-400 absolute bottom-0 rotate-[-40deg] origin-top-left translate-y-3 whitespace-nowrap">
+                                {d.date.slice(5)}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                      <div className="mt-4 flex flex-wrap gap-4 text-xs text-zinc-500">
+                        <span>
+                          Peak day tickets:{" "}
+                          <strong className="text-zinc-800">{maxDayTickets}</strong>
+                        </span>
+                        <span>
+                          Peak day revenue:{" "}
+                          <strong className="text-zinc-800">
+                            HKD {maxDayRevenue.toLocaleString()}
+                          </strong>
+                        </span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Revenue bar (same timeline) */}
+                {dash.timeline.length > 0 && (
+                  <div className="rounded-2xl border bg-white p-4 sm:p-6">
+                    <h3 className="font-semibold text-sm">Revenue over time</h3>
+                    <p className="text-xs text-zinc-500 mt-0.5">HKD per day</p>
+                    <div className="mt-6 overflow-x-auto">
+                      <div
+                        className="flex items-end gap-1.5 sm:gap-2 min-h-[160px] pb-8"
+                        style={{ minWidth: Math.max(280, dash.timeline.length * 36) }}
+                      >
+                        {dash.timeline.map((d) => {
+                          const h = Math.max(4, (d.revenue / maxDayRevenue) * 120);
+                          return (
+                            <div
+                              key={d.date}
+                              className="flex-1 flex flex-col items-center min-w-[28px] group relative"
+                            >
+                              <span className="text-[10px] tabular-nums text-zinc-600 opacity-0 group-hover:opacity-100 absolute -top-5 whitespace-nowrap">
+                                HKD {d.revenue}
+                              </span>
+                              <div
+                                className="w-full max-w-[40px] rounded-t-md bg-emerald-600/90 hover:bg-emerald-700"
+                                style={{ height: h }}
+                                title={`${d.date}: HKD ${d.revenue}`}
+                              />
+                              <span className="text-[9px] text-zinc-400 absolute bottom-0 rotate-[-40deg] origin-top-left translate-y-3 whitespace-nowrap">
+                                {d.date.slice(5)}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        );
+      })()}
 
       {/* PURCHASES / REGISTRATION TAB */}
       {activeTab === "purchases" && (
