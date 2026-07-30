@@ -147,6 +147,44 @@ export default function AdminDashboard() {
     return getTicketType(eventSlug, ticketTypeId)?.redemptionLimit ?? 1;
   }
 
+  /** Human labels for ticket types on a purchase, e.g. "Weekend ×1, Day 2 ×1" */
+  function formatPurchaseTicketTypes(p: PurchaseRecord): string {
+    const units = p.ticket_breakdown || [];
+    if (units.length === 0) return "—";
+
+    const counts = new Map<string, number>();
+    for (const u of units as any[]) {
+      const id = String(u.ticketTypeId || "unknown");
+      const q = u.serial ? 1 : Math.max(1, Number(u.quantity) || 1);
+      counts.set(id, (counts.get(id) || 0) + q);
+    }
+
+    return Array.from(counts.entries())
+      .map(([id, q]) => {
+        const name = getTicketType(p.event_slug, id)?.name || id;
+        return q > 1 ? `${name} ×${q}` : name;
+      })
+      .join(", ");
+  }
+
+  function publicEventUrl(slug: string): string {
+    const base = (
+      process.env.NEXT_PUBLIC_SITE_URL ||
+      (typeof window !== "undefined" ? window.location.origin : "") ||
+      "https://ticketing-sit.connecthk.org"
+    ).replace(/\/$/, "");
+    return `${base}/${slug}`;
+  }
+
+  async function copyText(label: string, text: string) {
+    try {
+      await navigator.clipboard.writeText(text);
+      toast.success(`${label} copied`);
+    } catch {
+      toast.error("Could not copy");
+    }
+  }
+
   function setScanFeedback(
     message: string,
     tone: "ok" | "error" | "warn" | "info" = "info",
@@ -516,7 +554,8 @@ export default function AdminDashboard() {
       (activeTab === "events" ||
         activeTab === "scanner" ||
         activeTab === "attendance" ||
-        activeTab === "issue")
+        activeTab === "issue" ||
+        activeTab === "purchases")
     ) {
       loadEvents();
     }
@@ -1562,6 +1601,7 @@ export default function AdminDashboard() {
                   <th className="p-3 sm:p-4 font-medium text-center">#</th>
                   <th className="p-3 sm:p-4 font-medium text-right">Amount</th>
                   <th className="p-3 sm:p-4 font-medium">Event</th>
+                  <th className="p-3 sm:p-4 font-medium">Ticket type</th>
                   <th className="p-3 sm:p-4 font-medium hidden md:table-cell">Order Ref</th>
                   <th className="p-3 sm:p-4 font-medium min-w-[10rem] hidden lg:table-cell">Per-ticket check-ins</th>
                   <th className="p-3 sm:p-4 font-medium">Summary</th>
@@ -1569,10 +1609,10 @@ export default function AdminDashboard() {
               </thead>
               <tbody className="divide-y">
                 {loading && (
-                  <tr><td colSpan={9} className="p-10 text-center text-zinc-400">Loading purchases...</td></tr>
+                  <tr><td colSpan={10} className="p-10 text-center text-zinc-400">Loading purchases...</td></tr>
                 )}
                 {!loading && purchases.length === 0 && (
-                  <tr><td colSpan={9} className="p-10 text-center text-zinc-400">No purchases found.</td></tr>
+                  <tr><td colSpan={10} className="p-10 text-center text-zinc-400">No purchases found.</td></tr>
                 )}
                 {purchases.map((purchase, idx) => (
                   <tr key={purchase.id ?? idx} className="hover:bg-zinc-50/50 align-top">
@@ -1605,6 +1645,9 @@ export default function AdminDashboard() {
                     </td>
                     <td className="p-3 sm:p-4">
                       <span className="font-mono text-xs rounded bg-zinc-100 px-2 py-0.5">{purchase.event_slug}</span>
+                    </td>
+                    <td className="p-3 sm:p-4 text-xs text-zinc-800 max-w-[12rem]">
+                      <span className="leading-snug">{formatPurchaseTicketTypes(purchase)}</span>
                     </td>
                     <td className="p-3 sm:p-4 font-mono text-xs text-zinc-600 hidden md:table-cell break-all">
                       {purchase.order_reference || purchase.payment_reference}
@@ -1748,6 +1791,7 @@ export default function AdminDashboard() {
                 <tr className="border-b bg-zinc-50">
                   <th className="p-4 text-left">Event</th>
                   <th className="p-4 text-left">Date / Location</th>
+                  <th className="p-4 text-left">Ticketing URL</th>
                   <th className="p-4 text-center">Ticket Types</th>
                   <th className="p-4 text-center">Status</th>
                   <th className="p-4 text-right">Actions</th>
@@ -1755,16 +1799,17 @@ export default function AdminDashboard() {
               </thead>
               <tbody className="divide-y">
                 {eventsLoading && (
-                  <tr><td colSpan={5} className="p-8 text-center text-zinc-400">Loading events...</td></tr>
+                  <tr><td colSpan={6} className="p-8 text-center text-zinc-400">Loading events...</td></tr>
                 )}
                 {!eventsLoading && events.length === 0 && (
-                  <tr><td colSpan={5} className="p-8 text-center text-zinc-400">
+                  <tr><td colSpan={6} className="p-8 text-center text-zinc-400">
                     No events yet.<br />
                     Click "Add New Event" or use the "Seed Demo" button above to get started.
                   </td></tr>
                 )}
                 {events.map((ev) => {
                   const isEnabled = ev.enabled !== false;
+                  const url = publicEventUrl(ev.slug);
                   return (
                     <tr key={ev.slug} className="hover:bg-zinc-50/60">
                       <td className="p-4">
@@ -1774,6 +1819,27 @@ export default function AdminDashboard() {
                       <td className="p-4 text-sm">
                         <div>{ev.date} {ev.time && `• ${ev.time}`}</div>
                         <div className="text-zinc-500">{ev.location}</div>
+                      </td>
+                      <td className="p-4">
+                        <div className="flex flex-col sm:flex-row sm:items-center gap-1.5 max-w-xs">
+                          <a
+                            href={url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="font-mono text-[11px] text-blue-700 hover:underline break-all"
+                          >
+                            {url}
+                          </a>
+                          <button
+                            type="button"
+                            onClick={() => copyText("Ticketing URL", url)}
+                            className="inline-flex items-center gap-1 self-start text-xs px-2 py-1 rounded-lg border hover:bg-zinc-50 text-zinc-700 shrink-0"
+                            title="Copy ticketing page URL"
+                          >
+                            <Copy className="h-3 w-3" />
+                            Copy
+                          </button>
+                        </div>
                       </td>
                       <td className="p-4 text-center">
                         <div className="text-xs text-zinc-500">
@@ -2038,12 +2104,13 @@ export default function AdminDashboard() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b bg-zinc-50 text-left">
-                  <th className="p-4 font-medium">Redeemed At</th>
-                  <th className="p-4 font-medium">Ticket ID</th>
+                  <th className="p-4 font-medium">Check-in time</th>
+                  <th className="p-4 font-medium">Ticket details</th>
                   <th className="p-4 font-medium">Name</th>
-                  <th className="p-4 font-medium">Email / Phone</th>
+                  <th className="p-4 font-medium">Phone</th>
+                  <th className="p-4 font-medium hidden sm:table-cell">Email</th>
                   <th className="p-4 font-medium">Event</th>
-                  <th className="p-4 font-medium">Order Ref</th>
+                  <th className="p-4 font-medium hidden md:table-cell">Order Ref</th>
                 </tr>
               </thead>
               <tbody className="divide-y">
@@ -2053,6 +2120,7 @@ export default function AdminDashboard() {
                     key: string;
                     redeemedAt: string;
                     ticketId: string;
+                    ticketTypeLabel: string;
                     name: string;
                     email: string;
                     phone: string;
@@ -2067,10 +2135,15 @@ export default function AdminDashboard() {
                       for (const u of units as any[]) {
                         const last = u.redemptions?.[u.redemptions.length - 1];
                         if (!last) continue;
+                        const typeName =
+                          getTicketType(p.event_slug, u.ticketTypeId)?.name ||
+                          u.ticketTypeId ||
+                          "—";
                         rows.push({
                           key: `${p.id}-${u.serial}-${last}`,
                           redeemedAt: last,
                           ticketId: u.serial,
+                          ticketTypeLabel: typeName,
                           name: p.name,
                           email: p.email,
                           phone: p.phone,
@@ -2085,6 +2158,7 @@ export default function AdminDashboard() {
                         key: String(p.id ?? p.order_reference),
                         redeemedAt: latest,
                         ticketId: p.order_reference || "—",
+                        ticketTypeLabel: formatPurchaseTicketTypes(p),
                         name: p.name,
                         email: p.email,
                         phone: p.phone,
@@ -2098,7 +2172,7 @@ export default function AdminDashboard() {
                   if (rows.length === 0) {
                     return (
                       <tr>
-                        <td colSpan={6} className="p-10 text-center text-zinc-400">
+                        <td colSpan={7} className="p-10 text-center text-zinc-400">
                           {loading ? "Loading..." : "No redeemed tickets yet. Use Scanner → Mark Redeemed (or camera)."}
                         </td>
                       </tr>
@@ -2109,16 +2183,25 @@ export default function AdminDashboard() {
                       <td className="p-4 text-xs text-emerald-700 font-medium whitespace-nowrap">
                         {formatDateTime(row.redeemedAt)}
                       </td>
-                      <td className="p-4 font-mono text-xs">{row.ticketId}</td>
+                      <td className="p-4 text-xs">
+                        <div className="font-medium text-zinc-900">{row.ticketTypeLabel}</div>
+                        <div className="font-mono text-[11px] text-zinc-600 mt-0.5 break-all">
+                          {row.ticketId}
+                        </div>
+                      </td>
                       <td className="p-4 font-medium">{row.name}</td>
-                      <td className="p-4 text-sm">
-                        <div>{row.email}</div>
-                        <div className="text-xs text-zinc-500">{row.phone}</div>
+                      <td className="p-4 text-sm font-medium text-zinc-800 whitespace-nowrap">
+                        {row.phone || "—"}
+                      </td>
+                      <td className="p-4 text-sm text-zinc-600 hidden sm:table-cell break-all">
+                        {row.email || "—"}
                       </td>
                       <td className="p-4">
                         <span className="font-mono text-xs rounded bg-zinc-100 px-2 py-0.5">{row.event}</span>
                       </td>
-                      <td className="p-4 font-mono text-xs text-zinc-600">{row.orderRef}</td>
+                      <td className="p-4 font-mono text-xs text-zinc-600 hidden md:table-cell break-all">
+                        {row.orderRef}
+                      </td>
                     </tr>
                   ));
                 })()}
