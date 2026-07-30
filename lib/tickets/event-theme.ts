@@ -1,14 +1,19 @@
 /**
- * Optional per-event brand colours for the public ticketing page.
- * Stored in event.metadata.primaryColor / secondaryColor.
- * Missing or invalid values → current white-gold defaults (no visual change).
+ * Optional per-event full theme for the public ticketing page.
+ * Stored in event.metadata:
+ *   primaryColor, secondaryColor, backgroundColor, surfaceColor
+ * Missing or invalid → current white-gold defaults (no visual change).
+ *
+ * Body/heading text stays dark for readability (not free-picked).
  */
 
 export const DEFAULT_PRIMARY = "#C5A26E";
 export const DEFAULT_SECONDARY = "#6B5E50";
 export const DEFAULT_PAGE_BG = "#FAF8F5";
+export const DEFAULT_SURFACE = "#FFFFFF";
 export const DEFAULT_BORDER = "#EDE4D3";
 export const DEFAULT_TEXT = "#2C2520";
+export const DEFAULT_TEXT_BODY = "#3A2F23";
 
 export function normalizeHexColor(
   value: unknown,
@@ -54,9 +59,10 @@ export type EventTheme = {
   primaryDark: string;
   primaryLight: string;
   pageBg: string;
+  surface: string;
   border: string;
   text: string;
-  /** CSS custom properties for the event page root */
+  textBody: string;
   cssVars: Record<string, string>;
 };
 
@@ -66,66 +72,102 @@ export function getEventTheme(
   const m = (event?.metadata || {}) as Record<string, unknown>;
   const primary = normalizeHexColor(m.primaryColor, DEFAULT_PRIMARY);
   const secondary = normalizeHexColor(m.secondaryColor, DEFAULT_SECONDARY);
+  const pageBg = normalizeHexColor(m.backgroundColor, DEFAULT_PAGE_BG);
+  const surface = normalizeHexColor(m.surfaceColor, DEFAULT_SURFACE);
   const primaryDark = shadeHex(primary, -0.18);
   const primaryLight = shadeHex(primary, 0.35);
+  // Soft border: slight blend of secondary into page bg (or fixed default)
+  const border =
+    m.backgroundColor || m.surfaceColor
+      ? shadeHex(pageBg, -0.08)
+      : DEFAULT_BORDER;
 
   return {
     primary,
     secondary,
     primaryDark,
     primaryLight,
-    pageBg: DEFAULT_PAGE_BG,
-    border: DEFAULT_BORDER,
+    pageBg,
+    surface,
+    border,
     text: DEFAULT_TEXT,
+    textBody: DEFAULT_TEXT_BODY,
     cssVars: {
-      // Drive existing .btn-gold / .gold-gradient via inherited CSS vars
       "--gold": primary,
       "--gold-dark": primaryDark,
       "--gold-light": primaryLight,
       "--text-muted": secondary,
-      "--border": DEFAULT_BORDER,
+      "--border": border,
+      "--bg": pageBg,
+      "--surface": surface,
       "--event-primary": primary,
       "--event-secondary": secondary,
-      background: DEFAULT_PAGE_BG,
+      "--event-bg": pageBg,
+      "--event-surface": surface,
+      "--event-text": DEFAULT_TEXT,
+      "--event-text-body": DEFAULT_TEXT_BODY,
+      background: pageBg,
       color: DEFAULT_TEXT,
     },
   };
 }
 
+export type ThemeFormFields = {
+  primaryColor: string;
+  secondaryColor: string;
+  backgroundColor: string;
+  surfaceColor: string;
+};
+
 export function readThemeFromMetadata(
   metadata?: Record<string, unknown> | null
-): { primaryColor: string; secondaryColor: string } {
+): ThemeFormFields {
   const m = metadata || {};
+  const pick = (key: string) =>
+    typeof m[key] === "string" && /^#/.test(String(m[key]))
+      ? String(m[key])
+      : "";
   return {
-    primaryColor:
-      typeof m.primaryColor === "string" && /^#/.test(m.primaryColor)
-        ? m.primaryColor
-        : "",
-    secondaryColor:
-      typeof m.secondaryColor === "string" && /^#/.test(m.secondaryColor)
-        ? m.secondaryColor
-        : "",
+    primaryColor: pick("primaryColor"),
+    secondaryColor: pick("secondaryColor"),
+    backgroundColor: pick("backgroundColor"),
+    surfaceColor: pick("surfaceColor"),
   };
 }
 
-/** Merge colour fields into metadata; empty string removes override (back to default). */
+function applyColorField(
+  next: Record<string, unknown>,
+  key: string,
+  value: string,
+  fallback: string
+) {
+  const v = value.trim();
+  if (v && /^#[0-9A-Fa-f]{3,6}$/.test(v)) {
+    next[key] = normalizeHexColor(v, fallback);
+  } else {
+    delete next[key];
+  }
+}
+
+/** Merge theme fields into metadata; empty string removes override. */
 export function mergeThemeMetadata(
   existing: Record<string, unknown> | null | undefined,
-  primaryColor: string,
-  secondaryColor: string
+  fields: ThemeFormFields
 ): Record<string, unknown> {
   const next: Record<string, unknown> = { ...(existing || {}) };
-  const p = primaryColor.trim();
-  const s = secondaryColor.trim();
-  if (p && /^#[0-9A-Fa-f]{3,6}$/.test(p)) {
-    next.primaryColor = normalizeHexColor(p, DEFAULT_PRIMARY);
-  } else {
-    delete next.primaryColor;
-  }
-  if (s && /^#[0-9A-Fa-f]{3,6}$/.test(s)) {
-    next.secondaryColor = normalizeHexColor(s, DEFAULT_SECONDARY);
-  } else {
-    delete next.secondaryColor;
-  }
+  applyColorField(next, "primaryColor", fields.primaryColor, DEFAULT_PRIMARY);
+  applyColorField(
+    next,
+    "secondaryColor",
+    fields.secondaryColor,
+    DEFAULT_SECONDARY
+  );
+  applyColorField(
+    next,
+    "backgroundColor",
+    fields.backgroundColor,
+    DEFAULT_PAGE_BG
+  );
+  applyColorField(next, "surfaceColor", fields.surfaceColor, DEFAULT_SURFACE);
   return next;
 }

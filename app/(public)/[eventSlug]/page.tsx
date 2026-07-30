@@ -210,15 +210,29 @@ export default function EventPage({ params }: EventPageProps) {
         </div>
       )}
 
-      {/* Hero / Event Header — colours from event theme (defaults = current white-gold) */}
-      <div className="bg-white border-b" style={{ borderColor: "var(--border)" }}>
+      {/* Hero — surface + accents; body text stays dark for readability */}
+      <div
+        className="border-b"
+        style={{
+          background: "var(--event-surface)",
+          borderColor: "var(--border)",
+        }}
+      >
         <div className="max-w-4xl mx-auto px-6 pt-14 pb-10">
           <div className="flex flex-col gap-2">
             <div className="inline-flex items-center gap-2 text-sm" style={{ color: "var(--event-secondary)" }}>
               <span className="uppercase tracking-[1.5px] font-medium">Live Event</span>
             </div>
-            <h1 className="text-5xl font-semibold tracking-tighter" style={{ color: "var(--text, #2C2520)" }}>{event.name}</h1>
-            <div className="mt-3 flex flex-wrap items-center gap-x-6 gap-y-2" style={{ color: "#3A2F23" }}>
+            <h1
+              className="text-5xl font-semibold tracking-tighter"
+              style={{ color: "var(--event-text)" }}
+            >
+              {event.name}
+            </h1>
+            <div
+              className="mt-3 flex flex-wrap items-center gap-x-6 gap-y-2"
+              style={{ color: "var(--event-text-body)" }}
+            >
               <div className="flex items-center gap-2">
                 <Calendar className="h-4 w-4" style={{ color: "var(--event-secondary)" }} /> {event.date} {event.time && `• ${event.time}`}
               </div>
@@ -232,7 +246,12 @@ export default function EventPage({ params }: EventPageProps) {
           </div>
 
           {event.description && (
-            <p className="mt-6 max-w-2xl text-lg leading-relaxed" style={{ color: "#3A2F23" }}>{event.description}</p>
+            <p
+              className="mt-6 max-w-2xl text-lg leading-relaxed"
+              style={{ color: "var(--event-text-body)" }}
+            >
+              {event.description}
+            </p>
           )}
         </div>
       </div>
@@ -281,7 +300,13 @@ export default function EventPage({ params }: EventPageProps) {
                   <p className="text-sm text-zinc-600 mt-1">We need this information to issue your tickets.</p>
                 </div>
 
-                <div className="rounded-2xl border bg-white p-6">
+                <div
+                  className="rounded-2xl border p-6"
+                  style={{
+                    background: "var(--event-surface)",
+                    borderColor: "var(--border)",
+                  }}
+                >
                   <form onSubmit={(e) => {
                     e.preventDefault();
                     const base: BuyerInfo = {
@@ -425,7 +450,13 @@ export default function EventPage({ params }: EventPageProps) {
           {/* Sidebar summary */}
           <div className="lg:col-span-5">
             <div className="sticky top-8 space-y-6">
-              <div className="rounded-2xl border card p-6" style={{ borderColor: "var(--border)" }}>
+              <div
+                className="rounded-2xl border card p-6"
+                style={{
+                  background: "var(--event-surface)",
+                  borderColor: "var(--border)",
+                }}
+              >
                 <div className="uppercase text-xs tracking-[1px] font-medium mb-3" style={{ color: "var(--event-secondary)" }}>Order Summary</div>
 
                 {totalTickets > 0 ? (
@@ -460,7 +491,13 @@ export default function EventPage({ params }: EventPageProps) {
               </div>
 
               {buyer && step === "details" && (
-                <div className="rounded-2xl border bg-white p-6 text-sm">
+                <div
+                  className="rounded-2xl border p-6 text-sm"
+                  style={{
+                    background: "var(--event-surface)",
+                    borderColor: "var(--border)",
+                  }}
+                >
                   <div className="font-medium mb-2">Attendee Information</div>
                   <div>{buyer.name}</div>
                   <div className="text-zinc-600">{buyer.email}</div>

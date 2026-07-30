@@ -19,8 +19,10 @@ import { toast } from "sonner";
 import { formatHkDateTime, formatHkTime } from "@/lib/time/hk";
 import { BannerCropModal } from "@/components/admin/BannerCropModal";
 import {
+  DEFAULT_PAGE_BG,
   DEFAULT_PRIMARY,
   DEFAULT_SECONDARY,
+  DEFAULT_SURFACE,
   mergeThemeMetadata,
   readThemeFromMetadata,
 } from "@/lib/tickets/event-theme";
@@ -93,6 +95,8 @@ export default function AdminDashboard() {
     /** Empty = use default white-gold theme */
     primaryColor: "",
     secondaryColor: "",
+    backgroundColor: "",
+    surfaceColor: "",
   });
   const [buyerFormFields, setBuyerFormFields] = useState<BuyerFormField[]>([]);
   const [ticketTypesForm, setTicketTypesForm] = useState<TicketType[]>([]);
@@ -990,6 +994,8 @@ export default function AdminDashboard() {
       ticketTemplate: "",
       primaryColor: "",
       secondaryColor: "",
+      backgroundColor: "",
+      surfaceColor: "",
     });
     setTicketTypesForm([]);
     setBuyerFormFields([]);
@@ -1061,6 +1067,8 @@ export default function AdminDashboard() {
       ticketTemplate: ev.ticketTemplate || "",
       primaryColor: theme.primaryColor,
       secondaryColor: theme.secondaryColor,
+      backgroundColor: theme.backgroundColor,
+      surfaceColor: theme.surfaceColor,
     });
     setTicketTypesForm(
       (ev.ticketTypes || []).map((t) => ({
@@ -1122,6 +1130,8 @@ export default function AdminDashboard() {
       ticketTemplate: ev.ticketTemplate || "",
       primaryColor: theme.primaryColor,
       secondaryColor: theme.secondaryColor,
+      backgroundColor: theme.backgroundColor,
+      surfaceColor: theme.surfaceColor,
     });
     setTicketTypesForm([...(ev.ticketTypes || [])]);
     setBuyerFormFields([...(ev.buyerFormFields || [])]);
@@ -1388,8 +1398,12 @@ export default function AdminDashboard() {
       discountCodes: [...discountCodesForm],
       metadata: mergeThemeMetadata(
         (editingEvent?.metadata as Record<string, unknown>) || {},
-        eventForm.primaryColor,
-        eventForm.secondaryColor
+        {
+          primaryColor: eventForm.primaryColor,
+          secondaryColor: eventForm.secondaryColor,
+          backgroundColor: eventForm.backgroundColor,
+          surfaceColor: eventForm.surfaceColor,
+        }
       ),
     };
 
@@ -3074,108 +3088,140 @@ export default function AdminDashboard() {
                   </p>
                 </div>
 
-                {/* Page brand colours (public ticketing page) */}
+                {/* Full page theme (public ticketing page) */}
                 <div className="md:col-span-2 rounded-xl border bg-zinc-50/80 p-4 space-y-3">
-                  <div>
-                    <div className="text-xs font-medium text-zinc-600">Ticketing page colours</div>
-                    <p className="text-[11px] text-zinc-500 mt-0.5">
-                      Optional. Leave empty to keep the default white-gold look. Primary = buttons/accents; secondary = labels/muted text.
-                    </p>
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <div>
+                      <div className="text-xs font-medium text-zinc-600">
+                        Ticketing page theme
+                      </div>
+                      <p className="text-[11px] text-zinc-500 mt-0.5">
+                        Optional full theme. Leave empty for default white-gold. Body text stays
+                        dark for readability.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      className="text-xs text-zinc-500 hover:text-black underline shrink-0"
+                      onClick={() =>
+                        setEventForm({
+                          ...eventForm,
+                          primaryColor: "",
+                          secondaryColor: "",
+                          backgroundColor: "",
+                          surfaceColor: "",
+                        })
+                      }
+                    >
+                      Reset all to default
+                    </button>
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div>
-                      <label className="text-xs font-medium text-zinc-500">Primary</label>
-                      <div className="mt-1 flex items-center gap-2">
-                        <input
-                          type="color"
-                          value={
-                            /^#[0-9A-Fa-f]{6}$/.test(eventForm.primaryColor)
-                              ? eventForm.primaryColor
-                              : DEFAULT_PRIMARY
-                          }
-                          onChange={(e) =>
-                            setEventForm({ ...eventForm, primaryColor: e.target.value })
-                          }
-                          className="h-10 w-12 cursor-pointer rounded border bg-white p-0.5"
-                          title="Primary colour"
-                        />
-                        <input
-                          type="text"
-                          value={eventForm.primaryColor}
-                          onChange={(e) =>
-                            setEventForm({ ...eventForm, primaryColor: e.target.value })
-                          }
-                          placeholder={DEFAULT_PRIMARY}
-                          className="flex-1 border rounded-lg px-3 py-2 text-sm font-mono"
-                        />
-                        {eventForm.primaryColor && (
-                          <button
-                            type="button"
-                            className="text-xs text-zinc-500 hover:text-black underline"
-                            onClick={() =>
-                              setEventForm({ ...eventForm, primaryColor: "" })
+                    {(
+                      [
+                        {
+                          key: "primaryColor" as const,
+                          label: "Primary (buttons / accents)",
+                          fallback: DEFAULT_PRIMARY,
+                        },
+                        {
+                          key: "secondaryColor" as const,
+                          label: "Secondary (labels / muted)",
+                          fallback: DEFAULT_SECONDARY,
+                        },
+                        {
+                          key: "backgroundColor" as const,
+                          label: "Page background",
+                          fallback: DEFAULT_PAGE_BG,
+                        },
+                        {
+                          key: "surfaceColor" as const,
+                          label: "Cards / panels",
+                          fallback: DEFAULT_SURFACE,
+                        },
+                      ] as const
+                    ).map((field) => (
+                      <div key={field.key}>
+                        <label className="text-xs font-medium text-zinc-500">
+                          {field.label}
+                        </label>
+                        <div className="mt-1 flex items-center gap-2">
+                          <input
+                            type="color"
+                            value={
+                              /^#[0-9A-Fa-f]{6}$/.test(eventForm[field.key])
+                                ? eventForm[field.key]
+                                : field.fallback
                             }
-                          >
-                            Reset
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                    <div>
-                      <label className="text-xs font-medium text-zinc-500">Secondary</label>
-                      <div className="mt-1 flex items-center gap-2">
-                        <input
-                          type="color"
-                          value={
-                            /^#[0-9A-Fa-f]{6}$/.test(eventForm.secondaryColor)
-                              ? eventForm.secondaryColor
-                              : DEFAULT_SECONDARY
-                          }
-                          onChange={(e) =>
-                            setEventForm({ ...eventForm, secondaryColor: e.target.value })
-                          }
-                          className="h-10 w-12 cursor-pointer rounded border bg-white p-0.5"
-                          title="Secondary colour"
-                        />
-                        <input
-                          type="text"
-                          value={eventForm.secondaryColor}
-                          onChange={(e) =>
-                            setEventForm({ ...eventForm, secondaryColor: e.target.value })
-                          }
-                          placeholder={DEFAULT_SECONDARY}
-                          className="flex-1 border rounded-lg px-3 py-2 text-sm font-mono"
-                        />
-                        {eventForm.secondaryColor && (
-                          <button
-                            type="button"
-                            className="text-xs text-zinc-500 hover:text-black underline"
-                            onClick={() =>
-                              setEventForm({ ...eventForm, secondaryColor: "" })
+                            onChange={(e) =>
+                              setEventForm({
+                                ...eventForm,
+                                [field.key]: e.target.value,
+                              })
                             }
-                          >
-                            Reset
-                          </button>
-                        )}
+                            className="h-10 w-12 cursor-pointer rounded border bg-white p-0.5"
+                          />
+                          <input
+                            type="text"
+                            value={eventForm[field.key]}
+                            onChange={(e) =>
+                              setEventForm({
+                                ...eventForm,
+                                [field.key]: e.target.value,
+                              })
+                            }
+                            placeholder={field.fallback}
+                            className="flex-1 border rounded-lg px-3 py-2 text-sm font-mono"
+                          />
+                          {eventForm[field.key] && (
+                            <button
+                              type="button"
+                              className="text-xs text-zinc-500 hover:text-black underline"
+                              onClick={() =>
+                                setEventForm({ ...eventForm, [field.key]: "" })
+                              }
+                            >
+                              Reset
+                            </button>
+                          )}
+                        </div>
                       </div>
-                    </div>
+                    ))}
                   </div>
-                  <div className="flex items-center gap-2 text-xs text-zinc-600">
-                    <span
-                      className="inline-block h-6 w-10 rounded"
+                  <div
+                    className="rounded-lg border p-3 text-xs"
+                    style={{
+                      background:
+                        eventForm.backgroundColor || DEFAULT_PAGE_BG,
+                      borderColor: "#e4e4e7",
+                    }}
+                  >
+                    <div
+                      className="rounded-md border p-3"
                       style={{
-                        background: `linear-gradient(135deg, ${
-                          eventForm.primaryColor || DEFAULT_PRIMARY
-                        }, ${eventForm.primaryColor || DEFAULT_PRIMARY})`,
+                        background: eventForm.surfaceColor || DEFAULT_SURFACE,
+                        borderColor: "#e4e4e7",
                       }}
-                    />
-                    <span>Button preview</span>
-                    <span
-                      className="ml-2"
-                      style={{ color: eventForm.secondaryColor || DEFAULT_SECONDARY }}
                     >
-                      Secondary text sample
-                    </span>
+                      <div
+                        className="font-medium"
+                        style={{
+                          color: eventForm.secondaryColor || DEFAULT_SECONDARY,
+                        }}
+                      >
+                        Label preview
+                      </div>
+                      <div className="mt-2 text-[#2C2520]">Body text stays dark</div>
+                      <div
+                        className="mt-2 inline-block rounded px-3 py-1.5 text-white text-[11px] font-medium"
+                        style={{
+                          background:
+                            eventForm.primaryColor || DEFAULT_PRIMARY,
+                        }}
+                      >
+                        Button preview
+                      </div>
+                    </div>
                   </div>
                 </div>
 
