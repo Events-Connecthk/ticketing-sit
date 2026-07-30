@@ -9,6 +9,7 @@ import { Calendar, MapPin, Users } from "lucide-react";
 import { getEventTicketSoldCounts } from "@/app/sit-admin/actions";
 import { getRemaining } from "@/lib/tickets/inventory";
 import { isDiscountCodeActive } from "@/lib/tickets/validity";
+import { getEventTheme } from "@/lib/tickets/event-theme";
 
 /**
  * Dynamic Event Page
@@ -194,8 +195,10 @@ export default function EventPage({ params }: EventPageProps) {
     setStep("tickets");
   };
 
+  const theme = getEventTheme(event);
+
   return (
-    <div className="min-h-screen" style={{ background: '#FAF8F5' }}>
+    <div className="min-h-screen" style={theme.cssVars as React.CSSProperties}>
       {/* Optional Event Banner Image */}
       {event.image && (
         <div className="w-full overflow-hidden">
@@ -207,29 +210,29 @@ export default function EventPage({ params }: EventPageProps) {
         </div>
       )}
 
-      {/* Hero / Event Header - White Gold */}
-      <div className="bg-white border-b border-[#EDE4D3]">
+      {/* Hero / Event Header — colours from event theme (defaults = current white-gold) */}
+      <div className="bg-white border-b" style={{ borderColor: "var(--border)" }}>
         <div className="max-w-4xl mx-auto px-6 pt-14 pb-10">
           <div className="flex flex-col gap-2">
-            <div className="inline-flex items-center gap-2 text-sm" style={{ color: '#6B5E50' }}>
+            <div className="inline-flex items-center gap-2 text-sm" style={{ color: "var(--event-secondary)" }}>
               <span className="uppercase tracking-[1.5px] font-medium">Live Event</span>
             </div>
-            <h1 className="text-5xl font-semibold tracking-tighter text-[#2C2520]">{event.name}</h1>
-            <div className="mt-3 flex flex-wrap items-center gap-x-6 gap-y-2" style={{ color: '#3A2F23' }}>
+            <h1 className="text-5xl font-semibold tracking-tighter" style={{ color: "var(--text, #2C2520)" }}>{event.name}</h1>
+            <div className="mt-3 flex flex-wrap items-center gap-x-6 gap-y-2" style={{ color: "#3A2F23" }}>
               <div className="flex items-center gap-2">
-                <Calendar className="h-4 w-4" /> {event.date} {event.time && `• ${event.time}`}
+                <Calendar className="h-4 w-4" style={{ color: "var(--event-secondary)" }} /> {event.date} {event.time && `• ${event.time}`}
               </div>
               <div className="flex items-center gap-2">
-                <MapPin className="h-4 w-4" /> {event.location}
+                <MapPin className="h-4 w-4" style={{ color: "var(--event-secondary)" }} /> {event.location}
               </div>
               <div className="flex items-center gap-2">
-                <Users className="h-4 w-4" /> Tickets available
+                <Users className="h-4 w-4" style={{ color: "var(--event-secondary)" }} /> Tickets available
               </div>
             </div>
           </div>
 
           {event.description && (
-            <p className="mt-6 max-w-2xl text-lg leading-relaxed" style={{ color: '#3A2F23' }}>{event.description}</p>
+            <p className="mt-6 max-w-2xl text-lg leading-relaxed" style={{ color: "#3A2F23" }}>{event.description}</p>
           )}
         </div>
       </div>
@@ -422,8 +425,8 @@ export default function EventPage({ params }: EventPageProps) {
           {/* Sidebar summary */}
           <div className="lg:col-span-5">
             <div className="sticky top-8 space-y-6">
-              <div className="rounded-2xl border card p-6" style={{ borderColor: '#EDE4D3' }}>
-                <div className="uppercase text-xs tracking-[1px] font-medium mb-3" style={{ color: '#6B5E50' }}>Order Summary</div>
+              <div className="rounded-2xl border card p-6" style={{ borderColor: "var(--border)" }}>
+                <div className="uppercase text-xs tracking-[1px] font-medium mb-3" style={{ color: "var(--event-secondary)" }}>Order Summary</div>
 
                 {totalTickets > 0 ? (
                   <div className="space-y-2 text-sm">
