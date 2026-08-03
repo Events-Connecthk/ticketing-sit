@@ -18,6 +18,7 @@ import { Download, Search, RefreshCw, Plus, Edit2, Trash2, ToggleLeft, ToggleRig
 import { toast } from "sonner";
 import { formatHkDateTime, formatHkTime } from "@/lib/time/hk";
 import { BannerCropModal } from "@/components/admin/BannerCropModal";
+import { generateTicketPdf } from "@/lib/pdf/generate-ticket";
 import {
   DEFAULT_PAGE_BG,
   DEFAULT_PRIMARY,
@@ -62,6 +63,9 @@ export default function AdminDashboard() {
     title: string;
     rows: Array<{ label: string; value: string }>;
   }>(null);
+
+  /** Purchase row ticket PDF download in progress (order ref key) */
+  const [downloadingTicketsKey, setDownloadingTicketsKey] = useState<string | null>(null);
 
   // ===== Manual ticket issue (cash / offline proof) =====
   const [issueEventSlug, setIssueEventSlug] = useState("");
@@ -206,6 +210,110 @@ export default function AdminDashboard() {
       toast.success(`${label} copied`);
     } catch {
       toast.error("Could not copy");
+    }
+  }
+
+  function purchaseRowKey(p: PurchaseRecord): string {
+    return String(p.id ?? p.order_reference ?? p.payment_reference ?? "");
+  }
+
+  /** Download ticket PDF(s) for a purchase - same as user success page (for resend when email fails). */
+  async function handleAdminDownloadTickets(purchase: PurchaseRecord) {
+    const key = purchaseRowKey(purchase);
+    const orderRef =
+      purchase.order_reference || purchase.payment_reference || "ticket";
+    const event = events.find((e) => e.slug === purchase.event_slug);
+    if (!event) {
+      toast.error("Event config not loaded. Open Events or refresh, then try again.");
+      if (events.length === 0) void loadEvents();
+      return;
+    }
+
+    const units = purchase.ticket_breakdown || [];
+    if (units.length === 0) {
+      toast.error("No ticket breakdown on this purchase.");
+      return;
+    }
+
+    setDownloadingTicketsKey(key);
+    try {
+      const buyer = {
+        name: purchase.name,
+        phone: purchase.phone,
+        email: purchase.email,
+      };
+      const currency =
+        purchase.currency || event.ticketTypes?.[0]?.currency || "HKD";
+      const hasSerials = units.some((u: any) => u.serial);
+
+      const jobs: Array<{ unit: any; serial?: string }> = [];
+      if (hasSerials) {
+        for (const u of units as any[]) {
+          if (u.serial) jobs.push({ unit: u, serial: u.serial });
+        }
+      } else {
+        jobs.push({ unit: units[0] });
+      }
+
+      if (jobs.length === 0) {
+        toast.error("No tickets to download.");
+        return;
+      }
+
+      let ok = 0;
+      for (const job of jobs) {
+        const pdfResult = await generateTicketPdf({
+          event,
+          buyer,
+          tickets: [
+            {
+              ticketTypeId: job.unit.ticketTypeId,
+              quantity: job.unit.serial
+                ? 1
+                : Math.max(1, Number(job.unit.quantity) || 1),
+            },
+          ],
+          orderReference: orderRef,
+          amount: Number(purchase.amount) || 0,
+          currency,
+          purchaseDate: purchase.bought_at || new Date().toISOString(),
+          ticketSerial: job.serial,
+        });
+
+        if (pdfResult.success && pdfResult.pdfBuffer) {
+          const blob = new Blob([pdfResult.pdfBuffer as any], {
+            type: "application/pdf",
+          });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download =
+            pdfResult.filename ||
+            `ticket-${job.serial || orderRef}.pdf`;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+          ok += 1;
+          // Brief gap so browsers don't block multi-file downloads
+          if (jobs.length > 1) {
+            await new Promise((r) => setTimeout(r, 280));
+          }
+        }
+      }
+
+      if (ok === 0) {
+        toast.error("Failed to generate ticket PDF.");
+      } else if (ok === 1) {
+        toast.success("Ticket PDF downloaded.");
+      } else {
+        toast.success(`${ok} ticket PDFs downloaded.`);
+      }
+    } catch (err) {
+      console.error(err);
+      toast.error("Error generating ticket PDF.");
+    } finally {
+      setDownloadingTicketsKey(null);
     }
   }
 
@@ -1648,9 +1756,6 @@ export default function AdminDashboard() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4 sm:py-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0">
             <h1 className="font-semibold text-xl sm:text-2xl tracking-tight">Admin Dashboard</h1>
-            <p className="text-xs sm:text-sm text-zinc-500">
-              Ticketing System SIT - Purchases &amp; Events
-            </p>
           </div>
           <div className="flex items-center gap-3 shrink-0">
             <button
@@ -2548,14 +2653,15 @@ export default function AdminDashboard() {
                   <th className="p-3 sm:p-4 font-medium hidden md:table-cell">Order Ref</th>
                   <th className="p-3 sm:p-4 font-medium min-w-[10rem] hidden lg:table-cell">Per-ticket check-ins</th>
                   <th className="p-3 sm:p-4 font-medium">Summary</th>
+                  <th className="p-3 sm:p-4 font-medium whitespace-nowrap">Tickets</th>
                 </tr>
               </thead>
               <tbody className="divide-y">
                 {loading && (
-                  <tr><td colSpan={10} className="p-10 text-center text-zinc-400">Loading purchases...</td></tr>
+                  <tr><td colSpan={11} className="p-10 text-center text-zinc-400">Loading purchases...</td></tr>
                 )}
                 {!loading && purchases.length === 0 && (
-                  <tr><td colSpan={10} className="p-10 text-center text-zinc-400">No purchases found.</td></tr>
+                  <tr><td colSpan={11} className="p-10 text-center text-zinc-400">No purchases found.</td></tr>
                 )}
                 {purchases.map((purchase, idx) => (
                   <tr key={purchase.id ?? idx} className="hover:bg-zinc-50/50 align-top">
@@ -2680,12 +2786,49 @@ export default function AdminDashboard() {
                         );
                       })()}
                     </td>
+                    <td className="p-3 sm:p-4 whitespace-nowrap">
+                      {(() => {
+                        const key = purchaseRowKey(purchase);
+                        const busy = downloadingTicketsKey === key;
+                        const units = purchase.ticket_breakdown || [];
+                        const n = units.some((u: any) => u.serial)
+                          ? units.filter((u: any) => u.serial).length
+                          : units.length > 0
+                            ? 1
+                            : 0;
+                        if (n === 0) {
+                          return (
+                            <span className="text-xs text-zinc-400">No tickets</span>
+                          );
+                        }
+                        return (
+                          <button
+                            type="button"
+                            disabled={busy || downloadingTicketsKey !== null}
+                            onClick={() => handleAdminDownloadTickets(purchase)}
+                            className="inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium text-zinc-800 hover:bg-zinc-50 disabled:opacity-50"
+                            title="Download ticket PDF(s) to send if buyer did not get email"
+                          >
+                            <Download
+                              className={`h-3.5 w-3.5 ${busy ? "animate-pulse" : ""}`}
+                            />
+                            {busy
+                              ? "…"
+                              : n > 1
+                                ? `Download (${n})`
+                                : "Download"}
+                          </button>
+                        );
+                      })()}
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
-          <p className="mt-4 text-xs text-zinc-500">Data from memory or Supabase.</p>
+          <p className="mt-4 text-xs text-zinc-500">
+            Data from memory or Supabase. Use Download if a buyer did not receive their email - then send the PDF manually.
+          </p>
           <p className="mt-1 text-[10px] text-zinc-400">
             Note: The internal database <code>id</code> (BIGSERIAL) keeps increasing even after deletes. 
             Use "Order Ref" (KPY-...) as the real identifier. See supabase-schema.sql for how to reset.
