@@ -82,6 +82,24 @@ FOR DELETE
 TO anon 
 USING (false);
 
+-- =========================================
+-- Check-in staff accounts (door / scanner only)
+-- =========================================
+CREATE TABLE IF NOT EXISTS checkin_staff (
+  id TEXT PRIMARY KEY,
+  username TEXT UNIQUE NOT NULL,
+  display_name TEXT NOT NULL,
+  password_hash TEXT NOT NULL,
+  enabled BOOLEAN NOT NULL DEFAULT true,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE checkin_staff ENABLE ROW LEVEL SECURITY;
+-- No anon access; app uses service_role only
+DROP POLICY IF EXISTS "Block anon checkin_staff" ON checkin_staff;
+CREATE POLICY "Block anon checkin_staff"
+ON checkin_staff FOR ALL TO anon USING (false) WITH CHECK (false);
+
 -- For admin dashboard you will later need proper auth (Supabase Auth users with admin role)
 -- or use Supabase service_role key ONLY on server (never NEXT_PUBLIC).
 

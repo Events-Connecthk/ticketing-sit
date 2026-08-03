@@ -6,11 +6,12 @@
  */
 
 import { TicketSelection } from "@/types";
+import type { RedemptionEntry } from "@/lib/tickets/redemption";
 
 export type TicketUnit = TicketSelection & {
   serial: string;
   quantity: 1;
-  redemptions?: string[];
+  redemptions?: RedemptionEntry[];
 };
 
 /** Expand cart lines into one row per physical ticket with serial. */
@@ -50,7 +51,7 @@ export function purchaseMatchesRef(p: {
 export function findTicketUnit(
   p: {
     ticket_breakdown?: Array<
-      TicketSelection & { serial?: string; redemptions?: string[] }
+      TicketSelection & { serial?: string; redemptions?: RedemptionEntry[] }
     >;
   },
   serial: string
@@ -89,7 +90,10 @@ export function listSerials(p: {
   return out;
 }
 
-export function unitRedemptionCount(unit: { redemptions?: string[]; redeemed_at?: string }): number {
+export function unitRedemptionCount(unit: {
+  redemptions?: RedemptionEntry[];
+  redeemed_at?: string;
+}): number {
   if (unit.redemptions && unit.redemptions.length > 0) return unit.redemptions.length;
   return 0;
 }

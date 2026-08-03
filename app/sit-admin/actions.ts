@@ -630,3 +630,13 @@ export async function uploadEventBanner(
   }
 }
 
+
+// Check-in staff management + shared redeem (P3)
+export {
+  adminListCheckinStaff,
+  adminCreateCheckinStaff,
+  adminSetCheckinStaffEnabled,
+  adminDeleteCheckinStaff,
+  adminResetCheckinStaffPassword,
+  adminPerformCheckIn,
+} from "@/app/check-in/actions";

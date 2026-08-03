@@ -133,12 +133,21 @@ export interface PurchaseRecord {
   // Rich data: after checkout each unit has quantity:1 + serial (KPY-xxx-001, …)
   // Legacy rows may still be { ticketTypeId, quantity: N } without serial.
   ticket_breakdown?: Array<
-    TicketSelection & { serial?: string; redemptions?: string[] }
+    TicketSelection & {
+      serial?: string;
+      /** ISO strings (legacy) or { at, byName?, remark? } */
+      redemptions?: Array<
+        string | { at: string; byId?: string; byName?: string; remark?: string }
+      >;
+    }
   >;
   order_reference?: string; // Order-level ref e.g. KPY-1783...
   payment_reference?: string; // From KPay or FREE-...
   redeemed_at?: string; // Legacy order-level redemption
-  redemptions?: string[]; // Legacy order-level multi-day redemptions
+  /** ISO strings (legacy) or structured check-in records */
+  redemptions?: Array<
+    string | { at: string; byId?: string; byName?: string; remark?: string }
+  >;
   // Applied discount code (if any)
   applied_discount_code?: string;
   discount_amount?: number;

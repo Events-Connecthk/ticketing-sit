@@ -11,6 +11,12 @@ import {
   adminGetAllPurchases,
   adminSavePurchase,
   adminIssueManualTickets,
+  adminListCheckinStaff,
+  adminCreateCheckinStaff,
+  adminSetCheckinStaffEnabled,
+  adminDeleteCheckinStaff,
+  adminResetCheckinStaffPassword,
+  adminPerformCheckIn,
 } from "./actions";
 import { getDefaultDemoEvent } from "@/lib/config/events";
 import * as XLSX from "xlsx";
@@ -27,6 +33,11 @@ import {
   mergeThemeMetadata,
   readThemeFromMetadata,
 } from "@/lib/tickets/event-theme";
+import {
+  redemptionAt,
+  redemptionByName,
+  redemptionRemark,
+} from "@/lib/tickets/redemption";
 
 /**
  * Admin Dashboard
@@ -50,7 +61,13 @@ export default function AdminDashboard() {
 
   // ===== NEW: Admin Tabs and Event Management =====
   const [activeTab, setActiveTab] = useState<
-    "dashboard" | "purchases" | "events" | "scanner" | "attendance" | "issue"
+    | "dashboard"
+    | "purchases"
+    | "events"
+    | "scanner"
+    | "attendance"
+    | "issue"
+    | "checkin-staff"
   >("purchases");
 
   /** Event stats dashboard */
@@ -134,10 +151,26 @@ export default function AdminDashboard() {
 
   // ===== Ticket Scanner (admin-only redemption) =====
   const [scanRef, setScanRef] = useState("");
+  const [scanRemark, setScanRemark] = useState("");
   const [scanResult, setScanResult] = useState<any>(null);
   const [scanMessage, setScanMessage] = useState("");
   /** ok | error | warn | info - controls result banner colour */
   const [scanTone, setScanTone] = useState<"ok" | "error" | "warn" | "info">("info");
+
+  // Check-in staff accounts (admin manages; staff use /check-in)
+  const [checkinStaffList, setCheckinStaffList] = useState<
+    Array<{
+      id: string;
+      username: string;
+      display_name: string;
+      enabled: boolean;
+      created_at?: string;
+    }>
+  >([]);
+  const [staffUser, setStaffUser] = useState("");
+  const [staffDisplay, setStaffDisplay] = useState("");
+  const [staffPass, setStaffPass] = useState("");
+  const [staffBusy, setStaffBusy] = useState(false);
   const [isScanningCamera, setIsScanningCamera] = useState(false);
   const videoRef = React.useRef<HTMLVideoElement>(null);
   const canvasRef = React.useRef<HTMLCanvasElement>(null);
@@ -533,141 +566,50 @@ export default function AdminDashboard() {
   async function redeemTicket(ref: string) {
     if (!ref.trim()) return;
     const scanned = ref.trim();
-
-    const { purchaseMatchesRef, findTicketUnit, listSerials } = await import(
-      "@/lib/tickets/serials"
-    );
-    const { isTicketValidOnDate, formatTicketDateWindow, hkTodayYmd } =
-      await import("@/lib/tickets/validity");
-    const all = await adminGetAllPurchases();
-    const found = all.find((p: any) => purchaseMatchesRef(p, scanned));
-
-    if (!found) {
-      setScanFeedback("❌ Invalid ticket - not found.", "error", null);
-      return;
-    }
-
-    const now = new Date().toISOString();
-    let unit = findTicketUnit(found, scanned);
-
-    // Order-level scan with multiple tickets: require a specific serial
-    if (!unit && listSerials(found).length > 1 && scanned === found.order_reference) {
-      setScanFeedback(
-        `⚠️ Multi-ticket order. Scan a ticket QR (e.g. ${listSerials(found)[0]}), not only the order ref.`,
-        "warn",
-        { ...found, _scannedRef: scanned }
-      );
-      return;
-    }
-
-    // Single-ticket order scanned by order ref → redeem that unit
-    const breakdown = found.ticket_breakdown || [];
-    if (!unit && breakdown.length === 1) {
-      const only = breakdown[0] as {
-        ticketTypeId: string;
-        serial?: string;
-        redemptions?: string[];
-      };
-      if (only?.serial) {
-        unit = {
-          ticketTypeId: only.ticketTypeId,
-          quantity: 1 as const,
-          serial: only.serial,
-          redemptions: only.redemptions || [],
-        };
-      }
-    }
-
-    if (unit?.serial) {
-      const tt = getTicketType(found.event_slug, unit.ticketTypeId);
-      const max = tt?.redemptionLimit ?? 1;
-      const count = unit.redemptions?.length || 0;
-      const dateCheck = isTicketValidOnDate(tt || {}, hkTodayYmd());
-      const window = formatTicketDateWindow(tt || {});
-
-      if (count >= max) {
-        setScanFeedback(
-          `❌ Invalid ticket - already fully redeemed (${count}/${max}). Serial ${unit.serial}.`,
-          "error",
-          { ...found, _scannedRef: scanned }
-        );
-        return;
-      }
-
-      if (!dateCheck.ok) {
-        setScanFeedback(
-          `❌ Invalid ticket - cannot redeem today. ${dateCheck.reason}. Allowed: ${window}.`,
-          "error",
-          { ...found, _scannedRef: scanned }
-        );
-        return;
-      }
-
-      const nextBreakdown = (found.ticket_breakdown || []).map((t: any) => {
-        if (t.serial !== unit!.serial) return t;
-        return {
-          ...t,
-          redemptions: [...(t.redemptions || []), now],
-        };
-      });
-
-      const updated = {
-        ...found,
-        ticket_breakdown: nextBreakdown,
-        redeemed_at: now,
-        redemptions: [...(found.redemptions || []), now],
-      };
-
-      const saved = await adminSavePurchase(updated as any);
-      if (!saved) {
-        setScanFeedback(
-          "❌ Could not save check-in to database. Check service role key + schema.",
-          "error",
-          { ...updated, _scannedRef: unit.serial }
-        );
-        return;
-      }
-      setScanFeedback(
-        `✅ Redeemed ${unit.serial} (${count + 1}/${max}) at ${formatHkTime(new Date())} (HK)`,
-        "ok",
-        { ...saved, _scannedRef: unit.serial }
-      );
-      await loadPurchases();
-      return;
-    }
-
-    // Legacy order without serials
-    const max = getMaxRedemptionsForPurchase(found);
-    const currentCount = getCurrentRedemptionCount(found);
-    if (currentCount >= max) {
-      setScanFeedback(
-        `❌ Invalid ticket - already fully redeemed (${currentCount}/${max}).`,
-        "error",
-        found
-      );
-      return;
-    }
-    const newRedemptions = [...(found.redemptions || []), now];
-    const updated = {
-      ...found,
-      redemptions: newRedemptions,
-      redeemed_at: now,
-    };
-    const saved = await adminSavePurchase(updated as any);
-    if (!saved) {
-      setScanFeedback(
-        "❌ Could not save check-in to database. Check SUPABASE_SERVICE_ROLE_KEY and schema.",
-        "error",
-        updated
-      );
-      return;
-    }
+    const res = await adminPerformCheckIn(scanned, scanRemark || undefined);
     setScanFeedback(
-      `✅ Redeemed (${newRedemptions.length}/${max}) at ${formatHkTime(new Date())} (HK)`,
-      "ok",
-      saved
+      res.ok ? `✅ ${res.message}` : res.message.startsWith("⚠") ? res.message : `❌ ${res.message}`,
+      res.tone,
+      res.purchase
+        ? { ...res.purchase, _scannedRef: res.serial || scanned }
+        : null
     );
-    await loadPurchases();
+    if (res.ok) {
+      setScanRemark("");
+      await loadPurchases();
+    }
+  }
+
+  async function loadCheckinStaff() {
+    try {
+      const list = await adminListCheckinStaff();
+      setCheckinStaffList(list);
+    } catch {
+      setCheckinStaffList([]);
+    }
+  }
+
+  async function handleCreateCheckinStaff(e: React.FormEvent) {
+    e.preventDefault();
+    setStaffBusy(true);
+    try {
+      const res = await adminCreateCheckinStaff({
+        username: staffUser,
+        displayName: staffDisplay || staffUser,
+        password: staffPass,
+      });
+      if (!res.ok) {
+        toast.error(res.error || "Failed to create staff");
+        return;
+      }
+      toast.success(`Check-in account created: ${res.staff?.username}`);
+      setStaffUser("");
+      setStaffDisplay("");
+      setStaffPass("");
+      await loadCheckinStaff();
+    } finally {
+      setStaffBusy(false);
+    }
   }
 
   // ===== Camera QR Scanner (only available to logged-in admins) =====
@@ -796,9 +738,13 @@ export default function AdminDashboard() {
         activeTab === "attendance" ||
         activeTab === "issue" ||
         activeTab === "purchases" ||
-        activeTab === "dashboard")
+        activeTab === "dashboard" ||
+        activeTab === "checkin-staff")
     ) {
       loadEvents();
+    }
+    if (isAuthenticated && activeTab === "checkin-staff") {
+      void loadCheckinStaff();
     }
     // Stop camera if user leaves the scanner tab
     if (activeTab !== "scanner") {
@@ -1812,6 +1758,12 @@ export default function AdminDashboard() {
             className={`shrink-0 px-3 sm:px-6 py-3 font-medium text-xs sm:text-sm border-b-2 transition-all whitespace-nowrap ${activeTab === "issue" ? "border-amber-600 text-amber-800" : "border-transparent text-zinc-500 hover:text-zinc-700"}`}
           >
             Issue tickets
+          </button>
+          <button
+            onClick={() => setActiveTab("checkin-staff")}
+            className={`shrink-0 px-3 sm:px-6 py-3 font-medium text-xs sm:text-sm border-b-2 transition-all whitespace-nowrap ${activeTab === "checkin-staff" ? "border-teal-600 text-teal-800" : "border-transparent text-zinc-500 hover:text-zinc-700"}`}
+          >
+            Check-in staff
           </button>
         </div>
       </div>
@@ -2985,8 +2937,11 @@ export default function AdminDashboard() {
           <div className="mb-6">
             <h2 className="text-xl sm:text-2xl font-semibold">Ticket Scanner</h2>
             <p className="text-sm text-zinc-600 mt-1">
-              Only staff logged into the admin can mark tickets as redeemed. 
-              Scanning here will instantly update the Purchases/Registration table and future Excel exports.
+              Full admin scanner. Door staff should use{" "}
+              <a href="/check-in" className="text-emerald-700 underline font-medium">
+                /check-in
+              </a>{" "}
+              (limited accounts - no dashboard access).
             </p>
           </div>
 
@@ -3025,6 +2980,19 @@ export default function AdminDashboard() {
                 >
                   Mark Redeemed
                 </button>
+              </div>
+              <div className="mt-3">
+                <label className="block text-xs font-medium text-zinc-500 mb-1">
+                  Remarks (optional - saved with check-in)
+                </label>
+                <input
+                  type="text"
+                  value={scanRemark}
+                  onChange={(e) => setScanRemark(e.target.value)}
+                  placeholder="e.g. VIP guest, special note"
+                  maxLength={500}
+                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                />
               </div>
             </div>
 
@@ -3194,6 +3162,8 @@ export default function AdminDashboard() {
                   <th className="p-4 font-medium">Ticket details</th>
                   <th className="p-4 font-medium">Name</th>
                   <th className="p-4 font-medium">Phone</th>
+                  <th className="p-4 font-medium">Checked in by</th>
+                  <th className="p-4 font-medium">Remark</th>
                   <th className="p-4 font-medium hidden sm:table-cell">Email</th>
                   <th className="p-4 font-medium">Event</th>
                   <th className="p-4 font-medium hidden md:table-cell">Order Ref</th>
@@ -3212,6 +3182,8 @@ export default function AdminDashboard() {
                     phone: string;
                     event: string;
                     orderRef: string;
+                    checkedInBy: string;
+                    remark: string;
                   };
                   const rows: AttRow[] = [];
                   for (const p of purchases) {
@@ -3221,13 +3193,15 @@ export default function AdminDashboard() {
                       for (const u of units as any[]) {
                         const last = u.redemptions?.[u.redemptions.length - 1];
                         if (!last) continue;
+                        const at = redemptionAt(last);
+                        if (!at) continue;
                         const typeName =
                           getTicketType(p.event_slug, u.ticketTypeId)?.name ||
                           u.ticketTypeId ||
-                          " - ";
+                          "-";
                         rows.push({
-                          key: `${p.id}-${u.serial}-${last}`,
-                          redeemedAt: last,
+                          key: `${p.id}-${u.serial}-${at}`,
+                          redeemedAt: at,
                           ticketId: u.serial,
                           ticketTypeLabel: typeName,
                           name: p.name,
@@ -3235,14 +3209,17 @@ export default function AdminDashboard() {
                           phone: p.phone,
                           event: p.event_slug,
                           orderRef: p.order_reference || p.payment_reference || "",
+                          checkedInBy: redemptionByName(last) || "-",
+                          remark: redemptionRemark(last) || "-",
                         });
                       }
                     } else if (getCurrentRedemptionCount(p) > 0) {
                       const latest =
                         p.redemptions?.[p.redemptions.length - 1] || p.redeemed_at || "";
+                      const at = redemptionAt(latest as any) || String(latest);
                       rows.push({
                         key: String(p.id ?? p.order_reference),
-                        redeemedAt: latest,
+                        redeemedAt: at,
                         ticketId: p.order_reference || "-",
                         ticketTypeLabel: formatPurchaseTicketTypes(p),
                         name: p.name,
@@ -3250,6 +3227,8 @@ export default function AdminDashboard() {
                         phone: p.phone,
                         event: p.event_slug,
                         orderRef: p.order_reference || p.payment_reference || "",
+                        checkedInBy: redemptionByName(latest as any) || "-",
+                        remark: redemptionRemark(latest as any) || "-",
                       });
                     }
                   }
@@ -3258,8 +3237,8 @@ export default function AdminDashboard() {
                   if (rows.length === 0) {
                     return (
                       <tr>
-                        <td colSpan={7} className="p-10 text-center text-zinc-400">
-                          {loading ? "Loading..." : "No redeemed tickets yet. Use Scanner → Mark Redeemed (or camera)."}
+                        <td colSpan={9} className="p-10 text-center text-zinc-400">
+                          {loading ? "Loading..." : "No redeemed tickets yet. Use Scanner or /check-in."}
                         </td>
                       </tr>
                     );
@@ -3279,6 +3258,10 @@ export default function AdminDashboard() {
                       <td className="p-4 text-sm font-medium text-zinc-800 whitespace-nowrap">
                         {row.phone || "-"}
                       </td>
+                      <td className="p-4 text-sm text-zinc-700">{row.checkedInBy}</td>
+                      <td className="p-4 text-sm text-zinc-600 max-w-[10rem] truncate" title={row.remark}>
+                        {row.remark}
+                      </td>
                       <td className="p-4 text-sm text-zinc-600 hidden sm:table-cell break-all">
                         {row.email || "-"}
                       </td>
@@ -3296,8 +3279,146 @@ export default function AdminDashboard() {
           </div>
 
           <p className="mt-4 text-xs text-zinc-500">
-            Use the Scanner tab to check people in. Purchases/Registration shows status; this tab is the check-in log.
+            Door staff: share <strong>/check-in</strong>. Who / remarks appear after this deploy for new check-ins.
           </p>
+        </div>
+      )}
+
+      {/* CHECK-IN STAFF ACCOUNTS */}
+      {activeTab === "checkin-staff" && (
+        <div className="max-w-3xl mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-6">
+          <div>
+            <h2 className="text-xl font-semibold">Check-in staff</h2>
+            <p className="text-sm text-zinc-600 mt-1">
+              Create accounts for door staff. They only use{" "}
+              <a href="/check-in" className="text-teal-700 underline font-medium" target="_blank" rel="noreferrer">
+                /check-in
+              </a>{" "}
+              - scan/check-in, remarks, and counts. No admin dashboard.
+            </p>
+          </div>
+
+          <form
+            onSubmit={handleCreateCheckinStaff}
+            className="rounded-2xl border bg-white p-4 sm:p-6 space-y-3 shadow-sm"
+          >
+            <h3 className="font-medium text-sm">Create account</h3>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs text-zinc-500">Username</label>
+                <input
+                  value={staffUser}
+                  onChange={(e) => setStaffUser(e.target.value)}
+                  required
+                  className="mt-1 w-full border rounded-lg px-3 py-2 text-sm"
+                  placeholder="door1"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-zinc-500">Display name</label>
+                <input
+                  value={staffDisplay}
+                  onChange={(e) => setStaffDisplay(e.target.value)}
+                  className="mt-1 w-full border rounded-lg px-3 py-2 text-sm"
+                  placeholder="Alex (Gate A)"
+                />
+              </div>
+              <div className="sm:col-span-2">
+                <label className="text-xs text-zinc-500">Password</label>
+                <input
+                  type="password"
+                  value={staffPass}
+                  onChange={(e) => setStaffPass(e.target.value)}
+                  required
+                  minLength={6}
+                  className="mt-1 w-full border rounded-lg px-3 py-2 text-sm"
+                />
+              </div>
+            </div>
+            <button
+              type="submit"
+              disabled={staffBusy}
+              className="rounded-lg bg-teal-700 px-4 py-2 text-sm text-white hover:bg-teal-600 disabled:opacity-50"
+            >
+              {staffBusy ? "Creating…" : "Create check-in account"}
+            </button>
+          </form>
+
+          <div className="rounded-2xl border bg-white overflow-hidden shadow-sm">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b bg-zinc-50 text-left">
+                  <th className="p-3 font-medium">Username</th>
+                  <th className="p-3 font-medium">Display name</th>
+                  <th className="p-3 font-medium">Status</th>
+                  <th className="p-3 font-medium text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y">
+                {checkinStaffList.length === 0 ? (
+                  <tr>
+                    <td colSpan={4} className="p-8 text-center text-zinc-400">
+                      No check-in accounts yet. Create one above (run SQL for checkin_staff if create fails).
+                    </td>
+                  </tr>
+                ) : (
+                  checkinStaffList.map((s) => (
+                    <tr key={s.id}>
+                      <td className="p-3 font-mono text-xs">{s.username}</td>
+                      <td className="p-3">{s.display_name}</td>
+                      <td className="p-3">
+                        <span
+                          className={`text-xs px-2 py-0.5 rounded-full ${
+                            s.enabled
+                              ? "bg-emerald-50 text-emerald-800"
+                              : "bg-zinc-100 text-zinc-500"
+                          }`}
+                        >
+                          {s.enabled ? "Active" : "Disabled"}
+                        </span>
+                      </td>
+                      <td className="p-3 text-right space-x-2">
+                        <button
+                          type="button"
+                          className="text-xs underline text-zinc-600"
+                          onClick={async () => {
+                            await adminSetCheckinStaffEnabled(s.id, !s.enabled);
+                            await loadCheckinStaff();
+                          }}
+                        >
+                          {s.enabled ? "Disable" : "Enable"}
+                        </button>
+                        <button
+                          type="button"
+                          className="text-xs underline text-zinc-600"
+                          onClick={async () => {
+                            const pw = window.prompt("New password (min 6 chars)");
+                            if (!pw) return;
+                            const r = await adminResetCheckinStaffPassword(s.id, pw);
+                            if (r.ok) toast.success("Password updated");
+                            else toast.error(r.error || "Failed");
+                          }}
+                        >
+                          Reset password
+                        </button>
+                        <button
+                          type="button"
+                          className="text-xs underline text-red-600"
+                          onClick={async () => {
+                            if (!window.confirm(`Delete ${s.username}?`)) return;
+                            await adminDeleteCheckinStaff(s.id);
+                            await loadCheckinStaff();
+                          }}
+                        >
+                          Delete
+                        </button>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 
