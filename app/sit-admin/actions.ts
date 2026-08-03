@@ -11,6 +11,18 @@ import {
   safeEqual,
 } from "@/lib/security/admin-session";
 import { checkRateLimit } from "@/lib/security/rate-limit";
+import {
+  createCheckinStaff,
+  deleteCheckinStaff,
+  listCheckinStaff,
+  resetCheckinStaffPassword,
+  setCheckinStaffEnabled,
+  type CheckinStaffPublic,
+} from "@/lib/db/checkin-staff";
+import {
+  performCheckIn,
+  type CheckInResult,
+} from "@/lib/tickets/checkin-service";
 
 /**
  * Login: verify password (rate-limited) and set httpOnly session cookie.
@@ -631,12 +643,62 @@ export async function uploadEventBanner(
 }
 
 
-// Check-in staff management + shared redeem (P3)
-export {
-  adminListCheckinStaff,
-  adminCreateCheckinStaff,
-  adminSetCheckinStaffEnabled,
-  adminDeleteCheckinStaff,
-  adminResetCheckinStaffPassword,
-  adminPerformCheckIn,
-} from "@/app/check-in/actions";
+// ——— Check-in staff management + admin redeem (P3)
+// Defined here (not re-exported) - Next/Turbopack rejects re-export of server actions.
+
+export async function adminListCheckinStaff(): Promise<CheckinStaffPublic[]> {
+  await requireAdmin();
+  return listCheckinStaff();
+}
+
+export async function adminCreateCheckinStaff(input: {
+  username: string;
+  displayName: string;
+  password: string;
+}): Promise<{ ok: boolean; error?: string; staff?: CheckinStaffPublic }> {
+  await requireAdmin();
+  const res = await createCheckinStaff(input);
+  if (!res.ok) return { ok: false, error: res.error };
+  return { ok: true, staff: res.staff };
+}
+
+export async function adminSetCheckinStaffEnabled(
+  id: string,
+  enabled: boolean
+): Promise<boolean> {
+  await requireAdmin();
+  return setCheckinStaffEnabled(id, enabled);
+}
+
+export async function adminDeleteCheckinStaff(id: string): Promise<boolean> {
+  await requireAdmin();
+  return deleteCheckinStaff(id);
+}
+
+export async function adminResetCheckinStaffPassword(
+  id: string,
+  newPassword: string
+): Promise<{ ok: boolean; error?: string }> {
+  await requireAdmin();
+  return resetCheckinStaffPassword(id, newPassword);
+}
+
+export async function adminPerformCheckIn(
+  ref: string,
+  remark?: string
+): Promise<CheckInResult> {
+  try {
+    await requireAdmin();
+    return await performCheckIn(
+      ref,
+      { byId: "admin", byName: "Admin" },
+      remark
+    );
+  } catch {
+    return {
+      ok: false,
+      message: "Admin session expired. Sign in again.",
+      tone: "error",
+    };
+  }
+}

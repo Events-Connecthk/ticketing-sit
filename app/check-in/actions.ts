@@ -1,21 +1,12 @@
 "use server";
 
-import {
-  authenticateCheckinStaff,
-  createCheckinStaff,
-  deleteCheckinStaff,
-  listCheckinStaff,
-  resetCheckinStaffPassword,
-  setCheckinStaffEnabled,
-  type CheckinStaffPublic,
-} from "@/lib/db/checkin-staff";
+import { authenticateCheckinStaff } from "@/lib/db/checkin-staff";
 import {
   clearCheckinSession,
   createCheckinSession,
   getCheckinSession,
   requireCheckinStaff,
 } from "@/lib/security/checkin-session";
-import { requireAdmin } from "@/lib/security/admin-session";
 import { checkRateLimit } from "@/lib/security/rate-limit";
 import {
   countCheckedIn,
@@ -109,62 +100,4 @@ export async function checkinListRecent(): Promise<AttendanceFlatRow[]> {
   }
 }
 
-// ——— Admin: manage staff accounts ———
-
-export async function adminListCheckinStaff(): Promise<CheckinStaffPublic[]> {
-  await requireAdmin();
-  return listCheckinStaff();
-}
-
-export async function adminCreateCheckinStaff(input: {
-  username: string;
-  displayName: string;
-  password: string;
-}): Promise<{ ok: boolean; error?: string; staff?: CheckinStaffPublic }> {
-  await requireAdmin();
-  const res = await createCheckinStaff(input);
-  if (!res.ok) return { ok: false, error: res.error };
-  return { ok: true, staff: res.staff };
-}
-
-export async function adminSetCheckinStaffEnabled(
-  id: string,
-  enabled: boolean
-): Promise<boolean> {
-  await requireAdmin();
-  return setCheckinStaffEnabled(id, enabled);
-}
-
-export async function adminDeleteCheckinStaff(id: string): Promise<boolean> {
-  await requireAdmin();
-  return deleteCheckinStaff(id);
-}
-
-export async function adminResetCheckinStaffPassword(
-  id: string,
-  newPassword: string
-): Promise<{ ok: boolean; error?: string }> {
-  await requireAdmin();
-  return resetCheckinStaffPassword(id, newPassword);
-}
-
-/** Admin scanner also stores who = Admin */
-export async function adminPerformCheckIn(
-  ref: string,
-  remark?: string
-): Promise<CheckInResult> {
-  try {
-    await requireAdmin();
-    return await performCheckIn(
-      ref,
-      { byId: "admin", byName: "Admin" },
-      remark
-    );
-  } catch {
-    return {
-      ok: false,
-      message: "Admin session expired. Sign in again.",
-      tone: "error",
-    };
-  }
-}
+// Admin staff management lives in @/app/sit-admin/actions (not re-exported).
