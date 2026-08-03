@@ -124,7 +124,7 @@ export default function AdminDashboard() {
   const [scanRef, setScanRef] = useState("");
   const [scanResult, setScanResult] = useState<any>(null);
   const [scanMessage, setScanMessage] = useState("");
-  /** ok | error | warn | info — controls result banner colour */
+  /** ok | error | warn | info - controls result banner colour */
   const [scanTone, setScanTone] = useState<"ok" | "error" | "warn" | "info">("info");
   const [isScanningCamera, setIsScanningCamera] = useState(false);
   const videoRef = React.useRef<HTMLVideoElement>(null);
@@ -163,10 +163,10 @@ export default function AdminDashboard() {
     return getTicketType(eventSlug, ticketTypeId)?.redemptionLimit ?? 1;
   }
 
-  /** Human labels for ticket types on a purchase, e.g. "Weekend ×1, Day 2 ×1" */
+  /** Human labels for ticket types on a purchase, e.g. "Weekend x1, Day 2 x1" */
   function formatPurchaseTicketTypes(p: PurchaseRecord): string {
     const units = p.ticket_breakdown || [];
-    if (units.length === 0) return "—";
+    if (units.length === 0) return "-";
 
     const counts = new Map<string, number>();
     for (const u of units as any[]) {
@@ -178,7 +178,7 @@ export default function AdminDashboard() {
     return Array.from(counts.entries())
       .map(([id, q]) => {
         const name = getTicketType(p.event_slug, id)?.name || id;
-        return q > 1 ? `${name} ×${q}` : name;
+        return q > 1 ? `${name} x${q}` : name;
       })
       .join(", ");
   }
@@ -359,7 +359,7 @@ export default function AdminDashboard() {
     const found = all.find((p: any) => purchaseMatchesRef(p, ref.trim()));
 
     if (!found) {
-      setScanFeedback("❌ Invalid ticket — not found for that reference.", "error", null);
+      setScanFeedback("❌ Invalid ticket - not found for that reference.", "error", null);
       return;
     }
 
@@ -376,7 +376,7 @@ export default function AdminDashboard() {
 
       if (count >= max) {
         setScanFeedback(
-          `❌ Invalid ticket — fully redeemed (${count}/${max}). Serial ${unit.serial}.`,
+          `❌ Invalid ticket - fully redeemed (${count}/${max}). Serial ${unit.serial}.`,
           "error",
           resultBase
         );
@@ -384,7 +384,7 @@ export default function AdminDashboard() {
       }
       if (!dateCheck.ok) {
         setScanFeedback(
-          `❌ Invalid ticket — wrong date. ${dateCheck.reason}. Ticket window: ${window}.`,
+          `❌ Invalid ticket - wrong date. ${dateCheck.reason}. Ticket window: ${window}.`,
           "error",
           resultBase
         );
@@ -400,14 +400,14 @@ export default function AdminDashboard() {
       const count = getCurrentRedemptionCount(found);
       if (count >= maxSlots) {
         setScanFeedback(
-          `❌ Invalid ticket — order fully checked in (${count}/${maxSlots}).`,
+          `❌ Invalid ticket - order fully checked in (${count}/${maxSlots}).`,
           "error",
           resultBase
         );
         return;
       }
       setScanFeedback(
-        `Order ${found.order_reference}: ${count}/${maxSlots} used. Serials: ${serials.join(", ") || "—"}`,
+        `Order ${found.order_reference}: ${count}/${maxSlots} used. Serials: ${serials.join(", ") || "-"}`,
         "info",
         resultBase
       );
@@ -427,7 +427,7 @@ export default function AdminDashboard() {
     const found = all.find((p: any) => purchaseMatchesRef(p, scanned));
 
     if (!found) {
-      setScanFeedback("❌ Invalid ticket — not found.", "error", null);
+      setScanFeedback("❌ Invalid ticket - not found.", "error", null);
       return;
     }
 
@@ -471,7 +471,7 @@ export default function AdminDashboard() {
 
       if (count >= max) {
         setScanFeedback(
-          `❌ Invalid ticket — already fully redeemed (${count}/${max}). Serial ${unit.serial}.`,
+          `❌ Invalid ticket - already fully redeemed (${count}/${max}). Serial ${unit.serial}.`,
           "error",
           { ...found, _scannedRef: scanned }
         );
@@ -480,7 +480,7 @@ export default function AdminDashboard() {
 
       if (!dateCheck.ok) {
         setScanFeedback(
-          `❌ Invalid ticket — cannot redeem today. ${dateCheck.reason}. Allowed: ${window}.`,
+          `❌ Invalid ticket - cannot redeem today. ${dateCheck.reason}. Allowed: ${window}.`,
           "error",
           { ...found, _scannedRef: scanned }
         );
@@ -525,7 +525,7 @@ export default function AdminDashboard() {
     const currentCount = getCurrentRedemptionCount(found);
     if (currentCount >= max) {
       setScanFeedback(
-        `❌ Invalid ticket — already fully redeemed (${currentCount}/${max}).`,
+        `❌ Invalid ticket - already fully redeemed (${currentCount}/${max}).`,
         "error",
         found
       );
@@ -640,7 +640,7 @@ export default function AdminDashboard() {
     scanBusyRef.current = true;
 
     setScanRef(extractedRef);
-    stopCameraScanner(); // same as first scan — close camera every time
+    stopCameraScanner(); // same as first scan - close camera every time
     setScanFeedback(`QR detected: ${extractedRef}. Checking in…`, "info");
 
     void (async () => {
@@ -1017,7 +1017,7 @@ export default function AdminDashboard() {
 
   function parseEventTime(ev: EventConfig) {
     if (ev.time) {
-      const parts = ev.time.split(/[–-]/).map((p) => p.trim());
+      const parts = ev.time.split(/[-–—]/).map((p) => p.trim());
       if (parts.length >= 2) {
         setStartTime(parts[0]);
         setEndTime(parts[1]);
@@ -1104,7 +1104,7 @@ export default function AdminDashboard() {
     });
     parseEventTime(ev);
     setShowEventModal(true);
-    toast.message("Event duplicated — set name & dates, then Save", {
+    toast.message("Event duplicated - set name & dates, then Save", {
       description:
         "Ticket types, promo codes, and discounts are copied. Ticket valid dates cleared.",
     });
@@ -1238,7 +1238,7 @@ export default function AdminDashboard() {
           };
         }
 
-        // Direct to Supabase — does not pass through Vercel body limit
+        // Direct to Supabase - does not pass through Vercel body limit
         const putRes = await fetch(signData.signedUrl as string, {
           method: "PUT",
           headers: {
@@ -1300,7 +1300,7 @@ export default function AdminDashboard() {
         return {
           success: false,
           error:
-            "File too large for server hop (Vercel 413). Retry — large files should use direct storage upload.",
+            "File too large for server hop (Vercel 413). Retry - large files should use direct storage upload.",
         };
       }
       return {
@@ -1340,7 +1340,7 @@ export default function AdminDashboard() {
 
     if (file.size > 10 * 1024 * 1024) {
       toast.error(
-        "Template too large (max 10MB) — file is " +
+        "Template too large (max 10MB) - file is " +
           (file.size / (1024 * 1024)).toFixed(1) +
           "MB"
       );
@@ -1375,7 +1375,7 @@ export default function AdminDashboard() {
     // Build time string from pickers if available, otherwise fall back to form
     let timeValue = eventForm.time;
     if (startTime && endTime) {
-      timeValue = `${startTime} – ${endTime}`;
+      timeValue = `${startTime} - ${endTime}`;
     } else if (startTime) {
       timeValue = startTime;
     }
@@ -1424,7 +1424,7 @@ export default function AdminDashboard() {
         void loadEvents();
         if (!usingSupabase) {
           toast.warning(
-            "Saved to memory only — will disappear after refresh. Check Supabase keys + restart."
+            "Saved to memory only - will disappear after refresh. Check Supabase keys + restart."
           );
         }
       } else {
@@ -1641,7 +1641,7 @@ export default function AdminDashboard() {
           <div className="min-w-0">
             <h1 className="font-semibold text-xl sm:text-2xl tracking-tight">Admin Dashboard</h1>
             <p className="text-xs sm:text-sm text-zinc-500">
-              Ticketing System SIT — Purchases &amp; Events
+              Ticketing System SIT - Purchases &amp; Events
             </p>
           </div>
           <div className="flex items-center gap-3 shrink-0">
@@ -1655,7 +1655,7 @@ export default function AdminDashboard() {
         </div>
       </div>
 
-      {/* Tabs — scroll on small screens */}
+      {/* Tabs - scroll on small screens */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 pt-4 sm:pt-6">
         <div className="flex border-b overflow-x-auto no-scrollbar -mx-4 px-4 sm:mx-0 sm:px-0 gap-0">
           <button
@@ -1703,7 +1703,7 @@ export default function AdminDashboard() {
         </div>
       </div>
 
-      {/* DASHBOARD — per-event stats + charts */}
+      {/* DASHBOARD: per-event stats + charts (glass) */}
       {activeTab === "dashboard" && (() => {
         const dash = dashEventSlug
           ? buildEventDashboard(dashEventSlug)
@@ -1719,7 +1719,6 @@ export default function AdminDashboard() {
           ...(dash?.timeline.map((d) => d.revenue) || [1])
         );
 
-        // SVG pie paths
         let pieAngle = -Math.PI / 2;
         const pieSlices =
           dash?.typeRows
@@ -1746,276 +1745,305 @@ export default function AdminDashboard() {
             }) || [];
 
         return (
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-6">
-            <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4">
-              <div>
-                <h2 className="text-xl font-semibold">Event dashboard</h2>
-                <p className="text-sm text-zinc-600 mt-1">
-                  Tickets sold, remaining inventory, revenue, and simple charts. Admin only — does not change checkout.
-                </p>
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <select
-                  value={dashEventSlug}
-                  onChange={(e) => setDashEventSlug(e.target.value)}
-                  className="rounded-lg border px-3 py-2 text-sm bg-white min-w-[12rem]"
-                >
-                  <option value="">
-                    {eventsLoading ? "Loading events…" : "Select event…"}
-                  </option>
-                  {events.map((ev) => (
-                    <option key={ev.slug} value={ev.slug}>
-                      {ev.name} ({ev.slug})
-                    </option>
-                  ))}
-                </select>
-                <button
-                  type="button"
-                  onClick={() => {
-                    loadPurchases();
-                    loadEvents();
-                  }}
-                  disabled={loading || eventsLoading}
-                  className="flex items-center gap-2 rounded-lg border px-3 py-2 text-sm hover:bg-zinc-100"
-                >
-                  <RefreshCw
-                    className={`h-4 w-4 ${loading || eventsLoading ? "animate-spin" : ""}`}
-                  />
-                  Refresh
-                </button>
-              </div>
-            </div>
-
-            {!dashEventSlug && (
-              <div className="rounded-2xl border bg-white p-10 text-center text-zinc-400 text-sm">
-                Select an event to see stats.
-              </div>
-            )}
-
-            {dashEventSlug && dash && (
-              <>
-                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
-                  <div className="rounded-2xl border bg-white p-4 sm:p-5">
-                    <div className="text-xs font-medium text-zinc-500">Tickets sold</div>
-                    <div className="mt-1 text-2xl sm:text-3xl font-semibold tabular-nums">
-                      {dash.ticketsSold}
-                    </div>
-                    <div className="text-[11px] text-zinc-400 mt-1">
-                      {dash.orderCount} order{dash.orderCount === 1 ? "" : "s"}
-                    </div>
-                  </div>
-                  <div className="rounded-2xl border bg-white p-4 sm:p-5">
-                    <div className="text-xs font-medium text-zinc-500">Revenue</div>
-                    <div className="mt-1 text-2xl sm:text-3xl font-semibold tabular-nums">
-                      HKD {dash.revenue.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                    </div>
-                    <div className="text-[11px] text-zinc-400 mt-1">Sum of purchase amounts</div>
-                  </div>
-                  <div className="rounded-2xl border bg-white p-4 sm:p-5">
-                    <div className="text-xs font-medium text-zinc-500">Ticket types</div>
-                    <div className="mt-1 text-2xl sm:text-3xl font-semibold tabular-nums">
-                      {dash.typeRows.filter((t) => t.id !== "_order").length}
-                    </div>
-                    <div className="text-[11px] text-zinc-400 mt-1">On this event</div>
-                  </div>
-                  <div className="rounded-2xl border bg-white p-4 sm:p-5">
-                    <div className="text-xs font-medium text-zinc-500">Inventory left</div>
-                    <div className="mt-1 text-2xl sm:text-3xl font-semibold tabular-nums">
-                      {(() => {
-                        const capped = dash.typeRows.filter((t) => t.cap != null);
-                        if (capped.length === 0) return "∞";
-                        return capped.reduce((s, t) => s + (t.left ?? 0), 0);
-                      })()}
-                    </div>
-                    <div className="text-[11px] text-zinc-400 mt-1">
-                      Types with a sales limit only
-                    </div>
-                  </div>
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-8">
+            <div className="dash-glass-shell p-4 sm:p-6 lg:p-8 space-y-6">
+              <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4">
+                <div>
+                  <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-violet-700/80">
+                    Analytics
+                  </p>
+                  <h2 className="text-xl sm:text-2xl font-semibold tracking-tight text-zinc-900 mt-1">
+                    Event dashboard
+                  </h2>
+                  <p className="text-sm text-zinc-600 mt-1 max-w-xl">
+                    Tickets sold, inventory, revenue, and charts. Admin only - does not change checkout.
+                  </p>
                 </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <select
+                    value={dashEventSlug}
+                    onChange={(e) => setDashEventSlug(e.target.value)}
+                    className="dash-glass-card-soft rounded-xl px-3 py-2.5 text-sm min-w-[12rem] outline-none focus:ring-2 focus:ring-violet-300/50"
+                  >
+                    <option value="">
+                      {eventsLoading ? "Loading events..." : "Select event..."}
+                    </option>
+                    {events.map((ev) => (
+                      <option key={ev.slug} value={ev.slug}>
+                        {ev.name} ({ev.slug})
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      loadPurchases();
+                      loadEvents();
+                    }}
+                    disabled={loading || eventsLoading}
+                    className="dash-glass-card-soft flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm font-medium text-zinc-700 hover:bg-white/70 transition-colors"
+                  >
+                    <RefreshCw
+                      className={`h-4 w-4 ${loading || eventsLoading ? "animate-spin" : ""}`}
+                    />
+                    Refresh
+                  </button>
+                </div>
+              </div>
 
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                  {/* Pie: sold by type */}
-                  <div className="rounded-2xl border bg-white p-4 sm:p-6">
-                    <h3 className="font-semibold text-sm">Sold by ticket type</h3>
-                    <p className="text-xs text-zinc-500 mt-0.5">Share of tickets sold</p>
-                    {pieTotal === 0 ? (
-                      <p className="mt-8 text-sm text-zinc-400 text-center">No sales yet for this event.</p>
-                    ) : (
-                      <div className="mt-4 flex flex-col sm:flex-row items-center gap-4">
-                        <svg viewBox="0 0 200 200" className="w-44 h-44 shrink-0">
-                          {pieSlices.map((s) => (
-                            <path key={s.id} d={s.d} fill={s.color} stroke="#fff" strokeWidth="1.5" />
-                          ))}
-                          {pieSlices.length === 0 && (
-                            <circle cx="100" cy="100" r="80" fill="#e4e4e7" />
-                          )}
-                        </svg>
-                        <ul className="space-y-2 text-sm w-full min-w-0">
-                          {dash.typeRows
-                            .filter((t) => t.sold > 0)
-                            .map((t) => (
-                              <li key={t.id} className="flex items-center gap-2">
-                                <span
-                                  className="w-3 h-3 rounded-sm shrink-0"
-                                  style={{ background: t.color }}
+              {!dashEventSlug && (
+                <div className="dash-glass-card p-12 text-center text-zinc-500 text-sm">
+                  Select an event to see stats.
+                </div>
+              )}
+
+              {dashEventSlug && dash && (
+                <>
+                  <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+                    {[
+                      {
+                        label: "Tickets sold",
+                        value: String(dash.ticketsSold),
+                        sub: `${dash.orderCount} order${dash.orderCount === 1 ? "" : "s"}`,
+                      },
+                      {
+                        label: "Revenue",
+                        value: `HKD ${dash.revenue.toLocaleString(undefined, { maximumFractionDigits: 0 })}`,
+                        sub: "Sum of purchase amounts",
+                      },
+                      {
+                        label: "Ticket types",
+                        value: String(
+                          dash.typeRows.filter((t) => t.id !== "_order").length
+                        ),
+                        sub: "On this event",
+                      },
+                      {
+                        label: "Inventory left",
+                        value: (() => {
+                          const capped = dash.typeRows.filter((t) => t.cap != null);
+                          if (capped.length === 0) return "Unlimited";
+                          return String(
+                            capped.reduce((s, t) => s + (t.left ?? 0), 0)
+                          );
+                        })(),
+                        sub: "Types with a sales limit only",
+                      },
+                    ].map((stat) => (
+                      <div key={stat.label} className="dash-glass-card p-4 sm:p-5">
+                        <div className="text-[11px] font-medium uppercase tracking-wide text-zinc-500">
+                          {stat.label}
+                        </div>
+                        <div className="mt-1.5 text-2xl sm:text-3xl font-semibold tabular-nums dash-stat-value leading-tight">
+                          {stat.value}
+                        </div>
+                        <div className="text-[11px] text-zinc-500 mt-1.5">{stat.sub}</div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                    <div className="dash-glass-card p-4 sm:p-6">
+                      <h3 className="font-semibold text-sm text-zinc-900">Sold by ticket type</h3>
+                      <p className="text-xs text-zinc-500 mt-0.5">Share of tickets sold</p>
+                      {pieTotal === 0 ? (
+                        <p className="mt-8 text-sm text-zinc-400 text-center">
+                          No sales yet for this event.
+                        </p>
+                      ) : (
+                        <div className="mt-4 flex flex-col sm:flex-row items-center gap-4">
+                          <div className="relative">
+                            <svg viewBox="0 0 200 200" className="w-44 h-44 shrink-0 drop-shadow-sm">
+                              {pieSlices.map((s) => (
+                                <path
+                                  key={s.id}
+                                  d={s.d}
+                                  fill={s.color}
+                                  stroke="rgba(255,255,255,0.85)"
+                                  strokeWidth="2"
                                 />
-                                <span className="truncate flex-1">{t.name}</span>
-                                <span className="tabular-nums text-zinc-600 shrink-0">
-                                  {t.sold} ({pieTotal ? Math.round((t.sold / pieTotal) * 100) : 0}%)
+                              ))}
+                            </svg>
+                          </div>
+                          <ul className="space-y-2.5 text-sm w-full min-w-0">
+                            {dash.typeRows
+                              .filter((t) => t.sold > 0)
+                              .map((t) => (
+                                <li
+                                  key={t.id}
+                                  className="flex items-center gap-2 dash-glass-card-soft px-2.5 py-1.5 rounded-lg"
+                                >
+                                  <span
+                                    className="w-2.5 h-2.5 rounded-full shrink-0 shadow-sm"
+                                    style={{ background: t.color }}
+                                  />
+                                  <span className="truncate flex-1 text-zinc-800">{t.name}</span>
+                                  <span className="tabular-nums text-zinc-600 shrink-0 text-xs font-medium">
+                                    {t.sold} (
+                                    {pieTotal
+                                      ? Math.round((t.sold / pieTotal) * 100)
+                                      : 0}
+                                    %)
+                                  </span>
+                                </li>
+                              ))}
+                          </ul>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="dash-glass-card p-4 sm:p-6">
+                      <h3 className="font-semibold text-sm text-zinc-900">Inventory by type</h3>
+                      <p className="text-xs text-zinc-500 mt-0.5">
+                        Left = limit - sold (Unlimited if no limit on the type)
+                      </p>
+                      <div className="mt-4 overflow-x-auto">
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="text-left text-xs text-zinc-500 border-b border-white/60">
+                              <th className="pb-2 font-medium">Type</th>
+                              <th className="pb-2 font-medium text-right">Sold</th>
+                              <th className="pb-2 font-medium text-right">Limit</th>
+                              <th className="pb-2 font-medium text-right">Left</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-white/50">
+                            {dash.typeRows.length === 0 ? (
+                              <tr>
+                                <td colSpan={4} className="py-6 text-center text-zinc-400">
+                                  No ticket types on this event.
+                                </td>
+                              </tr>
+                            ) : (
+                              dash.typeRows.map((t) => (
+                                <tr key={t.id}>
+                                  <td className="py-2.5 pr-2">
+                                    <span className="inline-flex items-center gap-2">
+                                      <span
+                                        className="w-2.5 h-2.5 rounded-full shrink-0"
+                                        style={{ background: t.color }}
+                                      />
+                                      {t.name}
+                                    </span>
+                                  </td>
+                                  <td className="py-2.5 text-right tabular-nums font-medium">
+                                    {t.sold}
+                                  </td>
+                                  <td className="py-2.5 text-right tabular-nums text-zinc-600">
+                                    {t.cap == null ? "Unlimited" : t.cap}
+                                  </td>
+                                  <td
+                                    className={`py-2.5 text-right tabular-nums font-medium ${
+                                      t.left === 0
+                                        ? "text-red-600"
+                                        : t.left != null && t.left <= 50
+                                          ? "text-amber-600"
+                                          : "text-zinc-800"
+                                    }`}
+                                  >
+                                    {t.left == null ? "Unlimited" : t.left}
+                                  </td>
+                                </tr>
+                              ))
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="dash-glass-card p-4 sm:p-6">
+                    <h3 className="font-semibold text-sm text-zinc-900">
+                      Ticket sales over time
+                    </h3>
+                    <p className="text-xs text-zinc-500 mt-0.5">
+                      Tickets sold per day (by purchase date)
+                    </p>
+                    {!dash.timeline.length ? (
+                      <p className="mt-8 text-sm text-zinc-400 text-center">
+                        No dated sales to chart yet.
+                      </p>
+                    ) : (
+                      <div className="mt-6 overflow-x-auto">
+                        <div
+                          className="flex items-end gap-1.5 sm:gap-2 min-h-[180px] pb-8 relative"
+                          style={{ minWidth: Math.max(280, dash.timeline.length * 36) }}
+                        >
+                          {dash.timeline.map((d) => {
+                            const h = Math.max(6, (d.tickets / maxDayTickets) * 140);
+                            return (
+                              <div
+                                key={d.date}
+                                className="flex-1 flex flex-col items-center gap-1 min-w-[28px] group relative"
+                              >
+                                <span className="text-[10px] tabular-nums text-zinc-600 opacity-0 group-hover:opacity-100 transition-opacity absolute -top-5 whitespace-nowrap bg-white/80 px-1.5 py-0.5 rounded shadow-sm">
+                                  {d.tickets} tickets, HKD {d.revenue}
                                 </span>
-                              </li>
-                            ))}
-                        </ul>
+                                <div
+                                  className="w-full max-w-[40px] rounded-t-lg dash-bar-tickets transition-all hover:brightness-110"
+                                  style={{ height: h }}
+                                  title={`${d.date}: ${d.tickets} tickets, HKD ${d.revenue}, ${d.orders} orders`}
+                                />
+                                <span className="text-[9px] text-zinc-500 absolute bottom-0 rotate-[-40deg] origin-top-left translate-y-3 whitespace-nowrap">
+                                  {d.date.slice(5)}
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                        <div className="mt-4 flex flex-wrap gap-4 text-xs text-zinc-500">
+                          <span>
+                            Peak day tickets:{" "}
+                            <strong className="text-zinc-800">{maxDayTickets}</strong>
+                          </span>
+                          <span>
+                            Peak day revenue:{" "}
+                            <strong className="text-zinc-800">
+                              HKD {maxDayRevenue.toLocaleString()}
+                            </strong>
+                          </span>
+                        </div>
                       </div>
                     )}
                   </div>
 
-                  {/* Inventory table */}
-                  <div className="rounded-2xl border bg-white p-4 sm:p-6">
-                    <h3 className="font-semibold text-sm">Inventory by type</h3>
-                    <p className="text-xs text-zinc-500 mt-0.5">
-                      Left = limit − sold (∞ if no limit set on the ticket type)
-                    </p>
-                    <div className="mt-4 overflow-x-auto">
-                      <table className="w-full text-sm">
-                        <thead>
-                          <tr className="text-left text-xs text-zinc-500 border-b">
-                            <th className="pb-2 font-medium">Type</th>
-                            <th className="pb-2 font-medium text-right">Sold</th>
-                            <th className="pb-2 font-medium text-right">Limit</th>
-                            <th className="pb-2 font-medium text-right">Left</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y">
-                          {dash.typeRows.length === 0 ? (
-                            <tr>
-                              <td colSpan={4} className="py-6 text-center text-zinc-400">
-                                No ticket types on this event.
-                              </td>
-                            </tr>
-                          ) : (
-                            dash.typeRows.map((t) => (
-                              <tr key={t.id}>
-                                <td className="py-2.5 pr-2">
-                                  <span className="inline-flex items-center gap-2">
-                                    <span
-                                      className="w-2.5 h-2.5 rounded-sm shrink-0"
-                                      style={{ background: t.color }}
-                                    />
-                                    {t.name}
-                                  </span>
-                                </td>
-                                <td className="py-2.5 text-right tabular-nums font-medium">{t.sold}</td>
-                                <td className="py-2.5 text-right tabular-nums text-zinc-600">
-                                  {t.cap == null ? "∞" : t.cap}
-                                </td>
-                                <td
-                                  className={`py-2.5 text-right tabular-nums font-medium ${
-                                    t.left === 0
-                                      ? "text-red-600"
-                                      : t.left != null && t.left <= 50
-                                        ? "text-amber-600"
-                                        : "text-zinc-800"
-                                  }`}
-                                >
-                                  {t.left == null ? "∞" : t.left}
-                                </td>
-                              </tr>
-                            ))
-                          )}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Sales over time */}
-                <div className="rounded-2xl border bg-white p-4 sm:p-6">
-                  <h3 className="font-semibold text-sm">Ticket sales over time</h3>
-                  <p className="text-xs text-zinc-500 mt-0.5">Tickets sold per day (by purchase date)</p>
-                  {!dash.timeline.length ? (
-                    <p className="mt-8 text-sm text-zinc-400 text-center">No dated sales to chart yet.</p>
-                  ) : (
-                    <div className="mt-6 overflow-x-auto">
-                      <div
-                        className="flex items-end gap-1.5 sm:gap-2 min-h-[180px] pb-8 relative"
-                        style={{ minWidth: Math.max(280, dash.timeline.length * 36) }}
-                      >
-                        {dash.timeline.map((d) => {
-                          const h = Math.max(4, (d.tickets / maxDayTickets) * 140);
-                          return (
-                            <div
-                              key={d.date}
-                              className="flex-1 flex flex-col items-center gap-1 min-w-[28px] group relative"
-                            >
-                              <span className="text-[10px] tabular-nums text-zinc-600 opacity-0 group-hover:opacity-100 transition-opacity absolute -top-5 whitespace-nowrap">
-                                {d.tickets} · HKD {d.revenue}
-                              </span>
+                  {dash.timeline.length > 0 && (
+                    <div className="dash-glass-card p-4 sm:p-6">
+                      <h3 className="font-semibold text-sm text-zinc-900">Revenue over time</h3>
+                      <p className="text-xs text-zinc-500 mt-0.5">HKD per day</p>
+                      <div className="mt-6 overflow-x-auto">
+                        <div
+                          className="flex items-end gap-1.5 sm:gap-2 min-h-[160px] pb-8"
+                          style={{ minWidth: Math.max(280, dash.timeline.length * 36) }}
+                        >
+                          {dash.timeline.map((d) => {
+                            const h = Math.max(6, (d.revenue / maxDayRevenue) * 120);
+                            return (
                               <div
-                                className="w-full max-w-[40px] rounded-t-md bg-violet-600/90 hover:bg-violet-700 transition-colors"
-                                style={{ height: h }}
-                                title={`${d.date}: ${d.tickets} tickets, HKD ${d.revenue}, ${d.orders} orders`}
-                              />
-                              <span className="text-[9px] text-zinc-400 absolute bottom-0 rotate-[-40deg] origin-top-left translate-y-3 whitespace-nowrap">
-                                {d.date.slice(5)}
-                              </span>
-                            </div>
-                          );
-                        })}
-                      </div>
-                      <div className="mt-4 flex flex-wrap gap-4 text-xs text-zinc-500">
-                        <span>
-                          Peak day tickets:{" "}
-                          <strong className="text-zinc-800">{maxDayTickets}</strong>
-                        </span>
-                        <span>
-                          Peak day revenue:{" "}
-                          <strong className="text-zinc-800">
-                            HKD {maxDayRevenue.toLocaleString()}
-                          </strong>
-                        </span>
+                                key={d.date}
+                                className="flex-1 flex flex-col items-center min-w-[28px] group relative"
+                              >
+                                <span className="text-[10px] tabular-nums text-zinc-600 opacity-0 group-hover:opacity-100 absolute -top-5 whitespace-nowrap bg-white/80 px-1.5 py-0.5 rounded shadow-sm">
+                                  HKD {d.revenue}
+                                </span>
+                                <div
+                                  className="w-full max-w-[40px] rounded-t-lg dash-bar-revenue hover:brightness-110"
+                                  style={{ height: h }}
+                                  title={`${d.date}: HKD ${d.revenue}`}
+                                />
+                                <span className="text-[9px] text-zinc-500 absolute bottom-0 rotate-[-40deg] origin-top-left translate-y-3 whitespace-nowrap">
+                                  {d.date.slice(5)}
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
                       </div>
                     </div>
                   )}
-                </div>
-
-                {/* Revenue bar (same timeline) */}
-                {dash.timeline.length > 0 && (
-                  <div className="rounded-2xl border bg-white p-4 sm:p-6">
-                    <h3 className="font-semibold text-sm">Revenue over time</h3>
-                    <p className="text-xs text-zinc-500 mt-0.5">HKD per day</p>
-                    <div className="mt-6 overflow-x-auto">
-                      <div
-                        className="flex items-end gap-1.5 sm:gap-2 min-h-[160px] pb-8"
-                        style={{ minWidth: Math.max(280, dash.timeline.length * 36) }}
-                      >
-                        {dash.timeline.map((d) => {
-                          const h = Math.max(4, (d.revenue / maxDayRevenue) * 120);
-                          return (
-                            <div
-                              key={d.date}
-                              className="flex-1 flex flex-col items-center min-w-[28px] group relative"
-                            >
-                              <span className="text-[10px] tabular-nums text-zinc-600 opacity-0 group-hover:opacity-100 absolute -top-5 whitespace-nowrap">
-                                HKD {d.revenue}
-                              </span>
-                              <div
-                                className="w-full max-w-[40px] rounded-t-md bg-emerald-600/90 hover:bg-emerald-700"
-                                style={{ height: h }}
-                                title={`${d.date}: HKD ${d.revenue}`}
-                              />
-                              <span className="text-[9px] text-zinc-400 absolute bottom-0 rotate-[-40deg] origin-top-left translate-y-3 whitespace-nowrap">
-                                {d.date.slice(5)}
-                              </span>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </>
-            )}
+                </>
+              )}
+            </div>
           </div>
         );
       })()}
@@ -2183,7 +2211,7 @@ export default function AdminDashboard() {
                           <span className="text-zinc-500">
                             Order-level only: {used}/{max}
                             <span className="block text-[10px] text-zinc-400 mt-0.5">
-                              (no serials — re-purchase after serial fix for per-ticket tracking)
+                              (no serials - re-purchase after serial fix for per-ticket tracking)
                             </span>
                           </span>
                         );
@@ -2375,7 +2403,7 @@ export default function AdminDashboard() {
         </div>
       )}
 
-      {/* SCANNER TAB — Admin-only redemption / check-in */}
+      {/* SCANNER TAB - Admin-only redemption / check-in */}
       {activeTab === "scanner" && (
         <div className="max-w-3xl mx-auto px-4 sm:px-6 py-6 sm:py-8">
           <div className="mb-6">
@@ -2389,7 +2417,7 @@ export default function AdminDashboard() {
           <div className="bg-white rounded-2xl border p-4 sm:p-8">
             <div className="mb-4">
               <label className="block text-sm font-medium mb-1">
-                Ticket ID or Order Ref (from PDF QR — prefer KPY-…-001)
+                Ticket ID or Order Ref (from PDF QR - prefer KPY-…-001)
               </label>
               <div className="flex flex-col sm:flex-row gap-2">
                 <input
@@ -2559,7 +2587,7 @@ export default function AdminDashboard() {
         </div>
       )}
 
-      {/* ATTENDANCE TAB — derived from purchases (no separate Supabase table) */}
+      {/* ATTENDANCE TAB - derived from purchases (no separate Supabase table) */}
       {activeTab === "attendance" && (
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-8">
           <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
@@ -2567,7 +2595,7 @@ export default function AdminDashboard() {
               <h2 className="text-xl font-semibold">Attendance</h2>
               <p className="text-sm text-zinc-600 mt-1">
                 Check-ins from the Scanner. One row per ticket serial when available.
-                Data comes from the <strong>purchases</strong> table (ticket_breakdown + redeemed_at) —{" "}
+                Data comes from the <strong>purchases</strong> table (ticket_breakdown + redeemed_at)  - {" "}
                 <strong>no separate attendance table</strong> in Supabase.
               </p>
             </div>
@@ -2620,7 +2648,7 @@ export default function AdminDashboard() {
                         const typeName =
                           getTicketType(p.event_slug, u.ticketTypeId)?.name ||
                           u.ticketTypeId ||
-                          "—";
+                          " - ";
                         rows.push({
                           key: `${p.id}-${u.serial}-${last}`,
                           redeemedAt: last,
@@ -2639,7 +2667,7 @@ export default function AdminDashboard() {
                       rows.push({
                         key: String(p.id ?? p.order_reference),
                         redeemedAt: latest,
-                        ticketId: p.order_reference || "—",
+                        ticketId: p.order_reference || "-",
                         ticketTypeLabel: formatPurchaseTicketTypes(p),
                         name: p.name,
                         email: p.email,
@@ -2673,10 +2701,10 @@ export default function AdminDashboard() {
                       </td>
                       <td className="p-4 font-medium">{row.name}</td>
                       <td className="p-4 text-sm font-medium text-zinc-800 whitespace-nowrap">
-                        {row.phone || "—"}
+                        {row.phone || "-"}
                       </td>
                       <td className="p-4 text-sm text-zinc-600 hidden sm:table-cell break-all">
-                        {row.email || "—"}
+                        {row.email || "-"}
                       </td>
                       <td className="p-4">
                         <span className="font-mono text-xs rounded bg-zinc-100 px-2 py-0.5">{row.event}</span>
@@ -2697,7 +2725,7 @@ export default function AdminDashboard() {
         </div>
       )}
 
-      {/* ISSUE TICKETS — cash / offline payment after proof */}
+      {/* ISSUE TICKETS - cash / offline payment after proof */}
       {activeTab === "issue" && (
         <div className="max-w-3xl mx-auto px-4 sm:px-6 py-6 sm:py-8">
           <div className="mb-6">
@@ -2779,12 +2807,12 @@ export default function AdminDashboard() {
                 className="mt-1 w-full border rounded-lg px-3 py-2.5 text-sm bg-white"
               >
                 <option value="">
-                  {eventsLoading ? "Loading events…" : "Select event…"}
+                  {eventsLoading ? "Loading events..." : "Select event..."}
                 </option>
                 {events.map((ev) => (
                   <option key={ev.slug} value={ev.slug}>
                     {ev.name} ({ev.slug})
-                    {ev.enabled === false ? " — disabled" : ""}
+                    {ev.enabled === false ? " - disabled" : ""}
                   </option>
                 ))}
               </select>
@@ -3285,7 +3313,7 @@ export default function AdminDashboard() {
                       </div>
                     )}
                   </div>
-                  <p className="text-[10px] text-zinc-500 mt-1">Leave empty for plain white background. For best results with PDF, design at 842 × 1190 points.</p>
+                  <p className="text-[10px] text-zinc-500 mt-1">Leave empty for plain white background. For best results with PDF, design at 842 x 1190 points.</p>
                 </div>
 
                 <div className="flex items-center gap-2 pt-2">
@@ -3475,7 +3503,7 @@ export default function AdminDashboard() {
                                 {d.type !== 'custom' && <span className="text-zinc-500">[{d.type}]</span>}
                                 {d.validUntil && <span className="text-amber-600">until {d.validUntil}</span>}
                                 {d.minQuantity && <span className="text-blue-600">min {d.minQuantity}</span>}
-                                <button onClick={() => removeDiscount(t.id, d.id)} className="ml-auto text-red-400 hover:text-red-600">×</button>
+                                <button onClick={() => removeDiscount(t.id, d.id)} className="ml-auto text-red-400 hover:text-red-600">x</button>
                               </div>
                             ))}
                           </div>
@@ -3495,7 +3523,7 @@ export default function AdminDashboard() {
                   </p>
                   {(newTicket.discounts?.length || 0) > 0 && (
                     <p className="text-[11px] text-blue-700 mb-2">
-                      Copied from another type — including{" "}
+                      Copied from another type - including{" "}
                       {newTicket.discounts!.length} discount rule(s). Fill in{" "}
                       <strong>name</strong> (and dates if needed), then add.
                     </p>

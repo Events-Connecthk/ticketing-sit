@@ -1,7 +1,7 @@
 "use server";
 
 /**
- * KPay Online Payment Gateway (Merchant Mode) — All Hosted Checkout
+ * KPay Online Payment Gateway (Merchant Mode) - All Hosted Checkout
  *
  * Official docs (UAT):
  *   Base: https://payment.uat.kpay-group.com
@@ -34,7 +34,7 @@ import {
   isWebhookPaid,
 } from "./pending-payments";
 
-/** Load PEM from env string, or from a file path (local only — not on Vercel). */
+/** Load PEM from env string, or from a file path (local only - not on Vercel). */
 function loadKeyMaterial(
   inlineEnvNames: string[],
   pathEnvNames: string[]
@@ -43,7 +43,7 @@ function loadKeyMaterial(
     const v = process.env[name];
     if (v && v.trim()) return v.trim().replace(/\\n/g, "\n");
   }
-  // File paths: local/dev only. Vercel has no secrets/*.pem — use inline env PEMs.
+  // File paths: local/dev only. Vercel has no secrets/*.pem - use inline env PEMs.
   if (process.env.VERCEL || process.env.NODE_ENV === "production") {
     return "";
   }
@@ -77,7 +77,7 @@ const PRIVATE_KEY = loadKeyMaterial(
 );
 
 // KPay *platform* public key (file name like 8521…_kpay_public_key.pem).
-// NOT the merchant public key — merchant public is only for KPay's side / unused by us.
+// NOT the merchant public key - merchant public is only for KPay's side / unused by us.
 const PLATFORM_PUBLIC_KEY = loadKeyMaterial(
   [
     "KPAY_PLATFORM_PUBLIC_KEY",
@@ -143,7 +143,7 @@ function hasCredentials(): boolean {
 
 /**
  * Public site origin for returnUrl / notifyUrl / email links.
- * Prefer stable production domain — never the random per-deploy URL if we can avoid it.
+ * Prefer stable production domain - never the random per-deploy URL if we can avoid it.
  *
  * Priority:
  * 1) NEXT_PUBLIC_SITE_URL (set in Vercel env, then Redeploy)
@@ -199,7 +199,7 @@ async function kpayRequest<T = any>(
   // path may already include ?query for GET result lookups
   const pathWithQuery = path.startsWith("/") ? path : `/${path}`;
   const url = `${API_BASE}${pathWithQuery}`;
-  // Compact JSON (no spaces) — must match bytes signed and sent (KPay example)
+  // Compact JSON (no spaces) - must match bytes signed and sent (KPay example)
   const rawBody = body
     ? JSON.stringify(body)
     : "";
@@ -371,7 +371,7 @@ function productIconUrl(): string {
  */
 async function cartToItemList(cart: OrderCart) {
   const icon = productIconUrl();
-  // ASCII only in item names — some sign/verify stacks choke on Unicode (×)
+  // ASCII only in item names - some sign/verify stacks choke on Unicode (×)
   const clean = (s: string) =>
     s
       .replace(/\u00D7/g, "x")
@@ -457,7 +457,7 @@ function buildWebCheckoutUrl(managedOrderNo: string): string {
   const timestamp = Date.now().toString();
   const nonce = randomNonce(32);
 
-  // Deterministic order — must match signed URI
+  // Deterministic order - must match signed URI
   const parts: string[] = [
     `managedOrderNo=${encodeURIComponent(managedOrderNo)}`,
     `language=${encodeURIComponent(LANGUAGE)}`,
@@ -523,7 +523,7 @@ export async function initiateKpayPayment(
       };
     }
     console.warn(
-      "[KPay] Missing merchant code or private key — DEVELOPMENT SIMULATION.",
+      "[KPay] Missing merchant code or private key - DEVELOPMENT SIMULATION.",
       {
         hasMerchantCode: Boolean(MERCHANT_CODE),
         hasPrivateKey: Boolean(PRIVATE_KEY),
@@ -721,7 +721,7 @@ function classifyOrderStatus(raw: unknown): "paid" | "failed" | "unknown" {
     return "paid";
   }
 
-  // Definite terminal failure / cancel — NOT unpaid/pending (those stay unknown)
+  // Definite terminal failure / cancel - NOT unpaid/pending (those stay unknown)
   if (
     status.includes("CANCEL") ||
     status.includes("FAIL") ||
@@ -839,7 +839,7 @@ export async function lookupOrderPayStatus(
         msg: code !== SUCCESS_CODE ? msg : undefined,
       });
 
-      // 30002 etc. — business error / not found; try next key
+      // 30002 etc. - business error / not found; try next key
       if (code !== SUCCESS_CODE || !data) continue;
 
       const state = Number(data.managedOrderState);
@@ -880,7 +880,7 @@ export async function lookupOrderPayStatus(
  *
  * Cancel must never issue tickets.
  * Auto-success only via: webhook paid, or order API paid.
- * Optional: userConfirmedPaid (explicit UI button after return) — never auto on page load.
+ * Optional: userConfirmedPaid (explicit UI button after return) - never auto on page load.
  */
 export type KpayConfirmOutcome = "paid" | "cancelled" | "unknown";
 
@@ -888,7 +888,7 @@ export async function confirmKpayPayment(
   paymentId: string,
   opts?: {
     returnResult?: KpayReturnResult;
-    /** True only when user taps “I completed payment” — not on automatic redirect */
+    /** True only when user taps “I completed payment” - not on automatic redirect */
     userConfirmedPaid?: boolean;
   }
 ): Promise<{
@@ -909,7 +909,7 @@ export async function confirmKpayPayment(
   const returnResult: KpayReturnResult = opts?.returnResult || "unknown";
   const userConfirmedPaid = Boolean(opts?.userConfirmedPaid);
 
-  // Explicit cancel from cancelUrl — never issue tickets
+  // Explicit cancel from cancelUrl - never issue tickets
   if (returnResult === "cancel") {
     console.log("[KPay] Return marked cancel for", paymentId);
     try {
@@ -919,7 +919,7 @@ export async function confirmKpayPayment(
     }
     return {
       success: false,
-      error: "Payment was cancelled. No ticket was issued — you can try again.",
+      error: "Payment was cancelled. No ticket was issued - you can try again.",
       outcome: "cancelled",
     };
   }
@@ -996,7 +996,7 @@ export async function confirmKpayPayment(
   if (pending?.status === "failed") {
     return {
       success: false,
-      error: "Payment was cancelled. No ticket was issued — you can try again.",
+      error: "Payment was cancelled. No ticket was issued - you can try again.",
       outcome: "cancelled",
     };
   }
@@ -1064,7 +1064,7 @@ export async function confirmKpayPayment(
     if (pending) await markPendingFailed(paymentId);
     return {
       success: false,
-      error: "Payment was cancelled. No ticket was issued — you can try again.",
+      error: "Payment was cancelled. No ticket was issued - you can try again.",
       outcome: "cancelled",
     };
   }
@@ -1078,7 +1078,7 @@ export async function confirmKpayPayment(
     !isProduction();
 
   if (userConfirmedPaid && !requireApi && allowManualPaid) {
-    console.warn("[KPay] USER confirmed paid — finalizing", paymentId);
+    console.warn("[KPay] USER confirmed paid - finalizing", paymentId);
     if (pending) await markPendingPaid(paymentId);
     return {
       success: true,
@@ -1087,7 +1087,7 @@ export async function confirmKpayPayment(
     };
   }
   if (userConfirmedPaid && !allowManualPaid) {
-    console.warn("[KPay] Manual paid blocked on PROD — need webhook/order API");
+    console.warn("[KPay] Manual paid blocked on PROD - need webhook/order API");
     return {
       success: false,
       outcome: "unknown",
@@ -1097,7 +1097,7 @@ export async function confirmKpayPayment(
   }
 
   if (process.env.KPAY_AUTO_CONFIRM_RETURN === "true" && !requireApi && allowManualPaid) {
-    console.warn("[KPay] KPAY_AUTO_CONFIRM_RETURN=true — finalizing", paymentId);
+    console.warn("[KPay] KPAY_AUTO_CONFIRM_RETURN=true - finalizing", paymentId);
     if (pending) await markPendingPaid(paymentId);
     return {
       success: true,
@@ -1109,7 +1109,7 @@ export async function confirmKpayPayment(
   // No paid webhook + no paid order result → treat as not completed (cancel/abandon).
   // Success path relies on webhook/order paid above; do not auto-issue tickets here.
   if (pending) await markPendingFailed(paymentId);
-  console.log("[KPay] Cancel/incomplete return — no ticket issued", {
+  console.log("[KPay] Cancel/incomplete return - no ticket issued", {
     paymentId,
     managedOrderNo: managedOrderNo || null,
     orderStatus: st,
@@ -1118,7 +1118,7 @@ export async function confirmKpayPayment(
     success: false,
     outcome: "cancelled",
     error:
-      "Payment was not completed. No ticket was issued — you can try again.",
+      "Payment was not completed. No ticket was issued - you can try again.",
   };
 }
 
@@ -1169,7 +1169,7 @@ export async function verifyKpayWebhook(
   if (!signature) {
     if (webhookRelaxed()) {
       console.warn(
-        "[KPay] Webhook signature missing — allowed (sandbox/relaxed)"
+        "[KPay] Webhook signature missing - allowed (sandbox/relaxed)"
       );
       return true;
     }
@@ -1179,7 +1179,7 @@ export async function verifyKpayWebhook(
   if (!PLATFORM_PUBLIC_KEY) {
     if (webhookRelaxed()) {
       console.warn(
-        "[KPay] KPAY_PLATFORM_PUBLIC_KEY not set — skipping verify (sandbox/relaxed)"
+        "[KPay] KPAY_PLATFORM_PUBLIC_KEY not set - skipping verify (sandbox/relaxed)"
       );
       return true;
     }
@@ -1270,15 +1270,15 @@ export async function verifyKpayWebhook(
 
   if (webhookRelaxed()) {
     console.warn(
-      "[KPay] Webhook signature verify failed — allowing (UAT/relaxed).",
+      "[KPay] Webhook signature verify failed - allowing (UAT/relaxed).",
       {
         platformKeyPubSha16: fp,
         matchesKnownLocalKpayKey: fp === expectedLocalHint,
         keyBytes: PLATFORM_PUBLIC_KEY.length,
         tip:
           fp === expectedLocalHint
-            ? "Key fingerprint matches local kpay public file — string-to-sign or encoding may differ; still safe on UAT relaxed."
-            : "Key fingerprint does NOT match local secrets/kpay_platform_public.pem — re-paste KPAY_PLATFORM_PUBLIC_KEY on Vercel from that file and redeploy.",
+            ? "Key fingerprint matches local kpay public file - string-to-sign or encoding may differ; still safe on UAT relaxed."
+            : "Key fingerprint does NOT match local secrets/kpay_platform_public.pem - re-paste KPAY_PLATFORM_PUBLIC_KEY on Vercel from that file and redeploy.",
       }
     );
     return true;

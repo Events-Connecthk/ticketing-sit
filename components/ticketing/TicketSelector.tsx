@@ -148,7 +148,7 @@ export function TicketSelector({
               </div>
 
               <div className="w-20 text-right font-semibold tabular-nums">
-                {lineTotal > 0 ? `${currency} ${lineTotal}` : "—"}
+                {lineTotal > 0 ? `${currency} ${lineTotal}` : "-"}
               </div>
             </div>
           </div>

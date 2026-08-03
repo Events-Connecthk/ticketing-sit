@@ -10,9 +10,9 @@ export function formatHkDateTime(
   input: string | Date | null | undefined,
   opts?: Intl.DateTimeFormatOptions
 ): string {
-  if (!input) return "—";
+  if (!input) return "-";
   const d = typeof input === "string" ? new Date(input) : input;
-  if (Number.isNaN(d.getTime())) return "—";
+  if (Number.isNaN(d.getTime())) return "-";
   return d.toLocaleString("en-HK", {
     timeZone: HK_TZ,
     year: "numeric",
@@ -29,9 +29,9 @@ export function formatHkDateTime(
 export function formatHkTime(
   input: string | Date | null | undefined
 ): string {
-  if (!input) return "—";
+  if (!input) return "-";
   const d = typeof input === "string" ? new Date(input) : input;
-  if (Number.isNaN(d.getTime())) return "—";
+  if (Number.isNaN(d.getTime())) return "-";
   return d.toLocaleTimeString("en-HK", {
     timeZone: HK_TZ,
     hour: "2-digit",
@@ -44,9 +44,9 @@ export function formatHkTime(
 export function formatHkDate(
   input: string | Date | null | undefined
 ): string {
-  if (!input) return "—";
+  if (!input) return "-";
   const d = typeof input === "string" ? new Date(input) : input;
-  if (Number.isNaN(d.getTime())) return "—";
+  if (Number.isNaN(d.getTime())) return "-";
   return d.toLocaleDateString("en-HK", {
     timeZone: HK_TZ,
     year: "numeric",

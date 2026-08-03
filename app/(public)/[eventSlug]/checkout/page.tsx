@@ -202,7 +202,7 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
       if (finalizedSessionsRef.current.has(`cancel:${session}`)) return;
       finalizedSessionsRef.current.add(`cancel:${session}`);
       setNeedsManualConfirm(false);
-      setError("Payment was cancelled. No ticket was issued — you can try again.");
+      setError("Payment was cancelled. No ticket was issued - you can try again.");
       setIsProcessing(false);
       try {
         sessionStorage.removeItem(`kpay_cart_${session}`);
@@ -342,7 +342,7 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
         setNeedsManualConfirm(false);
         setError(
           result.error ||
-            "Payment was cancelled. No ticket was issued — you can try again."
+            "Payment was cancelled. No ticket was issued - you can try again."
         );
         return;
       }
@@ -507,7 +507,7 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
       }
     }
     setNeedsManualConfirm(false);
-    setError("Payment was cancelled. No ticket was issued — you can try again.");
+    setError("Payment was cancelled. No ticket was issued - you can try again.");
     setIsProcessing(false);
   }
 
@@ -558,7 +558,7 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
                   <p className="text-sm text-amber-900/80 mt-1">
                     KPay sent you back without a clear paid/cancel flag (same return URL
                     for both). We checked the order status but it is still pending. Pick
-                    what you did — no ticket is issued unless you confirm payment.
+                    what you did - no ticket is issued unless you confirm payment.
                   </p>
                 </div>
                 <div className="flex flex-col gap-2">
@@ -568,7 +568,7 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
                     disabled={isProcessing}
                     onClick={handleManualPaid}
                   >
-                    I paid — get my tickets
+                    I paid - get my tickets
                   </button>
                   <button
                     type="button"
@@ -576,7 +576,7 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
                     disabled={isProcessing}
                     onClick={handleManualCancel}
                   >
-                    I cancelled — no ticket
+                    I cancelled - no ticket
                   </button>
                 </div>
                 {returnDebug && (

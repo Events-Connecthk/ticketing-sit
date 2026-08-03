@@ -40,7 +40,7 @@ export const AT_THE_PEAK: EventConfig = {
     "An unforgettable evening at the summit. Experience breathtaking views, world-class performances, and a celebration under the stars. Join us for a night of inspiration, connection, and magic.",
   date: "2026-07-18",
   endDate: "2026-07-15",
-  time: "18:30 – 23:00",
+  time: "18:30 - 23:00",
   location: "Victoria Peak, Hong Kong",
   image: undefined,
   enabled: true,

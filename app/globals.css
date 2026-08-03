@@ -85,3 +85,50 @@ table {
   width: 48px;
   background: linear-gradient(to right, var(--gold), var(--gold-light));
 }
+
+/* Admin dashboard glass panels */
+.dash-glass-shell {
+  background:
+    radial-gradient(1200px 400px at 10% -10%, rgba(197, 162, 110, 0.22), transparent 55%),
+    radial-gradient(900px 380px at 100% 0%, rgba(124, 58, 237, 0.12), transparent 50%),
+    radial-gradient(700px 300px at 50% 100%, rgba(16, 185, 129, 0.08), transparent 45%),
+    linear-gradient(180deg, #f7f4ef 0%, #f3f0f8 100%);
+  border-radius: 1.25rem;
+}
+
+.dash-glass-card {
+  background: rgba(255, 255, 255, 0.55);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.8) inset,
+    0 8px 32px rgba(44, 37, 32, 0.06);
+  border-radius: 1.25rem;
+}
+
+.dash-glass-card-soft {
+  background: rgba(255, 255, 255, 0.4);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.65);
+  box-shadow: 0 4px 20px rgba(44, 37, 32, 0.04);
+  border-radius: 1rem;
+}
+
+.dash-stat-value {
+  background: linear-gradient(135deg, #2c2520 0%, #5c4a3a 50%, #7c3aed 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.dash-bar-tickets {
+  background: linear-gradient(180deg, rgba(139, 92, 246, 0.95) 0%, rgba(109, 40, 217, 0.75) 100%);
+  box-shadow: 0 0 12px rgba(124, 58, 237, 0.25);
+}
+
+.dash-bar-revenue {
+  background: linear-gradient(180deg, rgba(52, 211, 153, 0.95) 0%, rgba(5, 150, 105, 0.75) 100%);
+  box-shadow: 0 0 12px rgba(16, 185, 129, 0.2);
+}

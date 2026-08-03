@@ -54,7 +54,7 @@ export default function ScanClient({ searchParams }: ScanClientProps) {
           setMessage(
             count > 0
               ? `Ticket ${unit.serial}: redeemed ${count} time(s)`
-              : `Ticket ${unit.serial}: VALID — ready for check-in`
+              : `Ticket ${unit.serial}: VALID - ready for check-in`
           );
         } else {
           const count = p.redemptions?.length || (p.redeemed_at ? 1 : 0);
