@@ -54,6 +54,14 @@ export default function AdminDashboard() {
 
   /** Event stats dashboard */
   const [dashEventSlug, setDashEventSlug] = useState("");
+  /** Hover info box on dashboard charts */
+  const [dashTip, setDashTip] = useState<null | {
+    chart: "sales" | "revenue" | "donut";
+    leftPct: number;
+    topPct: number;
+    title: string;
+    rows: Array<{ label: string; value: string }>;
+  }>(null);
 
   // ===== Manual ticket issue (cash / offline proof) =====
   const [issueEventSlug, setIssueEventSlug] = useState("");
@@ -1751,14 +1759,14 @@ export default function AdminDashboard() {
               return { ...t, d, frac };
             }) || [];
 
-        // Timeline chart geometry (area + bars)
+        // Timeline chart geometry (area + bars) - taller so graph fills the card
         const tl = dash?.timeline || [];
-        const chartW = Math.max(360, tl.length * 48);
-        const chartH = 200;
-        const padL = 36;
-        const padR = 12;
-        const padT = 20;
-        const padB = 36;
+        const chartW = Math.max(480, tl.length * 56);
+        const chartH = 300;
+        const padL = 44;
+        const padR = 16;
+        const padT = 28;
+        const padB = 40;
         const plotW = chartW - padL - padR;
         const plotH = chartH - padT - padB;
         const n = Math.max(1, tl.length);
@@ -1807,7 +1815,10 @@ export default function AdminDashboard() {
                 <div className="flex flex-wrap items-center gap-2">
                   <select
                     value={dashEventSlug}
-                    onChange={(e) => setDashEventSlug(e.target.value)}
+                    onChange={(e) => {
+                      setDashEventSlug(e.target.value);
+                      setDashTip(null);
+                    }}
                     className="dash-glass-card-soft rounded-xl px-3 py-2.5 text-sm min-w-[12rem] outline-none focus:ring-2 focus:ring-violet-300/50"
                   >
                     <option value="">
@@ -1902,11 +1913,16 @@ export default function AdminDashboard() {
                           No sales yet for this event.
                         </p>
                       ) : (
-                        <div className="mt-5 flex flex-col sm:flex-row items-center gap-6">
-                          <div className="relative shrink-0">
+                        <div className="mt-5 flex flex-col sm:flex-row items-center gap-6 relative">
+                          <div
+                            className="relative shrink-0"
+                            onMouseLeave={() =>
+                              setDashTip((t) => (t?.chart === "donut" ? null : t))
+                            }
+                          >
                             <svg
                               viewBox="0 0 200 200"
-                              className="w-48 h-48 drop-shadow-md"
+                              className="w-56 h-56 sm:w-64 sm:h-64 drop-shadow-md"
                             >
                               <defs>
                                 <filter id="donutGlow" x="-20%" y="-20%" width="140%" height="140%">
@@ -1933,13 +1949,37 @@ export default function AdminDashboard() {
                                     key={s.id}
                                     d={s.d}
                                     fill={s.color}
-                                    className="transition-opacity hover:opacity-90"
-                                  >
-                                    <title>
-                                      {s.name}: {s.sold} (
-                                      {Math.round(s.frac * 100)}%)
-                                    </title>
-                                  </path>
+                                    className="transition-opacity cursor-pointer"
+                                    style={{
+                                      opacity:
+                                        dashTip?.chart === "donut" &&
+                                        dashTip.title !== s.name
+                                          ? 0.45
+                                          : 1,
+                                    }}
+                                    onMouseEnter={() =>
+                                      setDashTip({
+                                        chart: "donut",
+                                        leftPct: 52,
+                                        topPct: 18,
+                                        title: s.name,
+                                        rows: [
+                                          {
+                                            label: "Tickets sold",
+                                            value: String(s.sold),
+                                          },
+                                          {
+                                            label: "Share",
+                                            value: `${Math.round(s.frac * 100)}%`,
+                                          },
+                                          {
+                                            label: "Of total",
+                                            value: `${s.sold} / ${pieTotal}`,
+                                          },
+                                        ],
+                                      })
+                                    }
+                                  />
                                 ))}
                               </g>
                               <circle
@@ -1967,6 +2007,32 @@ export default function AdminDashboard() {
                                 tickets
                               </text>
                             </svg>
+                            {dashTip?.chart === "donut" && (
+                              <div
+                                className="pointer-events-none absolute z-20 min-w-[10.5rem] rounded-xl border border-white/80 bg-white/95 px-3 py-2.5 shadow-lg backdrop-blur-md"
+                                style={{
+                                  left: `${dashTip.leftPct}%`,
+                                  top: `${dashTip.topPct}%`,
+                                }}
+                              >
+                                <div className="text-xs font-semibold text-zinc-900 truncate">
+                                  {dashTip.title}
+                                </div>
+                                <dl className="mt-1.5 space-y-1">
+                                  {dashTip.rows.map((r) => (
+                                    <div
+                                      key={r.label}
+                                      className="flex justify-between gap-3 text-[11px]"
+                                    >
+                                      <dt className="text-zinc-500">{r.label}</dt>
+                                      <dd className="font-medium tabular-nums text-zinc-800">
+                                        {r.value}
+                                      </dd>
+                                    </div>
+                                  ))}
+                                </dl>
+                              </div>
+                            )}
                           </div>
                           <ul className="space-y-2 text-sm w-full min-w-0">
                             {dash.typeRows
@@ -2106,10 +2172,15 @@ export default function AdminDashboard() {
                         No dated sales to chart yet.
                       </p>
                     ) : (
-                      <div className="mt-4 overflow-x-auto -mx-1">
+                      <div
+                        className="mt-4 relative overflow-x-auto -mx-1"
+                        onMouseLeave={() =>
+                          setDashTip((t) => (t?.chart === "sales" ? null : t))
+                        }
+                      >
                         <svg
                           viewBox={`0 0 ${chartW} ${chartH}`}
-                          className="w-full min-w-[320px] h-[220px]"
+                          className="w-full min-w-[400px] h-[280px] sm:h-[320px]"
                           preserveAspectRatio="xMidYMid meet"
                         >
                           <defs>
@@ -2133,11 +2204,11 @@ export default function AdminDashboard() {
                                 strokeWidth="1"
                               />
                               <text
-                                x={padL - 6}
+                                x={padL - 8}
                                 y={gy + 3}
                                 textAnchor="end"
                                 fill="#a1a1aa"
-                                style={{ fontSize: 9 }}
+                                style={{ fontSize: 10 }}
                               >
                                 {Math.round(maxDayTickets * (1 - i / 4))}
                               </text>
@@ -2148,43 +2219,103 @@ export default function AdminDashboard() {
                             d={linePath}
                             fill="none"
                             stroke="url(#lineStroke)"
-                            strokeWidth="2.5"
+                            strokeWidth="3"
                             strokeLinecap="round"
                             strokeLinejoin="round"
                           />
-                          {ticketPoints.map((p) => (
-                            <g key={p.date} className="dash-chart-point">
-                              <circle
-                                cx={p.x}
-                                cy={p.y}
-                                r="10"
-                                fill="transparent"
+                          {ticketPoints.map((p) => {
+                            const active =
+                              dashTip?.chart === "sales" &&
+                              dashTip.title === p.date;
+                            return (
+                              <g
+                                key={p.date}
+                                className="cursor-pointer"
+                                onMouseEnter={() =>
+                                  setDashTip({
+                                    chart: "sales",
+                                    leftPct: Math.min(
+                                      78,
+                                      Math.max(8, (p.x / chartW) * 100 - 8)
+                                    ),
+                                    topPct: Math.max(
+                                      6,
+                                      (p.y / chartH) * 100 - 18
+                                    ),
+                                    title: p.date,
+                                    rows: [
+                                      {
+                                        label: "Tickets sold",
+                                        value: String(p.tickets),
+                                      },
+                                      {
+                                        label: "Revenue",
+                                        value: `HKD ${p.revenue.toLocaleString()}`,
+                                      },
+                                      {
+                                        label: "Orders",
+                                        value: String(p.orders),
+                                      },
+                                    ],
+                                  })
+                                }
                               >
-                                <title>
-                                  {p.date}: {p.tickets} tickets, HKD {p.revenue},{" "}
-                                  {p.orders} orders
-                                </title>
-                              </circle>
-                              <circle
-                                cx={p.x}
-                                cy={p.y}
-                                r="4.5"
-                                fill="#fff"
-                                stroke="#7c3aed"
-                                strokeWidth="2.5"
-                              />
-                              <text
-                                x={p.x}
-                                y={chartH - 12}
-                                textAnchor="middle"
-                                fill="#71717a"
-                                style={{ fontSize: 9 }}
-                              >
-                                {p.date.slice(5)}
-                              </text>
-                            </g>
-                          ))}
+                                <circle cx={p.x} cy={p.y} r="16" fill="transparent" />
+                                {active && (
+                                  <circle
+                                    cx={p.x}
+                                    cy={p.y}
+                                    r="10"
+                                    fill="rgba(124,58,237,0.15)"
+                                  />
+                                )}
+                                <circle
+                                  cx={p.x}
+                                  cy={p.y}
+                                  r={active ? 6 : 5}
+                                  fill="#fff"
+                                  stroke="#7c3aed"
+                                  strokeWidth="2.5"
+                                />
+                                <text
+                                  x={p.x}
+                                  y={chartH - 14}
+                                  textAnchor="middle"
+                                  fill="#71717a"
+                                  style={{ fontSize: 10 }}
+                                >
+                                  {p.date.slice(5)}
+                                </text>
+                              </g>
+                            );
+                          })}
                         </svg>
+                        {dashTip?.chart === "sales" && (
+                          <div
+                            className="pointer-events-none absolute z-20 min-w-[11.5rem] rounded-xl border border-violet-100 bg-white/95 px-3 py-2.5 shadow-xl backdrop-blur-md"
+                            style={{
+                              left: `${dashTip.leftPct}%`,
+                              top: `${dashTip.topPct}%`,
+                            }}
+                          >
+                            <div className="text-[11px] font-semibold text-violet-800">
+                              {dashTip.title}
+                            </div>
+                            <dl className="mt-1.5 space-y-1">
+                              {dashTip.rows.map((r) => (
+                                <div
+                                  key={r.label}
+                                  className="flex justify-between gap-4 text-[11px]"
+                                >
+                                  <dt className="text-zinc-500">{r.label}</dt>
+                                  <dd className="font-semibold tabular-nums text-zinc-900">
+                                    {r.value}
+                                  </dd>
+                                </div>
+                              ))}
+                            </dl>
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
@@ -2205,16 +2336,25 @@ export default function AdminDashboard() {
                           </strong>
                         </span>
                       </div>
-                      <div className="mt-4 overflow-x-auto -mx-1">
+                      <div
+                        className="mt-4 relative overflow-x-auto -mx-1"
+                        onMouseLeave={() =>
+                          setDashTip((t) => (t?.chart === "revenue" ? null : t))
+                        }
+                      >
                         <svg
                           viewBox={`0 0 ${chartW} ${chartH}`}
-                          className="w-full min-w-[320px] h-[220px]"
+                          className="w-full min-w-[400px] h-[280px] sm:h-[320px]"
                           preserveAspectRatio="xMidYMid meet"
                         >
                           <defs>
                             <linearGradient id="barGrad" x1="0" y1="0" x2="0" y2="1">
                               <stop offset="0%" stopColor="#34d399" />
                               <stop offset="100%" stopColor="#059669" />
+                            </linearGradient>
+                            <linearGradient id="barGradHot" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="0%" stopColor="#6ee7b7" />
+                              <stop offset="100%" stopColor="#047857" />
                             </linearGradient>
                           </defs>
                           {gridYs.map((gy, i) => (
@@ -2229,11 +2369,11 @@ export default function AdminDashboard() {
                                 strokeDasharray="4 4"
                               />
                               <text
-                                x={padL - 6}
+                                x={padL - 8}
                                 y={gy + 3}
                                 textAnchor="end"
                                 fill="#a1a1aa"
-                                style={{ fontSize: 9 }}
+                                style={{ fontSize: 10 }}
                               >
                                 {Math.round(maxDayRevenue * (1 - i / 4))}
                               </text>
@@ -2243,28 +2383,61 @@ export default function AdminDashboard() {
                             const x = padL + barSlot * i + (barSlot - barW) / 2;
                             const y = yRevenue(d.revenue);
                             const h = Math.max(4, padT + plotH - y);
+                            const active =
+                              dashTip?.chart === "revenue" &&
+                              dashTip.title === d.date;
                             return (
-                              <g key={d.date}>
-                                <title>
-                                  {d.date}: HKD {d.revenue}
-                                </title>
+                              <g
+                                key={d.date}
+                                className="cursor-pointer"
+                                onMouseEnter={() =>
+                                  setDashTip({
+                                    chart: "revenue",
+                                    leftPct: Math.min(
+                                      78,
+                                      Math.max(8, ((x + barW / 2) / chartW) * 100 - 8)
+                                    ),
+                                    topPct: Math.max(6, (y / chartH) * 100 - 12),
+                                    title: d.date,
+                                    rows: [
+                                      {
+                                        label: "Revenue",
+                                        value: `HKD ${d.revenue.toLocaleString()}`,
+                                      },
+                                      {
+                                        label: "Tickets",
+                                        value: String(d.tickets),
+                                      },
+                                      {
+                                        label: "Orders",
+                                        value: String(d.orders),
+                                      },
+                                    ],
+                                  })
+                                }
+                              >
                                 <rect
                                   x={x}
                                   y={y}
                                   width={barW}
                                   height={h}
-                                  rx={6}
-                                  ry={6}
-                                  fill="url(#barGrad)"
-                                  opacity={0.92}
-                                  className="transition-opacity hover:opacity-100"
+                                  rx={8}
+                                  ry={8}
+                                  fill={
+                                    active ? "url(#barGradHot)" : "url(#barGrad)"
+                                  }
+                                  opacity={
+                                    dashTip?.chart === "revenue" && !active
+                                      ? 0.45
+                                      : 0.95
+                                  }
                                 />
                                 <text
                                   x={x + barW / 2}
-                                  y={chartH - 12}
+                                  y={chartH - 14}
                                   textAnchor="middle"
                                   fill="#71717a"
-                                  style={{ fontSize: 9 }}
+                                  style={{ fontSize: 10 }}
                                 >
                                   {d.date.slice(5)}
                                 </text>
@@ -2272,6 +2445,32 @@ export default function AdminDashboard() {
                             );
                           })}
                         </svg>
+                        {dashTip?.chart === "revenue" && (
+                          <div
+                            className="pointer-events-none absolute z-20 min-w-[11.5rem] rounded-xl border border-emerald-100 bg-white/95 px-3 py-2.5 shadow-xl backdrop-blur-md"
+                            style={{
+                              left: `${dashTip.leftPct}%`,
+                              top: `${dashTip.topPct}%`,
+                            }}
+                          >
+                            <div className="text-[11px] font-semibold text-emerald-800">
+                              {dashTip.title}
+                            </div>
+                            <dl className="mt-1.5 space-y-1">
+                              {dashTip.rows.map((r) => (
+                                <div
+                                  key={r.label}
+                                  className="flex justify-between gap-4 text-[11px]"
+                                >
+                                  <dt className="text-zinc-500">{r.label}</dt>
+                                  <dd className="font-semibold tabular-nums text-zinc-900">
+                                    {r.value}
+                                  </dd>
+                                </div>
+                              ))}
+                            </dl>
+                          </div>
+                        )}
                       </div>
                     </div>
                   )}
