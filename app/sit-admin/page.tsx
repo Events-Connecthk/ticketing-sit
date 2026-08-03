@@ -1719,30 +1719,75 @@ export default function AdminDashboard() {
           ...(dash?.timeline.map((d) => d.revenue) || [1])
         );
 
+        // Donut (modern ring) slices
+        const donutCx = 100;
+        const donutCy = 100;
+        const rOut = 78;
+        const rIn = 50;
+        const gap = 0.04; // radians gap between slices
         let pieAngle = -Math.PI / 2;
         const pieSlices =
           dash?.typeRows
             .filter((t) => t.sold > 0)
             .map((t) => {
               const frac = pieTotal > 0 ? t.sold / pieTotal : 0;
-              const start = pieAngle;
-              const sweep = frac * Math.PI * 2;
-              pieAngle += sweep;
-              const end = pieAngle;
-              const r = 80;
-              const cx = 100;
-              const cy = 100;
-              const x1 = cx + r * Math.cos(start);
-              const y1 = cy + r * Math.sin(start);
-              const x2 = cx + r * Math.cos(end);
-              const y2 = cy + r * Math.sin(end);
+              const sweep = Math.max(0, frac * Math.PI * 2 - gap);
+              const start = pieAngle + gap / 2;
+              const end = start + sweep;
+              pieAngle += frac * Math.PI * 2;
+              const polar = (a: number, r: number) => ({
+                x: donutCx + r * Math.cos(a),
+                y: donutCy + r * Math.sin(a),
+              });
+              const o1 = polar(start, rOut);
+              const o2 = polar(end, rOut);
+              const i1 = polar(end, rIn);
+              const i2 = polar(start, rIn);
               const large = sweep > Math.PI ? 1 : 0;
               const d =
                 frac >= 0.999
-                  ? `M ${cx} ${cy - r} A ${r} ${r} 0 1 1 ${cx - 0.01} ${cy - r} Z`
-                  : `M ${cx} ${cy} L ${x1} ${y1} A ${r} ${r} 0 ${large} 1 ${x2} ${y2} Z`;
+                  ? `M ${donutCx} ${donutCy - rOut} A ${rOut} ${rOut} 0 1 1 ${donutCx - 0.01} ${donutCy - rOut} L ${donutCx - 0.01} ${donutCy - rIn} A ${rIn} ${rIn} 0 1 0 ${donutCx} ${donutCy - rIn} Z`
+                  : `M ${o1.x} ${o1.y} A ${rOut} ${rOut} 0 ${large} 1 ${o2.x} ${o2.y} L ${i1.x} ${i1.y} A ${rIn} ${rIn} 0 ${large} 0 ${i2.x} ${i2.y} Z`;
               return { ...t, d, frac };
             }) || [];
+
+        // Timeline chart geometry (area + bars)
+        const tl = dash?.timeline || [];
+        const chartW = Math.max(360, tl.length * 48);
+        const chartH = 200;
+        const padL = 36;
+        const padR = 12;
+        const padT = 20;
+        const padB = 36;
+        const plotW = chartW - padL - padR;
+        const plotH = chartH - padT - padB;
+        const n = Math.max(1, tl.length);
+        const xAt = (i: number) =>
+          padL + (n === 1 ? plotW / 2 : (i / (n - 1)) * plotW);
+        const yTickets = (v: number) =>
+          padT + plotH - (v / maxDayTickets) * plotH;
+        const yRevenue = (v: number) =>
+          padT + plotH - (v / maxDayRevenue) * plotH;
+        const ticketPoints = tl.map((d, i) => ({
+          x: xAt(i),
+          y: yTickets(d.tickets),
+          ...d,
+        }));
+        const areaPath =
+          ticketPoints.length === 0
+            ? ""
+            : `M ${ticketPoints[0].x} ${padT + plotH} ` +
+              ticketPoints.map((p) => `L ${p.x} ${p.y}`).join(" ") +
+              ` L ${ticketPoints[ticketPoints.length - 1].x} ${padT + plotH} Z`;
+        const linePath =
+          ticketPoints.length === 0
+            ? ""
+            : `M ${ticketPoints.map((p) => `${p.x} ${p.y}`).join(" L ")}`;
+        const barSlot = plotW / n;
+        const barW = Math.min(28, Math.max(8, barSlot * 0.55));
+        const gridYs = [0, 0.25, 0.5, 0.75, 1].map(
+          (f) => padT + plotH * (1 - f)
+        );
 
         return (
           <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-8">
@@ -1844,49 +1889,122 @@ export default function AdminDashboard() {
 
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                     <div className="dash-glass-card p-4 sm:p-6">
-                      <h3 className="font-semibold text-sm text-zinc-900">Sold by ticket type</h3>
-                      <p className="text-xs text-zinc-500 mt-0.5">Share of tickets sold</p>
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <h3 className="font-semibold text-sm text-zinc-900">
+                            Sold by ticket type
+                          </h3>
+                          <p className="text-xs text-zinc-500 mt-0.5">Share of tickets sold</p>
+                        </div>
+                      </div>
                       {pieTotal === 0 ? (
                         <p className="mt-8 text-sm text-zinc-400 text-center">
                           No sales yet for this event.
                         </p>
                       ) : (
-                        <div className="mt-4 flex flex-col sm:flex-row items-center gap-4">
-                          <div className="relative">
-                            <svg viewBox="0 0 200 200" className="w-44 h-44 shrink-0 drop-shadow-sm">
-                              {pieSlices.map((s) => (
-                                <path
-                                  key={s.id}
-                                  d={s.d}
-                                  fill={s.color}
-                                  stroke="rgba(255,255,255,0.85)"
-                                  strokeWidth="2"
-                                />
-                              ))}
+                        <div className="mt-5 flex flex-col sm:flex-row items-center gap-6">
+                          <div className="relative shrink-0">
+                            <svg
+                              viewBox="0 0 200 200"
+                              className="w-48 h-48 drop-shadow-md"
+                            >
+                              <defs>
+                                <filter id="donutGlow" x="-20%" y="-20%" width="140%" height="140%">
+                                  <feDropShadow
+                                    dx="0"
+                                    dy="4"
+                                    stdDeviation="4"
+                                    floodColor="#7c3aed"
+                                    floodOpacity="0.15"
+                                  />
+                                </filter>
+                              </defs>
+                              <circle
+                                cx={donutCx}
+                                cy={donutCy}
+                                r={(rOut + rIn) / 2}
+                                fill="none"
+                                stroke="rgba(255,255,255,0.5)"
+                                strokeWidth={rOut - rIn + 4}
+                              />
+                              <g filter="url(#donutGlow)">
+                                {pieSlices.map((s) => (
+                                  <path
+                                    key={s.id}
+                                    d={s.d}
+                                    fill={s.color}
+                                    className="transition-opacity hover:opacity-90"
+                                  >
+                                    <title>
+                                      {s.name}: {s.sold} (
+                                      {Math.round(s.frac * 100)}%)
+                                    </title>
+                                  </path>
+                                ))}
+                              </g>
+                              <circle
+                                cx={donutCx}
+                                cy={donutCy}
+                                r={rIn - 2}
+                                fill="rgba(255,255,255,0.85)"
+                              />
+                              <text
+                                x={donutCx}
+                                y={donutCy - 6}
+                                textAnchor="middle"
+                                className="fill-zinc-900"
+                                style={{ fontSize: 22, fontWeight: 700 }}
+                              >
+                                {pieTotal}
+                              </text>
+                              <text
+                                x={donutCx}
+                                y={donutCy + 14}
+                                textAnchor="middle"
+                                className="fill-zinc-500"
+                                style={{ fontSize: 10, fontWeight: 500 }}
+                              >
+                                tickets
+                              </text>
                             </svg>
                           </div>
-                          <ul className="space-y-2.5 text-sm w-full min-w-0">
+                          <ul className="space-y-2 text-sm w-full min-w-0">
                             {dash.typeRows
                               .filter((t) => t.sold > 0)
-                              .map((t) => (
-                                <li
-                                  key={t.id}
-                                  className="flex items-center gap-2 dash-glass-card-soft px-2.5 py-1.5 rounded-lg"
-                                >
-                                  <span
-                                    className="w-2.5 h-2.5 rounded-full shrink-0 shadow-sm"
-                                    style={{ background: t.color }}
-                                  />
-                                  <span className="truncate flex-1 text-zinc-800">{t.name}</span>
-                                  <span className="tabular-nums text-zinc-600 shrink-0 text-xs font-medium">
-                                    {t.sold} (
-                                    {pieTotal
-                                      ? Math.round((t.sold / pieTotal) * 100)
-                                      : 0}
-                                    %)
-                                  </span>
-                                </li>
-                              ))}
+                              .map((t) => {
+                                const pct = pieTotal
+                                  ? Math.round((t.sold / pieTotal) * 100)
+                                  : 0;
+                                return (
+                                  <li key={t.id} className="space-y-1">
+                                    <div className="flex items-center gap-2">
+                                      <span
+                                        className="w-2.5 h-2.5 rounded-full shrink-0 ring-2 ring-white shadow-sm"
+                                        style={{ background: t.color }}
+                                      />
+                                      <span className="truncate flex-1 text-zinc-800 text-xs sm:text-sm font-medium">
+                                        {t.name}
+                                      </span>
+                                      <span className="tabular-nums text-zinc-600 shrink-0 text-xs font-semibold">
+                                        {t.sold}
+                                        <span className="text-zinc-400 font-normal">
+                                          {" "}
+                                          ({pct}%)
+                                        </span>
+                                      </span>
+                                    </div>
+                                    <div className="h-1.5 rounded-full bg-zinc-200/60 overflow-hidden ml-4">
+                                      <div
+                                        className="h-full rounded-full transition-all duration-500"
+                                        style={{
+                                          width: `${pct}%`,
+                                          background: `linear-gradient(90deg, ${t.color}, ${t.color}cc)`,
+                                        }}
+                                      />
+                                    </div>
+                                  </li>
+                                );
+                              })}
                           </ul>
                         </div>
                       )}
@@ -1897,147 +2015,263 @@ export default function AdminDashboard() {
                       <p className="text-xs text-zinc-500 mt-0.5">
                         Left = limit - sold (Unlimited if no limit on the type)
                       </p>
-                      <div className="mt-4 overflow-x-auto">
-                        <table className="w-full text-sm">
-                          <thead>
-                            <tr className="text-left text-xs text-zinc-500 border-b border-white/60">
-                              <th className="pb-2 font-medium">Type</th>
-                              <th className="pb-2 font-medium text-right">Sold</th>
-                              <th className="pb-2 font-medium text-right">Limit</th>
-                              <th className="pb-2 font-medium text-right">Left</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-white/50">
-                            {dash.typeRows.length === 0 ? (
-                              <tr>
-                                <td colSpan={4} className="py-6 text-center text-zinc-400">
-                                  No ticket types on this event.
-                                </td>
-                              </tr>
-                            ) : (
-                              dash.typeRows.map((t) => (
-                                <tr key={t.id}>
-                                  <td className="py-2.5 pr-2">
-                                    <span className="inline-flex items-center gap-2">
-                                      <span
-                                        className="w-2.5 h-2.5 rounded-full shrink-0"
-                                        style={{ background: t.color }}
-                                      />
+                      <div className="mt-4 space-y-3">
+                        {dash.typeRows.length === 0 ? (
+                          <p className="py-6 text-center text-zinc-400 text-sm">
+                            No ticket types on this event.
+                          </p>
+                        ) : (
+                          dash.typeRows.map((t) => {
+                            const fillPct =
+                              t.cap != null && t.cap > 0
+                                ? Math.min(100, Math.round((t.sold / t.cap) * 100))
+                                : t.sold > 0
+                                  ? 40
+                                  : 0;
+                            return (
+                              <div
+                                key={t.id}
+                                className="dash-glass-card-soft rounded-xl px-3 py-2.5"
+                              >
+                                <div className="flex items-center justify-between gap-2 text-sm">
+                                  <span className="inline-flex items-center gap-2 min-w-0">
+                                    <span
+                                      className="w-2.5 h-2.5 rounded-full shrink-0"
+                                      style={{ background: t.color }}
+                                    />
+                                    <span className="truncate font-medium text-zinc-800">
                                       {t.name}
                                     </span>
-                                  </td>
-                                  <td className="py-2.5 text-right tabular-nums font-medium">
+                                  </span>
+                                  <span className="text-xs tabular-nums text-zinc-600 shrink-0">
                                     {t.sold}
-                                  </td>
-                                  <td className="py-2.5 text-right tabular-nums text-zinc-600">
-                                    {t.cap == null ? "Unlimited" : t.cap}
-                                  </td>
-                                  <td
-                                    className={`py-2.5 text-right tabular-nums font-medium ${
-                                      t.left === 0
-                                        ? "text-red-600"
-                                        : t.left != null && t.left <= 50
-                                          ? "text-amber-600"
-                                          : "text-zinc-800"
-                                    }`}
-                                  >
-                                    {t.left == null ? "Unlimited" : t.left}
-                                  </td>
-                                </tr>
-                              ))
-                            )}
-                          </tbody>
-                        </table>
+                                    <span className="text-zinc-400">
+                                      {" "}
+                                      / {t.cap == null ? "∞" : t.cap}
+                                    </span>
+                                    <span
+                                      className={`ml-2 font-semibold ${
+                                        t.left === 0
+                                          ? "text-red-600"
+                                          : t.left != null && t.left <= 50
+                                            ? "text-amber-600"
+                                            : "text-emerald-700"
+                                      }`}
+                                    >
+                                      {t.left == null
+                                        ? "Unlimited"
+                                        : `${t.left} left`}
+                                    </span>
+                                  </span>
+                                </div>
+                                <div className="mt-2 h-2 rounded-full bg-zinc-200/70 overflow-hidden">
+                                  <div
+                                    className="h-full rounded-full"
+                                    style={{
+                                      width: `${fillPct}%`,
+                                      background: `linear-gradient(90deg, ${t.color}99, ${t.color})`,
+                                    }}
+                                  />
+                                </div>
+                              </div>
+                            );
+                          })
+                        )}
                       </div>
                     </div>
                   </div>
 
                   <div className="dash-glass-card p-4 sm:p-6">
-                    <h3 className="font-semibold text-sm text-zinc-900">
-                      Ticket sales over time
-                    </h3>
-                    <p className="text-xs text-zinc-500 mt-0.5">
-                      Tickets sold per day (by purchase date)
-                    </p>
-                    {!dash.timeline.length ? (
+                    <div className="flex flex-wrap items-end justify-between gap-2">
+                      <div>
+                        <h3 className="font-semibold text-sm text-zinc-900">
+                          Ticket sales over time
+                        </h3>
+                        <p className="text-xs text-zinc-500 mt-0.5">
+                          Daily volume with trend line
+                        </p>
+                      </div>
+                      {tl.length > 0 && (
+                        <div className="flex gap-3 text-[11px] text-zinc-500">
+                          <span>
+                            Peak{" "}
+                            <strong className="text-zinc-800">{maxDayTickets}</strong>{" "}
+                            tickets
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                    {!tl.length ? (
                       <p className="mt-8 text-sm text-zinc-400 text-center">
                         No dated sales to chart yet.
                       </p>
                     ) : (
-                      <div className="mt-6 overflow-x-auto">
-                        <div
-                          className="flex items-end gap-1.5 sm:gap-2 min-h-[180px] pb-8 relative"
-                          style={{ minWidth: Math.max(280, dash.timeline.length * 36) }}
+                      <div className="mt-4 overflow-x-auto -mx-1">
+                        <svg
+                          viewBox={`0 0 ${chartW} ${chartH}`}
+                          className="w-full min-w-[320px] h-[220px]"
+                          preserveAspectRatio="xMidYMid meet"
                         >
-                          {dash.timeline.map((d) => {
-                            const h = Math.max(6, (d.tickets / maxDayTickets) * 140);
-                            return (
-                              <div
-                                key={d.date}
-                                className="flex-1 flex flex-col items-center gap-1 min-w-[28px] group relative"
+                          <defs>
+                            <linearGradient id="areaFill" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="0%" stopColor="#8b5cf6" stopOpacity="0.45" />
+                              <stop offset="100%" stopColor="#8b5cf6" stopOpacity="0.02" />
+                            </linearGradient>
+                            <linearGradient id="lineStroke" x1="0" y1="0" x2="1" y2="0">
+                              <stop offset="0%" stopColor="#a78bfa" />
+                              <stop offset="100%" stopColor="#6d28d9" />
+                            </linearGradient>
+                          </defs>
+                          {gridYs.map((gy, i) => (
+                            <g key={i}>
+                              <line
+                                x1={padL}
+                                y1={gy}
+                                x2={chartW - padR}
+                                y2={gy}
+                                stroke="rgba(24,24,27,0.06)"
+                                strokeWidth="1"
+                              />
+                              <text
+                                x={padL - 6}
+                                y={gy + 3}
+                                textAnchor="end"
+                                fill="#a1a1aa"
+                                style={{ fontSize: 9 }}
                               >
-                                <span className="text-[10px] tabular-nums text-zinc-600 opacity-0 group-hover:opacity-100 transition-opacity absolute -top-5 whitespace-nowrap bg-white/80 px-1.5 py-0.5 rounded shadow-sm">
-                                  {d.tickets} tickets, HKD {d.revenue}
-                                </span>
-                                <div
-                                  className="w-full max-w-[40px] rounded-t-lg dash-bar-tickets transition-all hover:brightness-110"
-                                  style={{ height: h }}
-                                  title={`${d.date}: ${d.tickets} tickets, HKD ${d.revenue}, ${d.orders} orders`}
-                                />
-                                <span className="text-[9px] text-zinc-500 absolute bottom-0 rotate-[-40deg] origin-top-left translate-y-3 whitespace-nowrap">
-                                  {d.date.slice(5)}
-                                </span>
-                              </div>
-                            );
-                          })}
-                        </div>
-                        <div className="mt-4 flex flex-wrap gap-4 text-xs text-zinc-500">
-                          <span>
-                            Peak day tickets:{" "}
-                            <strong className="text-zinc-800">{maxDayTickets}</strong>
-                          </span>
-                          <span>
-                            Peak day revenue:{" "}
-                            <strong className="text-zinc-800">
-                              HKD {maxDayRevenue.toLocaleString()}
-                            </strong>
-                          </span>
-                        </div>
+                                {Math.round(maxDayTickets * (1 - i / 4))}
+                              </text>
+                            </g>
+                          ))}
+                          <path d={areaPath} fill="url(#areaFill)" />
+                          <path
+                            d={linePath}
+                            fill="none"
+                            stroke="url(#lineStroke)"
+                            strokeWidth="2.5"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                          {ticketPoints.map((p) => (
+                            <g key={p.date} className="dash-chart-point">
+                              <circle
+                                cx={p.x}
+                                cy={p.y}
+                                r="10"
+                                fill="transparent"
+                              >
+                                <title>
+                                  {p.date}: {p.tickets} tickets, HKD {p.revenue},{" "}
+                                  {p.orders} orders
+                                </title>
+                              </circle>
+                              <circle
+                                cx={p.x}
+                                cy={p.y}
+                                r="4.5"
+                                fill="#fff"
+                                stroke="#7c3aed"
+                                strokeWidth="2.5"
+                              />
+                              <text
+                                x={p.x}
+                                y={chartH - 12}
+                                textAnchor="middle"
+                                fill="#71717a"
+                                style={{ fontSize: 9 }}
+                              >
+                                {p.date.slice(5)}
+                              </text>
+                            </g>
+                          ))}
+                        </svg>
                       </div>
                     )}
                   </div>
 
-                  {dash.timeline.length > 0 && (
+                  {tl.length > 0 && (
                     <div className="dash-glass-card p-4 sm:p-6">
-                      <h3 className="font-semibold text-sm text-zinc-900">Revenue over time</h3>
-                      <p className="text-xs text-zinc-500 mt-0.5">HKD per day</p>
-                      <div className="mt-6 overflow-x-auto">
-                        <div
-                          className="flex items-end gap-1.5 sm:gap-2 min-h-[160px] pb-8"
-                          style={{ minWidth: Math.max(280, dash.timeline.length * 36) }}
+                      <div className="flex flex-wrap items-end justify-between gap-2">
+                        <div>
+                          <h3 className="font-semibold text-sm text-zinc-900">
+                            Revenue over time
+                          </h3>
+                          <p className="text-xs text-zinc-500 mt-0.5">HKD per day</p>
+                        </div>
+                        <span className="text-[11px] text-zinc-500">
+                          Peak{" "}
+                          <strong className="text-zinc-800">
+                            HKD {maxDayRevenue.toLocaleString()}
+                          </strong>
+                        </span>
+                      </div>
+                      <div className="mt-4 overflow-x-auto -mx-1">
+                        <svg
+                          viewBox={`0 0 ${chartW} ${chartH}`}
+                          className="w-full min-w-[320px] h-[220px]"
+                          preserveAspectRatio="xMidYMid meet"
                         >
-                          {dash.timeline.map((d) => {
-                            const h = Math.max(6, (d.revenue / maxDayRevenue) * 120);
-                            return (
-                              <div
-                                key={d.date}
-                                className="flex-1 flex flex-col items-center min-w-[28px] group relative"
+                          <defs>
+                            <linearGradient id="barGrad" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="0%" stopColor="#34d399" />
+                              <stop offset="100%" stopColor="#059669" />
+                            </linearGradient>
+                          </defs>
+                          {gridYs.map((gy, i) => (
+                            <g key={i}>
+                              <line
+                                x1={padL}
+                                y1={gy}
+                                x2={chartW - padR}
+                                y2={gy}
+                                stroke="rgba(24,24,27,0.06)"
+                                strokeWidth="1"
+                                strokeDasharray="4 4"
+                              />
+                              <text
+                                x={padL - 6}
+                                y={gy + 3}
+                                textAnchor="end"
+                                fill="#a1a1aa"
+                                style={{ fontSize: 9 }}
                               >
-                                <span className="text-[10px] tabular-nums text-zinc-600 opacity-0 group-hover:opacity-100 absolute -top-5 whitespace-nowrap bg-white/80 px-1.5 py-0.5 rounded shadow-sm">
-                                  HKD {d.revenue}
-                                </span>
-                                <div
-                                  className="w-full max-w-[40px] rounded-t-lg dash-bar-revenue hover:brightness-110"
-                                  style={{ height: h }}
-                                  title={`${d.date}: HKD ${d.revenue}`}
+                                {Math.round(maxDayRevenue * (1 - i / 4))}
+                              </text>
+                            </g>
+                          ))}
+                          {tl.map((d, i) => {
+                            const x = padL + barSlot * i + (barSlot - barW) / 2;
+                            const y = yRevenue(d.revenue);
+                            const h = Math.max(4, padT + plotH - y);
+                            return (
+                              <g key={d.date}>
+                                <title>
+                                  {d.date}: HKD {d.revenue}
+                                </title>
+                                <rect
+                                  x={x}
+                                  y={y}
+                                  width={barW}
+                                  height={h}
+                                  rx={6}
+                                  ry={6}
+                                  fill="url(#barGrad)"
+                                  opacity={0.92}
+                                  className="transition-opacity hover:opacity-100"
                                 />
-                                <span className="text-[9px] text-zinc-500 absolute bottom-0 rotate-[-40deg] origin-top-left translate-y-3 whitespace-nowrap">
+                                <text
+                                  x={x + barW / 2}
+                                  y={chartH - 12}
+                                  textAnchor="middle"
+                                  fill="#71717a"
+                                  style={{ fontSize: 9 }}
+                                >
                                   {d.date.slice(5)}
-                                </span>
-                              </div>
+                                </text>
+                              </g>
                             );
                           })}
-                        </div>
+                        </svg>
                       </div>
                     </div>
                   )}
