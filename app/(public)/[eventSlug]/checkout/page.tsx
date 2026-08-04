@@ -271,7 +271,9 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
   }
 
   const currentCart: OrderCart = cart;
-  const isFreeEvent = !event.paymentEnabled;
+  // Free event OR cart total 0 (all free ticket types)
+  const isFreeEvent =
+    !event.paymentEnabled || (currentCart?.totalAmount ?? 0) <= 0;
 
   async function handlePaymentReturnPoll(paymentReference: string, usedCart: OrderCart) {
     setIsProcessing(true);
@@ -440,10 +442,11 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
     setError(null);
     setNeedsManualConfirm(false);
 
-    if (isFreeEvent) {
-      console.log("[Checkout] Free registration");
-      const freeCart = { ...currentCart, totalAmount: 0 };
-      await handlePaymentSuccess("FREE-" + Date.now(), freeCart, "success");
+    if (isFreeEvent || currentCart.totalAmount <= 0) {
+      console.log("[Checkout] Free registration / free ticket types - skip KPay");
+      const freeCart = { ...currentCart, totalAmount: 0, currency: "FREE" };
+      const mid = String(Date.now() % 100000).padStart(5, "0");
+      await handlePaymentSuccess(`FREE-${mid}`, freeCart, "success");
       setIsProcessing(false);
       return;
     }

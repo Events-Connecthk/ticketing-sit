@@ -96,6 +96,9 @@ export function getEffectivePrice(
   currentDate: Date = new Date(),
   quantity: number = 1
 ): { original: number; discounted: number; appliedDiscountName?: string } {
+  if (ticket.isFree) {
+    return { original: 0, discounted: 0, appliedDiscountName: "Free" };
+  }
   const original = ticket.price;
   if (!ticket.discounts || ticket.discounts.length === 0) {
     return { original, discounted: original };

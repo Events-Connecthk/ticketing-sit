@@ -54,7 +54,8 @@ export function TicketSelector({
 
   const total = selections.reduce((sum, sel) => {
     const type = ticketTypes.find((t) => t.id === sel.ticketTypeId);
-    return sum + (type ? type.price * sel.quantity : 0);
+    if (!type || type.isFree) return sum;
+    return sum + type.price * sel.quantity;
   }, 0);
 
   const totalTickets = selections.reduce((s, sel) => s + sel.quantity, 0);
@@ -63,7 +64,7 @@ export function TicketSelector({
     <div className="space-y-4">
       {ticketTypes.map((ticket) => {
         const qty = getQuantity(ticket.id);
-        const lineTotal = ticket.price * qty;
+        const lineTotal = ticket.isFree ? 0 : ticket.price * qty;
         const remaining = getRemaining(ticket, soldByType);
         const max = getMaxSelectable(ticket, remaining);
         const level = getStockLevel(remaining);
@@ -93,8 +94,13 @@ export function TicketSelector({
               <div className="flex flex-wrap items-baseline gap-2">
                 <h4 className="font-semibold text-lg">{ticket.name}</h4>
                 <span className="text-sm" style={{ color: "#6B5E50" }}>
-                  {currency} {ticket.price}
+                  {ticket.isFree ? "Free" : `${currency} ${ticket.price}`}
                 </span>
+                {ticket.isFree && (
+                  <span className="text-xs font-semibold uppercase tracking-wide text-emerald-800 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded">
+                    Free
+                  </span>
+                )}
                 {soldOut && (
                   <span className="text-xs font-semibold uppercase tracking-wide text-red-700 bg-red-50 border border-red-200 px-2 py-0.5 rounded">
                     Out of stock
@@ -148,7 +154,13 @@ export function TicketSelector({
               </div>
 
               <div className="w-20 text-right font-semibold tabular-nums">
-                {lineTotal > 0 ? `${currency} ${lineTotal}` : "-"}
+                {ticket.isFree
+                  ? qty > 0
+                    ? "Free"
+                    : "-"
+                  : lineTotal > 0
+                    ? `${currency} ${lineTotal}`
+                    : "-"}
               </div>
             </div>
           </div>

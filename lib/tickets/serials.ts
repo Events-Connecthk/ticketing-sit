@@ -1,8 +1,8 @@
 /**
  * Multi-ticket serials: one payment/order, many scannable ticket IDs.
  *
- * Order ref:  KPY-1783...
- * Ticket IDs: KPY-1783...-001, KPY-1783...-002, ...
+ * Order ref:  KPY-48291  (prefix + up to 5 digits)
+ * Ticket IDs: KPY-48291-01, KPY-48291-02, ...  (2-digit unit serial)
  */
 
 import { TicketSelection } from "@/types";
@@ -13,6 +13,19 @@ export type TicketUnit = TicketSelection & {
   quantity: 1;
   redemptions?: RedemptionEntry[];
 };
+
+/** 5-digit middle segment for order refs (collision-resistant enough for event scale). */
+export function shortOrderMiddle(): string {
+  const t = Date.now() % 100000;
+  const r = Math.floor(Math.random() * 100000);
+  return String((t ^ r) % 100000).padStart(5, "0");
+}
+
+/** e.g. KPY-48291, MAN-01928, FREE-77301 */
+export function makeOrderReference(prefix: string): string {
+  const p = (prefix || "KPY").replace(/[^A-Za-z0-9]/g, "").toUpperCase() || "KPY";
+  return `${p}-${shortOrderMiddle()}`;
+}
 
 /** Expand cart lines into one row per physical ticket with serial. */
 export function expandTicketsWithSerials(
@@ -27,7 +40,7 @@ export function expandTicketsWithSerials(
       units.push({
         ticketTypeId: sel.ticketTypeId,
         quantity: 1,
-        serial: `${orderReference}-${String(n).padStart(3, "0")}`,
+        serial: `${orderReference}-${String(n).padStart(2, "0")}`,
         redemptions: [],
       });
       n++;
@@ -83,7 +96,7 @@ export function listSerials(p: {
   for (const sel of p.ticket_breakdown || []) {
     const qty = Math.max(1, Number(sel.quantity) || 1);
     for (let i = 0; i < qty; i++) {
-      out.push(`${p.order_reference}-${String(n).padStart(3, "0")}`);
+      out.push(`${p.order_reference}-${String(n).padStart(2, "0")}`);
       n++;
     }
   }

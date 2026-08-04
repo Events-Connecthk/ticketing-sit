@@ -19,12 +19,18 @@ export interface TicketType {
   maxPerOrder?: number;
   /** Total tickets of this type for the event. Omit / leave empty = unlimited. */
   quantityAvailable?: number;
-  enabled?: boolean; // defaults to true if omitted
+  /** Public visibility on the ticketing page. defaults to true if omitted */
+  enabled?: boolean;
+  /**
+   * If true, this type is free: counts as HKD 0 and never triggers KPay.
+   * Cart of only free types issues tickets immediately (like free events).
+   */
+  isFree?: boolean;
   discounts?: DiscountRule[]; // customizable discounts
   redemptionLimit?: number; // how many times this ticket can be redeemed (e.g. 1 = single day, 3 = 3-day access)
   /**
    * Optional calendar validity (YYYY-MM-DD, Hong Kong day).
-   * Used by admin scanner — e.g. Day-1 only vs Day-2 only.
+   * Used by admin scanner - e.g. Day-1 only vs Day-2 only.
    * Omit both = valid any day.
    */
   validFrom?: string;

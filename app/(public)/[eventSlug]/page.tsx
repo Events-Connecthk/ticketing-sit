@@ -124,10 +124,18 @@ export default function EventPage({ params }: EventPageProps) {
     setSelections(newSelections);
   };
 
+  // Event free OR cart only free ticket types (finalTotal 0) → skip KPay
+  const cartIsFree =
+    event.paymentEnabled === false || finalTotal <= 0;
+
   const handleBuyerSubmit = (data: BuyerInfo) => {
     setBuyer(data);
+    if (totalTickets === 0) {
+      alert("Select at least one ticket.");
+      return;
+    }
     const hasTickets = event.ticketTypes && event.ticketTypes.length > 0;
-    if (hasTickets && event.paymentEnabled !== false) {
+    if (hasTickets && !cartIsFree) {
       proceedToCheckout(data);
     } else {
       handleFreeRegistration(data);
@@ -138,11 +146,17 @@ export default function EventPage({ params }: EventPageProps) {
     const finalBuyer = buyerData || buyer;
     if (!event || !finalBuyer || totalTickets === 0) return;
 
+    // Safety: free cart should never hit KPay checkout
+    if (cartIsFree) {
+      await handleFreeRegistration(finalBuyer);
+      return;
+    }
+
     const cart: OrderCart = {
       eventSlug: event.slug,
       tickets: selections,
       buyer: finalBuyer,
-      totalAmount: event.paymentEnabled ? finalTotal : 0,
+      totalAmount: finalTotal,
       currency,
       appliedDiscountCode: appliedDiscount?.code,
       discountAmount: discountAmount || undefined,
@@ -178,10 +192,17 @@ export default function EventPage({ params }: EventPageProps) {
     setIsLoading(true);
 
     try {
-      // Process free registration directly
-      const { finalizeAfterPayment } = await import("@/lib/integrations/order.service");
-      const result = await finalizeAfterPayment("FREE-" + Date.now(), freeCart);
-      const ref = result.orderReference || "FREE-" + Date.now();
+      // Process free registration / free ticket types directly (no KPay)
+      const { processSuccessfulPurchase } = await import(
+        "@/lib/integrations/order.service"
+      );
+      const { makeOrderReference } = await import("@/lib/tickets/serials");
+      const payRef = `FREE-${makeOrderReference("FREE").split("-")[1] || Date.now()}`;
+      const result = await processSuccessfulPurchase(freeCart, payRef, {
+        paymentMethod: "free",
+        orderPrefix: "FREE",
+      });
+      const ref = result.orderReference || payRef;
       router.push(`/${slug}/success?ref=${ref}&amount=0`);
     } catch (e) {
       console.error(e);
@@ -289,7 +310,11 @@ export default function EventPage({ params }: EventPageProps) {
                     }
                     className="btn-gold w-full rounded-xl py-4 font-medium text-lg disabled:opacity-60 disabled:cursor-not-allowed"
                   >
-                    {totalTickets > 0 ? (event.paymentEnabled ? "Proceed to Checkout" : "Register for Free") : "Select tickets to continue"}
+                    {totalTickets > 0
+                      ? cartIsFree
+                        ? "Get free tickets"
+                        : "Proceed to Checkout"
+                      : "Select tickets to continue"}
                   </button>
                 </div>
               </>
@@ -439,7 +464,9 @@ export default function EventPage({ params }: EventPageProps) {
 
                     <div className="flex gap-3 pt-2">
                       <button type="button" onClick={goBackToTickets} className="flex-1 rounded-lg border py-3 font-medium">Back</button>
-                      <button type="submit" className="btn-gold flex-1 rounded-lg py-3 font-medium">{event.paymentEnabled ? "Proceed to Checkout" : "Register for Free"}</button>
+                      <button type="submit" className="btn-gold flex-1 rounded-lg py-3 font-medium">
+                        {cartIsFree ? "Get free tickets" : "Proceed to Checkout"}
+                      </button>
                     </div>
                   </form>
                 </div>
@@ -477,7 +504,11 @@ export default function EventPage({ params }: EventPageProps) {
                     })}
                     <div className="border-t pt-3 mt-2 flex justify-between font-semibold">
                       <span>Total</span>
-                      <span>{currency} {event.paymentEnabled ? finalTotal : 0}</span>
+                      <span>
+                        {finalTotal <= 0
+                          ? "Free"
+                          : `${currency} ${finalTotal}`}
+                      </span>
                     </div>
                     {appliedDiscount && (
                       <div className="text-xs text-emerald-600 text-right">

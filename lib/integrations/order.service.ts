@@ -30,7 +30,7 @@ import {
 import { generateTicketPdf } from "../pdf/generate-ticket";
 import { sendConfirmationEmail } from "./email";
 import { loadEventBySlug } from "../config/events";
-import { expandTicketsWithSerials } from "../tickets/serials";
+import { expandTicketsWithSerials, makeOrderReference } from "../tickets/serials";
 
 // Prevent double-fulfillment within a single serverless instance
 const processedPaymentRefs = new Map<string, string>(); // paymentRef → orderReference
@@ -96,12 +96,13 @@ export async function processSuccessfulPurchase(
         : paymentReference.startsWith("FREE")
           ? "FREE"
           : "KPY");
-    const orderReference = `${prefix}-${Date.now()}`;
+    // Short form: KPY-48291 (5-digit middle), units …-01, …-02
+    const orderReference = makeOrderReference(prefix);
     if (paymentReference) {
       processedPaymentRefs.set(paymentReference, orderReference);
     }
 
-    // One order row; many scannable serials …-001, -002, …
+    // One order row; many scannable serials …-01, …-02, …
     const ticketUnits = expandTicketsWithSerials(orderReference, cart.tickets);
 
     const paymentMethod =

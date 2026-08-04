@@ -143,6 +143,7 @@ export default function AdminDashboard() {
     validFrom: "",
     validTo: "",
     enabled: true,
+    isFree: false,
   });
 
   // Separate state for time pickers (to support native date/time inputs)
@@ -1534,6 +1535,7 @@ export default function AdminDashboard() {
       validTo: newTicket.validTo?.trim() || undefined,
       description: newTicket.description || "",
       enabled: newTicket.enabled !== false,
+      isFree: Boolean(newTicket.isFree),
       discounts: newTicket.discounts
         ? newTicket.discounts.map((d) => ({ ...d }))
         : undefined,
@@ -1554,6 +1556,7 @@ export default function AdminDashboard() {
       validFrom: "",
       validTo: "",
       enabled: true,
+      isFree: false,
       discounts: undefined,
       description: "",
     });
@@ -1590,6 +1593,7 @@ export default function AdminDashboard() {
       validFrom: "",
       validTo: "",
       enabled: src.enabled !== false,
+      isFree: Boolean(src.isFree),
       discounts: (src.discounts || []).map((d) => ({
         ...d,
         id: `${d.id}-dup-${Date.now().toString(36)}`,
@@ -1614,6 +1618,14 @@ export default function AdminDashboard() {
     setTicketTypesForm(
       ticketTypesForm.map((t) =>
         t.id === id ? { ...t, enabled: !(t.enabled !== false) } : t
+      )
+    );
+  }
+
+  function toggleTicketTypeFree(id: string) {
+    setTicketTypesForm(
+      ticketTypesForm.map((t) =>
+        t.id === id ? { ...t, isFree: !t.isFree } : t
       )
     );
   }
@@ -4158,9 +4170,18 @@ export default function AdminDashboard() {
                           <button
                             type="button"
                             onClick={() => toggleTicketType(t.id)}
-                            className={`px-3 py-1.5 rounded text-xs ${t.enabled !== false ? "bg-emerald-100 text-emerald-700" : "bg-zinc-200 text-zinc-600"}`}
+                            className={`px-3 py-1.5 rounded text-xs font-medium ${t.enabled !== false ? "bg-emerald-100 text-emerald-800" : "bg-zinc-200 text-zinc-600"}`}
+                            title="Show or hide this type on the public ticketing page"
                           >
-                            {t.enabled !== false ? "On sale" : "Hidden"}
+                            {t.enabled !== false ? "Visible" : "Hidden"}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => toggleTicketTypeFree(t.id)}
+                            className={`px-3 py-1.5 rounded text-xs font-medium ${t.isFree ? "bg-sky-100 text-sky-800" : "bg-zinc-100 text-zinc-600 border"}`}
+                            title="Free types never call KPay; tickets issue immediately when the cart is free"
+                          >
+                            {t.isFree ? "Free (no payment)" : "Paid"}
                           </button>
                           <button
                             type="button"
@@ -4310,6 +4331,26 @@ export default function AdminDashboard() {
                         className="border px-3 py-2 rounded-lg text-sm text-zinc-900"
                         min="1"
                       />
+                    </label>
+                    <label className="flex items-center gap-2 text-sm text-zinc-700 sm:col-span-2 pt-2">
+                      <input
+                        type="checkbox"
+                        checked={newTicket.isFree === true}
+                        onChange={(e) =>
+                          setNewTicket({ ...newTicket, isFree: e.target.checked })
+                        }
+                      />
+                      Free ticket type (no KPay - issues ticket codes immediately)
+                    </label>
+                    <label className="flex items-center gap-2 text-sm text-zinc-700 sm:col-span-2">
+                      <input
+                        type="checkbox"
+                        checked={newTicket.enabled !== false}
+                        onChange={(e) =>
+                          setNewTicket({ ...newTicket, enabled: e.target.checked })
+                        }
+                      />
+                      Visible to public on ticketing page
                     </label>
                     <label className="flex flex-col gap-0.5 text-[11px] text-zinc-500">
                       Valid from (HK date)
