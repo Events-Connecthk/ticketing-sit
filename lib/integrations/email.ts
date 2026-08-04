@@ -80,15 +80,19 @@ export async function sendConfirmationEmail(
         <p style="margin: 4px 0;"><strong>Date:</strong> ${event.date} ${event.time ? `• ${event.time}` : ""}</p>
         <p style="margin: 4px 0;"><strong>Location:</strong> ${event.location}</p>
         <p style="margin: 4px 0;"><strong>Tickets:</strong> ${ticketCount}</p>
-        <p style="margin: 4px 0; font-size: 18px;"><strong>Total Paid:</strong> ${currency} ${totalAmount}</p>
+        <p style="margin: 4px 0; font-size: 18px;"><strong>Total:</strong> ${
+          totalAmount === 0 ? "Free" : `${currency} ${totalAmount}`
+        }</p>
       </div>
 
       <p style="color: #555;">
-        ${totalAmount === 0 
-          ? `Your registration has been confirmed. Thank you for registering!` 
-          : downloadUrl 
-            ? `Click the button below to view and download your ticket(s). Each ticket has its own unique serial number.` 
-            : `Your official ticket PDF(s) are attached. Each ticket has its own unique serial number.`}
+        ${
+          downloadUrl
+            ? `Your ticket(s) are ready. Click the button below to view and download each PDF. Every ticket has its own unique serial number for check-in.`
+            : totalAmount === 0
+              ? `Your free tickets have been confirmed. Open your confirmation page to download ticket PDFs.`
+              : `Your official ticket PDF(s) are attached. Each ticket has its own unique serial number.`
+        }
       </p>
 
       ${downloadUrl ? `

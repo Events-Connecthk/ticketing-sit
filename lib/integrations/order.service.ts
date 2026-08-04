@@ -169,10 +169,8 @@ export async function processSuccessfulPurchase(
               : "") ||
             "http://localhost:3000"
           ).replace(/\/$/, "");
-          const downloadUrl =
-            cart.totalAmount > 0
-              ? `${baseUrl}/${event.slug}/success?ref=${finalOrderRef}&amount=${cart.totalAmount}`
-              : undefined;
+          // Always include success page link (free and paid) so buyers can download PDFs
+          const downloadUrl = `${baseUrl}/${event.slug}/success?ref=${encodeURIComponent(finalOrderRef)}&amount=${cart.totalAmount ?? 0}`;
 
           console.log(
             "[OrderService] Sending confirmation email (background)..."
@@ -183,7 +181,7 @@ export async function processSuccessfulPurchase(
             event,
             orderReference: finalOrderRef,
             totalAmount: cart.totalAmount,
-            currency: cart.currency,
+            currency: cart.currency === "FREE" ? "HKD" : cart.currency,
             ticketCount: ticketUnits.length || totalTickets,
             downloadUrl,
           });

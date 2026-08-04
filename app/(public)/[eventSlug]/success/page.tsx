@@ -61,7 +61,7 @@ export default function SuccessPage({ params }: SuccessPageProps) {
       const name = tt?.name || sel.ticketTypeId;
       for (let i = 0; i < (sel.quantity || 0); i++) {
         items.push({
-          serial: `${ref}-${String(counter).padStart(3, "0")}`,
+          serial: `${ref}-${String(counter).padStart(2, "0")}`,
           ticketTypeId: sel.ticketTypeId,
           ticketTypeName: name,
         });
@@ -140,14 +140,20 @@ export default function SuccessPage({ params }: SuccessPageProps) {
         return;
       }
 
+      const orderRef =
+        currentPurchase.order_reference || ref;
       const pdfResult = await generateTicketPdf({
         event,
         buyer: { name: currentPurchase.name, phone: currentPurchase.phone, email: currentPurchase.email },
         tickets: [sel],
-        orderReference: ref,
-        amount: parseFloat(amount) || 0,
-        currency: event.ticketTypes?.[0]?.currency || "HKD",
+        orderReference: orderRef,
+        amount: parseFloat(amount) || Number(currentPurchase.amount) || 0,
+        currency:
+          currentPurchase.currency === "FREE"
+            ? event.ticketTypes?.[0]?.currency || "HKD"
+            : currentPurchase.currency || event.ticketTypes?.[0]?.currency || "HKD",
         purchaseDate: currentPurchase.bought_at || new Date().toISOString(),
+        ticketSerial: sel.serial || undefined,
       });
 
       if (pdfResult.success && pdfResult.pdfBuffer) {
@@ -182,13 +188,17 @@ export default function SuccessPage({ params }: SuccessPageProps) {
         return;
       }
 
+      const orderRef = purchase.order_reference || ref;
       const pdfResult = await generateTicketPdf({
         event,
         buyer: { name: purchase.name, phone: purchase.phone, email: purchase.email },
         tickets: [sel],
-        orderReference: ref,
-        amount: parseFloat(amount) || 0,
-        currency: event.ticketTypes?.[0]?.currency || "HKD",
+        orderReference: orderRef,
+        amount: parseFloat(amount) || Number(purchase.amount) || 0,
+        currency:
+          purchase.currency === "FREE"
+            ? event.ticketTypes?.[0]?.currency || "HKD"
+            : purchase.currency || event.ticketTypes?.[0]?.currency || "HKD",
         purchaseDate: purchase.bought_at || new Date().toISOString(),
         ticketSerial: serial,
       });
@@ -222,8 +232,14 @@ export default function SuccessPage({ params }: SuccessPageProps) {
             <CheckCircle className="h-9 w-9 text-emerald-600" />
           </div>
 
-          <h1 className="text-3xl font-semibold tracking-tight">{isFreeRegistration ? "Registration Successful" : "Purchase Confirmed"}</h1>
-          <p className="mt-2 text-zinc-600">{isFreeRegistration ? "Thank you! Your registration has been confirmed." : "Thank you! Your tickets have been issued."}</p>
+          <h1 className="text-3xl font-semibold tracking-tight">
+            {isFreeRegistration ? "Tickets Confirmed (Free)" : "Purchase Confirmed"}
+          </h1>
+          <p className="mt-2 text-zinc-600">
+            {isFreeRegistration
+              ? "Thank you! Your free tickets have been issued - download the PDF(s) below."
+              : "Thank you! Your tickets have been issued."}
+          </p>
 
           <div className="my-8 border-y py-6 text-left space-y-2 text-sm">
             <div className="flex justify-between">
@@ -243,67 +259,79 @@ export default function SuccessPage({ params }: SuccessPageProps) {
               <span>{event.location}</span>
             </div>
             <div className="flex justify-between font-medium pt-1">
-              <span>Total Paid</span>
-              <span>{event.ticketTypes[0]?.currency || "HKD"} {amount}</span>
+              <span>Total</span>
+              <span>
+                {isFreeRegistration || parseFloat(amount) === 0
+                  ? "Free"
+                  : `${event.ticketTypes[0]?.currency || "HKD"} ${amount}`}
+              </span>
             </div>
           </div>
 
-          {!isFreeRegistration && (
-            ticketCount <= 1 ? (
-              <button
-                onClick={handleDownloadTicket}
-                disabled={showDownloaded || (!purchase && purchaseLoading)}
-                className="flex w-full items-center justify-center gap-2 rounded-xl btn-gold py-3 font-medium disabled:opacity-60"
-              >
-                <Download className="h-4 w-4" />
-                {showDownloaded
-                  ? "Preparing PDF..."
-                  : purchase
-                    ? "Download Ticket PDF"
-                    : purchaseLoading
-                      ? "Loading ticket data..."
-                      : "Download Ticket PDF"}
-              </button>
-            ) : (
-              <div className="mt-4">
-                <div className="text-sm font-medium mb-2 text-left">Your Tickets</div>
-                <div className="border rounded-xl overflow-hidden bg-white text-left text-sm">
-                  <table className="w-full">
-                    <thead>
-                      <tr className="border-b bg-zinc-50">
-                        <th className="p-3 text-left font-medium">Serial</th>
-                        <th className="p-3 text-left font-medium">Ticket Type</th>
-                        <th className="p-3 text-right font-medium">Action</th>
+          {/* Same PDF download for free and paid tickets */}
+          {ticketCount <= 1 ? (
+            <button
+              onClick={handleDownloadTicket}
+              disabled={showDownloaded || (!purchase && purchaseLoading)}
+              className="flex w-full items-center justify-center gap-2 rounded-xl btn-gold py-3 font-medium disabled:opacity-60"
+            >
+              <Download className="h-4 w-4" />
+              {showDownloaded
+                ? "Preparing PDF..."
+                : purchaseLoading && !purchase
+                  ? "Loading ticket data..."
+                  : "Download Ticket PDF"}
+            </button>
+          ) : (
+            <div className="mt-4">
+              <div className="text-sm font-medium mb-2 text-left">Your Tickets</div>
+              <div className="border rounded-xl overflow-hidden bg-white text-left text-sm">
+                <table className="w-full">
+                  <thead>
+                    <tr className="border-b bg-zinc-50">
+                      <th className="p-3 text-left font-medium">Serial</th>
+                      <th className="p-3 text-left font-medium">Ticket Type</th>
+                      <th className="p-3 text-right font-medium">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {ticketItems.length === 0 && (
+                      <tr>
+                        <td colSpan={3} className="p-4 text-center text-zinc-400">
+                          {purchaseLoading
+                            ? "Loading tickets..."
+                            : "No ticket rows yet. Wait a moment and refresh."}
+                        </td>
                       </tr>
-                    </thead>
-                    <tbody className="divide-y">
-                      {ticketItems.map((item, idx) => (
-                        <tr key={idx}>
-                          <td className="p-3 font-mono text-xs">{item.serial}</td>
-                          <td className="p-3">{item.ticketTypeName}</td>
-                          <td className="p-3 text-right">
-                            <button
-                              onClick={() => handleDownloadSingle(item.serial, item.ticketTypeId)}
-                              disabled={showDownloaded}
-                              className="text-xs px-3 py-1.5 rounded-lg border hover:bg-zinc-50 disabled:opacity-50"
-                            >
-                              <Download className="inline h-3 w-3 mr-1" /> Download PDF
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-                <p className="mt-2 text-[10px] text-zinc-500 text-left">
-                  Click each row to download that ticket's PDF individually.
-                </p>
+                    )}
+                    {ticketItems.map((item, idx) => (
+                      <tr key={idx}>
+                        <td className="p-3 font-mono text-xs">{item.serial}</td>
+                        <td className="p-3">{item.ticketTypeName}</td>
+                        <td className="p-3 text-right">
+                          <button
+                            onClick={() =>
+                              handleDownloadSingle(item.serial, item.ticketTypeId)
+                            }
+                            disabled={showDownloaded || !purchase}
+                            className="text-xs px-3 py-1.5 rounded-lg border hover:bg-zinc-50 disabled:opacity-50"
+                          >
+                            <Download className="inline h-3 w-3 mr-1" /> Download PDF
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
-            )
+              <p className="mt-2 text-[10px] text-zinc-500 text-left">
+                Click Download PDF on each row for that ticket.
+              </p>
+            </div>
           )}
 
           <p className="mt-4 text-xs text-zinc-500">
-            A link to view and download your ticket(s) has also been sent to your email.
+            A confirmation email with a link to this page was also sent (if email is configured).
           </p>
         </div>
 
