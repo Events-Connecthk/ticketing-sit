@@ -1522,10 +1522,32 @@ export default function AdminDashboard() {
   }
 
   async function handleDeleteEvent(slug: string) {
-    if (!confirm(`Delete event "${slug}"? This cannot be undone.`)) return;
-    await adminDeleteEvent(slug);
+    if (
+      !confirm(
+        `Delete event "${slug}" permanently?\n\nThis also deletes ALL purchases, tickets, and statistics for this event slug. Recreating the event later starts with empty stats.\n\nDisable the event instead if you only want to hide it.`
+      )
+    ) {
+      return;
+    }
+    const res = await adminDeleteEvent(slug);
+    if (!res || (typeof res === "object" && res.ok === false)) {
+      toast.error(
+        (typeof res === "object" && res?.error) || "Failed to delete event"
+      );
+      return;
+    }
     await loadEvents();
-    toast.success("Event deleted");
+    await loadPurchases();
+    if (dashEventSlug === slug) setDashEventSlug("");
+    const n =
+      typeof res === "object" && typeof res.deletedPurchases === "number"
+        ? res.deletedPurchases
+        : 0;
+    toast.success(
+      n > 0
+        ? `Event deleted (and ${n} purchase record${n === 1 ? "" : "s"} cleared)`
+        : "Event deleted"
+    );
   }
 
   async function handleToggleEvent(slug: string, currentEnabled: boolean) {

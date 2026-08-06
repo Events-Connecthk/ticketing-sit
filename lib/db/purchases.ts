@@ -205,6 +205,47 @@ export async function savePurchase(input: SavePurchaseInput): Promise<PurchaseRe
   }
 }
 
+/** Remove all purchases for an event slug (hard event delete). Returns count removed. */
+export async function deletePurchasesByEventSlug(
+  eventSlug: string
+): Promise<number> {
+  const slug = String(eventSlug || "")
+    .trim()
+    .toLowerCase();
+  if (!slug) return 0;
+
+  const client = getSupabase();
+  if (client) {
+    const { data, error } = await client
+      .from("purchases")
+      .delete()
+      .eq("event_slug", slug)
+      .select("id");
+    if (error) {
+      console.error("[DB] deletePurchasesByEventSlug:", error);
+      // still clear memory for this slug
+    } else {
+      const n = Array.isArray(data) ? data.length : 0;
+      // keep memory in sync (mutate const array)
+      for (let i = memoryStore.length - 1; i >= 0; i--) {
+        if ((memoryStore[i].event_slug || "").toLowerCase() === slug) {
+          memoryStore.splice(i, 1);
+        }
+      }
+      return n;
+    }
+  }
+
+  let removed = 0;
+  for (let i = memoryStore.length - 1; i >= 0; i--) {
+    if ((memoryStore[i].event_slug || "").toLowerCase() === slug) {
+      memoryStore.splice(i, 1);
+      removed++;
+    }
+  }
+  return removed;
+}
+
 /**
  * Retrieve all purchases. Supports simple filtering for admin UI.
  */

@@ -230,22 +230,90 @@ export async function adminSaveEvent(event: EventConfig): Promise<EventConfig | 
 
 /**
  * Admin-only: Delete event using SERVICE_ROLE.
+ * Also deletes all purchases for that event_slug so dashboard stats
+ * and recreated events with the same slug start clean.
+ * (Disable/inactive does NOT delete purchases - only hard delete.)
  */
-export async function adminDeleteEvent(slug: string): Promise<boolean> {
+export async function adminDeleteEvent(
+  slug: string
+): Promise<{ ok: boolean; deletedPurchases?: number; error?: string }> {
   try {
     await requireAdmin();
-    const supabaseAdmin = getSupabaseAdmin();
-    if (!supabaseAdmin) return false;
+    const clean = String(slug || "")
+      .trim()
+      .toLowerCase();
+    if (!clean) return { ok: false, error: "Missing event slug" };
 
-    const { error } = await supabaseAdmin.from("events").delete().eq("slug", slug);
+    const supabaseAdmin = getSupabaseAdmin();
+    if (!supabaseAdmin) {
+      // Memory fallback
+      const { deleteEvent } = await import("@/lib/db/events");
+      const { deletePurchasesByEventSlug } = await import("@/lib/db/purchases");
+      const n = await deletePurchasesByEventSlug(clean);
+      await deleteEvent(clean);
+      return { ok: true, deletedPurchases: n };
+    }
+
+    // 1) Remove purchase history for this slug (stats, attendance, etc.)
+    const { data: removed, error: purchErr } = await supabaseAdmin
+      .from("purchases")
+      .delete()
+      .eq("event_slug", clean)
+      .select("id");
+
+    if (purchErr) {
+      console.error("[Admin Actions] Delete event purchases error:", purchErr);
+      return {
+        ok: false,
+        error: `Could not delete purchases: ${purchErr.message}`,
+      };
+    }
+
+    // 2) Remove pending KPay carts for this event if table exists
+    try {
+      await supabaseAdmin
+        .from("pending_kpay_payments")
+        .delete()
+        .contains("cart", { eventSlug: clean });
+    } catch {
+      /* optional table / filter may not match - ignore */
+    }
+    // Broader cleanup for pending rows that store event in JSON differently
+    try {
+      const { data: pending } = await supabaseAdmin
+        .from("pending_kpay_payments")
+        .select("id, cart");
+      const ids = (pending || [])
+        .filter((row: any) => row?.cart?.eventSlug === clean)
+        .map((row: any) => row.id);
+      if (ids.length) {
+        await supabaseAdmin.from("pending_kpay_payments").delete().in("id", ids);
+      }
+    } catch {
+      /* ignore */
+    }
+
+    // 3) Delete the event row
+    const { error } = await supabaseAdmin
+      .from("events")
+      .delete()
+      .eq("slug", clean);
     if (error) {
       console.error("[Admin Actions] Delete event error:", error);
-      return false;
+      return { ok: false, error: error.message };
     }
-    return true;
+
+    const deletedPurchases = Array.isArray(removed) ? removed.length : 0;
+    console.log(
+      `[Admin Actions] Deleted event "${clean}" and ${deletedPurchases} purchase(s)`
+    );
+    return { ok: true, deletedPurchases };
   } catch (err) {
     console.error("[Admin Actions] adminDeleteEvent error:", err);
-    return false;
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : "Delete failed",
+    };
   }
 }
 
