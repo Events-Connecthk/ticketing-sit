@@ -33,6 +33,73 @@ export async function generateTicketPdf(
     const idForFile = params.ticketSerial || params.orderReference;
     const filename = `ticket-${params.event.slug}-${idForFile}.pdf`;
 
+    // Prefer published visual design (editor) — fallback to legacy fixed layout
+    try {
+      const { getPublishedDesign } = await import("@/lib/tickets/ticket-design");
+      const { generatePdfFromDesign } = await import("@/lib/pdf/generate-from-design");
+      const design = getPublishedDesign(params.event);
+      if (design) {
+        const ticketTypeName =
+          params.event.ticketTypes?.find(
+            (t) => t.id === params.tickets?.[0]?.ticketTypeId
+          )?.name ||
+          params.tickets?.[0]?.ticketTypeId ||
+          "Ticket";
+        const nameParts = (params.buyer.name || "").trim().split(/\s+/);
+        const firstName = nameParts[0] || "";
+        const lastName = nameParts.slice(1).join(" ") || "";
+        const timeParts = (params.event.time || "").split(/\s*[-–—]\s*/);
+        const designResult = await generatePdfFromDesign({
+          design,
+          qrPayload: params.ticketSerial || params.orderReference,
+          filename,
+          data: {
+            attendee: {
+              fullName: params.buyer.name || "",
+              firstName,
+              lastName,
+              email: params.buyer.email || "",
+              phone: params.buyer.phone || "",
+              company: params.buyer.customFields?.company || "",
+              custom: params.buyer.customFields,
+            },
+            event: {
+              name: params.event.name,
+              date: params.event.date,
+              startTime: timeParts[0] || params.event.time || "",
+              endTime: timeParts[1] || "",
+              venue: params.event.location,
+              address: params.event.location,
+            },
+            ticket: {
+              type: ticketTypeName,
+              number: params.ticketSerial || params.orderReference,
+              price:
+                params.amount === 0
+                  ? "Free"
+                  : `${params.currency} ${params.amount}`,
+              seat: "",
+              row: "",
+              section: "",
+            },
+            order: {
+              number: params.orderReference,
+              purchaseDate: params.purchaseDate || new Date().toISOString(),
+              purchaserName: params.buyer.name || "",
+              purchaserEmail: params.buyer.email || "",
+            },
+          },
+        });
+        if (designResult.success) return designResult;
+        console.warn(
+          "[generateTicketPdf] Design render failed, using legacy:",
+          designResult.error
+        );
+      }
+    } catch (designErr) {
+      console.warn("[generateTicketPdf] Design path error, legacy fallback", designErr);
+    }
+
     // Create page with white background (or custom image/PDF bg if provided)
     // Dynamic overlays (type, ID, QR, date) are drawn on top at fixed positions.
     let pdfDoc = await PDFDocument.create();

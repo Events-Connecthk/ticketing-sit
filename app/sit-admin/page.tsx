@@ -38,6 +38,12 @@ import {
   redemptionByName,
   redemptionRemark,
 } from "@/lib/tickets/redemption";
+import {
+  defaultTicketDesign,
+  getTicketDesignFromEvent,
+  type TicketDesign,
+} from "@/lib/tickets/ticket-design";
+import { TicketDesignEditor } from "@/components/admin/TicketDesignEditor";
 
 /**
  * Admin Dashboard
@@ -172,6 +178,7 @@ export default function AdminDashboard() {
   const [staffDisplay, setStaffDisplay] = useState("");
   const [staffPass, setStaffPass] = useState("");
   const [staffBusy, setStaffBusy] = useState(false);
+  const [ticketDesign, setTicketDesign] = useState<TicketDesign | null>(null);
   const [isScanningCamera, setIsScanningCamera] = useState(false);
   const videoRef = React.useRef<HTMLVideoElement>(null);
   const canvasRef = React.useRef<HTMLCanvasElement>(null);
@@ -1075,6 +1082,7 @@ export default function AdminDashboard() {
     });
     setStartTime("");
     setEndTime("");
+    setTicketDesign(defaultTicketDesign("Default ticket"));
     setShowEventModal(true);
   }
 
@@ -1133,6 +1141,10 @@ export default function AdminDashboard() {
       backgroundColor: theme.backgroundColor,
       surfaceColor: theme.surfaceColor,
     });
+    setTicketDesign(
+      getTicketDesignFromEvent(ev) ||
+        defaultTicketDesign(`${ev.name} ticket`)
+    );
     setTicketTypesForm(
       (ev.ticketTypes || []).map((t) => ({
         ...t,
@@ -1196,6 +1208,10 @@ export default function AdminDashboard() {
       backgroundColor: theme.backgroundColor,
       surfaceColor: theme.surfaceColor,
     });
+    setTicketDesign(
+      getTicketDesignFromEvent(ev) ||
+        defaultTicketDesign(`${ev.name} ticket`)
+    );
     setTicketTypesForm([...(ev.ticketTypes || [])]);
     setBuyerFormFields([...(ev.buyerFormFields || [])]);
     setDiscountCodesForm([...(ev.discountCodes || [])]);
@@ -1459,15 +1475,21 @@ export default function AdminDashboard() {
       ticketTypes: [...ticketTypesForm],
       buyerFormFields: [...buyerFormFields],
       discountCodes: [...discountCodesForm],
-      metadata: mergeThemeMetadata(
-        (editingEvent?.metadata as Record<string, unknown>) || {},
-        {
-          primaryColor: eventForm.primaryColor,
-          secondaryColor: eventForm.secondaryColor,
-          backgroundColor: eventForm.backgroundColor,
-          surfaceColor: eventForm.surfaceColor,
-        }
-      ),
+      metadata: {
+        ...mergeThemeMetadata(
+          (editingEvent?.metadata as Record<string, unknown>) || {},
+          {
+            primaryColor: eventForm.primaryColor,
+            secondaryColor: eventForm.secondaryColor,
+            backgroundColor: eventForm.backgroundColor,
+            surfaceColor: eventForm.surfaceColor,
+          }
+        ),
+        // Visual ticket designer (draft or published)
+        ...(ticketDesign
+          ? { ticketDesign: { ...ticketDesign, updatedAt: new Date().toISOString() } }
+          : {}),
+      },
     };
 
     try {
@@ -4022,7 +4044,47 @@ export default function AdminDashboard() {
                       </div>
                     )}
                   </div>
-                  <p className="text-[10px] text-zinc-500 mt-1">Leave empty for plain white background. For best results with PDF, design at 842 x 1190 points.</p>
+                  <p className="text-[10px] text-zinc-500 mt-1">
+                    Legacy full-page background (used only when no design is published). Prefer the visual designer below.
+                  </p>
+                </div>
+
+                {/* Visual ticket designer (PRD) */}
+                <div className="md:col-span-2 space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <div>
+                      <label className="text-sm font-semibold">Ticket design</label>
+                      <p className="text-[11px] text-zinc-500">
+                        Size, orientation, background, text, dynamic fields, QR. Publish to use on live PDFs; draft keeps legacy layout.
+                      </p>
+                    </div>
+                  </div>
+                  <TicketDesignEditor
+                    value={ticketDesign}
+                    onChange={setTicketDesign}
+                    onUploadImage={async (file) => {
+                      try {
+                        const formData = new FormData();
+                        formData.append("file", file);
+                        formData.append("slug", eventForm.slug || "ticket-design");
+                        formData.append("kind", "banner");
+                        const res = await fetch("/api/admin/upload", {
+                          method: "POST",
+                          body: formData,
+                        });
+                        const json = await res.json();
+                        if (json?.path) return json.path as string;
+                        // fallback data URL
+                        return await new Promise<string>((resolve) => {
+                          const r = new FileReader();
+                          r.onload = () => resolve(String(r.result));
+                          r.readAsDataURL(file);
+                        });
+                      } catch {
+                        return null;
+                      }
+                    }}
+                  />
                 </div>
 
                 <div className="flex items-center gap-2 pt-2">
