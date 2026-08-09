@@ -362,48 +362,6 @@ export default function EventPage({ params }: EventPageProps) {
                   />
                 )}
 
-                {event.seatDays && event.seatDays.length > 0 && (
-                  <div className="mt-4 rounded-xl border bg-blue-50/50 border-blue-100 px-4 py-3 text-xs text-blue-900 space-y-1">
-                    <div className="font-medium">Seating by day</div>
-                    {event.seatDays.map((sd) => {
-                      const used = soldByDay[sd.date] || 0;
-                      const left = Math.max(0, Number(sd.capacity) - used);
-                      // seats reserved by current cart on this day
-                      let cartUse = 0;
-                      for (const sel of selections) {
-                        const tt = availableTicketTypes.find(
-                          (t) => t.id === sel.ticketTypeId
-                        );
-                        if (!tt || !sel.quantity) continue;
-                        const from = tt.validFrom || tt.validTo;
-                        const to = tt.validTo || tt.validFrom;
-                        const covers =
-                          !from && !to
-                            ? true
-                            : sd.date >= (from || sd.date) &&
-                              sd.date <= (to || from || sd.date);
-                        if (covers) cartUse += sel.quantity;
-                      }
-                      const afterCart = Math.max(0, left - cartUse);
-                      return (
-                        <div
-                          key={sd.date}
-                          className="flex justify-between tabular-nums gap-4"
-                        >
-                          <span>{sd.date}</span>
-                          <span>
-                            {afterCart} / {sd.capacity} seats left
-                            {cartUse > 0 ? ` (${cartUse} in cart)` : ""}
-                          </span>
-                        </div>
-                      );
-                    })}
-                    <p className="text-blue-800/70 pt-0.5">
-                      Multi-day tickets use one seat on each day they cover.
-                    </p>
-                  </div>
-                )}
-
                 {event.donationEnabled && (
                   <div
                     className="mt-6 rounded-2xl border p-5 space-y-3"
