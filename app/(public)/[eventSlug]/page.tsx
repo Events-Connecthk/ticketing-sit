@@ -130,11 +130,13 @@ export default function EventPage({ params }: EventPageProps) {
   /** Free reg with no ticket types and no donation, or zero-charge cart */
   const cartIsFree = chargeTotal <= 0;
 
-  /** Can leave selection step: tickets, or donation amount, or free-reg-only */
-  const canContinueSelection =
-    totalTickets > 0 ||
-    effectiveDonation > 0 ||
-    (!hasTicketTypes && event.paymentEnabled === false);
+  /**
+   * Events with ticket types: ticket selection is required (donation is optional add-on).
+   * No ticket types (e.g. free reg + donation): donation or free-reg-only can continue.
+   */
+  const canContinueSelection = hasTicketTypes
+    ? totalTickets > 0
+    : effectiveDonation > 0 || event.paymentEnabled === false;
 
   const handleTicketChange = (newSelections: TicketSelection[]) => {
     setSelections(newSelections);
@@ -161,16 +163,18 @@ export default function EventPage({ params }: EventPageProps) {
 
   const handleBuyerSubmit = (data: BuyerInfo) => {
     setBuyer(data);
-    if (totalTickets === 0 && effectiveDonation <= 0) {
-      if (hasTicketTypes) {
-        alert("Select at least one ticket, or add a donation.");
-        return;
-      }
-      if (event.paymentEnabled !== false) {
-        alert("Select a ticket or donation to continue.");
-        return;
-      }
-      // Free registration-only (no tickets, no donation)
+    if (hasTicketTypes && totalTickets === 0) {
+      alert("Select at least one ticket to continue.");
+      return;
+    }
+    if (
+      !hasTicketTypes &&
+      totalTickets === 0 &&
+      effectiveDonation <= 0 &&
+      event.paymentEnabled !== false
+    ) {
+      alert("Add a donation to continue, or contact the organizer.");
+      return;
     }
     if (wantToDonate && event.donationEnabled && effectiveDonation <= 0) {
       alert("Enter a donation amount greater than 0, or uncheck donation.");
@@ -195,8 +199,9 @@ export default function EventPage({ params }: EventPageProps) {
     const finalBuyer = buyerData || buyer;
     if (!event || !finalBuyer) return;
     const safeDon = Math.max(0, Number(donAmt) || 0);
-    // Allow donation-only (no tickets)
-    if (totalTickets === 0 && safeDon <= 0) return;
+    // Ticketed events require tickets; donation-only only when no ticket types
+    if (hasTicketTypes && totalTickets === 0) return;
+    if (!hasTicketTypes && totalTickets === 0 && safeDon <= 0) return;
 
     const cart = buildCart(finalBuyer, safeDon);
 
@@ -378,9 +383,9 @@ export default function EventPage({ params }: EventPageProps) {
                           I would like to make a donation
                         </span>
                         <span className="block text-xs text-zinc-500 mt-0.5">
-                          Added to your total and tracked separately from tickets.
-                          {!hasTicketTypes &&
-                            " You can donate even without selecting a ticket."}
+                          {hasTicketTypes
+                            ? "Optional — added to your ticket total and tracked separately."
+                            : "You can donate without a ticket. Tracked separately."}
                         </span>
                       </span>
                     </label>
@@ -435,9 +440,6 @@ export default function EventPage({ params }: EventPageProps) {
                     disabled={
                       !canContinueSelection ||
                       (hasTicketTypes &&
-                        availableTicketTypes.length > 0 &&
-                        totalTickets === 0 &&
-                        effectiveDonation <= 0 &&
                         availableTicketTypes.every((t) => {
                           const rem = getRemaining(t, soldByType);
                           return rem !== null && rem <= 0;
@@ -448,7 +450,7 @@ export default function EventPage({ params }: EventPageProps) {
                     {canContinueSelection
                       ? "Continue"
                       : hasTicketTypes
-                        ? "Select tickets or donation to continue"
+                        ? "Select tickets to continue"
                         : "Add a donation to continue"}
                   </button>
                 </div>

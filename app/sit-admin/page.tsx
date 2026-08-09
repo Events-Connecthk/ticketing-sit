@@ -4196,9 +4196,10 @@ export default function AdminDashboard() {
                   </div>
                   <p className="text-xs text-zinc-600 pl-6">
                     On the ticket selection step, buyers can check a donation box
-                    and edit the amount (default below; any amount allowed). Works
-                    for free events too — donation-only checkout if no tickets are
-                    selected. Charged with the order; stored in the donations table.
+                    and edit the amount (default below; any amount allowed). For
+                    events with tickets, a ticket is still required; donation is
+                    optional. Free events with no tickets can donate only.
+                    Charged with the order; stored in the donations table.
                   </p>
                   {eventForm.donationEnabled && (
                     <div className="pl-6 max-w-xs">
