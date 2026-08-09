@@ -223,9 +223,8 @@ export default function AdminDashboard() {
   async function loadDonations() {
     setDonationsLoading(true);
     try {
-      const data = await adminGetAllDonations({
-        eventSlug: donationEventFilter || undefined,
-      });
+      // Always load full list (dashboard analytics needs every event)
+      const data = await adminGetAllDonations({});
       setDonations(data);
     } catch (e) {
       console.error(e);
@@ -402,11 +401,30 @@ export default function AdminDashboard() {
   function buildEventDashboard(eventSlug: string) {
     const event = events.find((e) => e.slug === eventSlug) || null;
     const rows = purchases.filter((p) => p.event_slug === eventSlug);
+    const donRows = donations.filter((d) => d.event_slug === eventSlug);
 
     const soldByType: Record<string, number> = {};
     let ticketsSold = 0;
     let revenue = 0;
-    const byDay = new Map<string, { tickets: number; revenue: number; orders: number }>();
+    const byDay = new Map<
+      string,
+      {
+        tickets: number;
+        revenue: number;
+        orders: number;
+        donations: number;
+        donationCount: number;
+      }
+    >();
+
+    const dayBucket = (day: string) =>
+      byDay.get(day) || {
+        tickets: 0,
+        revenue: 0,
+        orders: 0,
+        donations: 0,
+        donationCount: 0,
+      };
 
     for (const p of rows) {
       revenue += Number(p.amount) || 0;
@@ -426,13 +444,31 @@ export default function AdminDashboard() {
       ticketsSold += orderTickets;
 
       const day = (p.bought_at || "").slice(0, 10) || "unknown";
-      const prev = byDay.get(day) || { tickets: 0, revenue: 0, orders: 0 };
+      const prev = dayBucket(day);
       byDay.set(day, {
+        ...prev,
         tickets: prev.tickets + orderTickets,
         revenue: prev.revenue + (Number(p.amount) || 0),
         orders: prev.orders + 1,
       });
     }
+
+    let donationTotal = 0;
+    for (const d of donRows) {
+      const amt = Number(d.amount) || 0;
+      donationTotal += amt;
+      const day = (d.donated_at || "").slice(0, 10) || "unknown";
+      const prev = dayBucket(day);
+      byDay.set(day, {
+        ...prev,
+        donations: prev.donations + amt,
+        donationCount: prev.donationCount + 1,
+      });
+    }
+    const donationCount = donRows.length;
+    const donationAvg =
+      donationCount > 0 ? donationTotal / donationCount : 0;
+    const combinedTotal = revenue + donationTotal;
 
     const typeRows = (event?.ticketTypes || []).map((tt, i) => {
       const sold = soldByType[tt.id] || 0;
@@ -485,6 +521,11 @@ export default function AdminDashboard() {
       orderCount: rows.length,
       ticketsSold,
       revenue,
+      donationTotal,
+      donationCount,
+      donationAvg,
+      combinedTotal,
+      donationEnabled: Boolean(event?.donationEnabled),
       typeRows,
       timeline,
     };
@@ -767,11 +808,15 @@ export default function AdminDashboard() {
     }
   }, [isAuthenticated, search, eventFilter]);
 
+  // Donations for Donations tab + Dashboard analytics
   useEffect(() => {
-    if (isAuthenticated && activeTab === "donations") {
+    if (
+      isAuthenticated &&
+      (activeTab === "donations" || activeTab === "dashboard")
+    ) {
       loadDonations();
     }
-  }, [isAuthenticated, activeTab, donationEventFilter]);
+  }, [isAuthenticated, activeTab]);
 
   useEffect(() => {
     if (
@@ -1894,8 +1939,11 @@ export default function AdminDashboard() {
         );
         const maxDayRevenue = Math.max(
           1,
-          ...(dash?.timeline.map((d) => d.revenue) || [1])
+          ...(dash?.timeline.map(
+            (d) => (d.revenue || 0) + (d.donations || 0)
+          ) || [1])
         );
+
 
         // Donut (modern ring) slices
         const donutCx = 100;
@@ -1979,7 +2027,8 @@ export default function AdminDashboard() {
                     Event dashboard
                   </h2>
                   <p className="text-sm text-zinc-600 mt-1 max-w-xl">
-                    Tickets sold, inventory, revenue, and charts. Admin only - does not change checkout.
+                    Tickets, inventory, ticket revenue, donations, and charts.
+                    Admin only — does not change checkout.
                   </p>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
@@ -2004,13 +2053,14 @@ export default function AdminDashboard() {
                     type="button"
                     onClick={() => {
                       loadPurchases();
+                      loadDonations();
                       loadEvents();
                     }}
-                    disabled={loading || eventsLoading}
+                    disabled={loading || eventsLoading || donationsLoading}
                     className="dash-glass-card-soft flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm font-medium text-zinc-700 hover:bg-white/70 transition-colors"
                   >
                     <RefreshCw
-                      className={`h-4 w-4 ${loading || eventsLoading ? "animate-spin" : ""}`}
+                      className={`h-4 w-4 ${loading || eventsLoading || donationsLoading ? "animate-spin" : ""}`}
                     />
                     Refresh
                   </button>
@@ -2033,9 +2083,37 @@ export default function AdminDashboard() {
                         sub: `${dash.orderCount} order${dash.orderCount === 1 ? "" : "s"}`,
                       },
                       {
-                        label: "Revenue",
-                        value: `HKD ${dash.revenue.toLocaleString(undefined, { maximumFractionDigits: 0 })}`,
-                        sub: "Sum of purchase amounts",
+                        label: "Ticket revenue",
+                        value: `HKD ${dash.revenue.toLocaleString(undefined, {
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2,
+                        })}`,
+                        sub: "Ticket purchases only",
+                      },
+                      {
+                        label: "Donations",
+                        value: `HKD ${dash.donationTotal.toLocaleString(undefined, {
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2,
+                        })}`,
+                        sub: `${dash.donationCount} donation${dash.donationCount === 1 ? "" : "s"}${
+                          dash.donationCount > 0
+                            ? ` · avg HKD ${dash.donationAvg.toLocaleString(undefined, {
+                                minimumFractionDigits: 2,
+                                maximumFractionDigits: 2,
+                              })}`
+                            : dash.donationEnabled
+                              ? " · enabled on event"
+                              : " · not enabled"
+                        }`,
+                      },
+                      {
+                        label: "Combined total",
+                        value: `HKD ${dash.combinedTotal.toLocaleString(undefined, {
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2,
+                        })}`,
+                        sub: "Tickets + donations",
                       },
                       {
                         label: "Ticket types",
@@ -2054,6 +2132,33 @@ export default function AdminDashboard() {
                           );
                         })(),
                         sub: "Types with a sales limit only",
+                      },
+                      {
+                        label: "Donation rate",
+                        value:
+                          dash.orderCount > 0
+                            ? `${((dash.donationCount / dash.orderCount) * 100).toLocaleString(
+                                undefined,
+                                { maximumFractionDigits: 1 }
+                              )}%`
+                            : dash.donationCount > 0
+                              ? "—"
+                              : "0%",
+                        sub:
+                          dash.orderCount > 0
+                            ? "Donations ÷ orders"
+                            : "No ticket orders yet",
+                      },
+                      {
+                        label: "% of combined",
+                        value:
+                          dash.combinedTotal > 0
+                            ? `${((dash.donationTotal / dash.combinedTotal) * 100).toLocaleString(
+                                undefined,
+                                { maximumFractionDigits: 1 }
+                              )}%`
+                            : "0%",
+                        sub: "Donations share of total money",
                       },
                     ].map((stat) => (
                       <div key={stat.label} className="dash-glass-card p-4 sm:p-5">
@@ -2419,12 +2524,20 @@ export default function AdminDashboard() {
                                         value: String(p.tickets),
                                       },
                                       {
-                                        label: "Revenue",
-                                        value: `HKD ${p.revenue.toLocaleString()}`,
+                                        label: "Ticket revenue",
+                                        value: `HKD ${(p.revenue || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+                                      },
+                                      {
+                                        label: "Donations",
+                                        value: `HKD ${(p.donations || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
                                       },
                                       {
                                         label: "Orders",
                                         value: String(p.orders),
+                                      },
+                                      {
+                                        label: "Donation count",
+                                        value: String(p.donationCount || 0),
                                       },
                                     ],
                                   })
@@ -2495,16 +2608,32 @@ export default function AdminDashboard() {
                       <div className="flex flex-wrap items-end justify-between gap-2">
                         <div>
                           <h3 className="font-semibold text-sm text-zinc-900">
-                            Revenue over time
+                            Money over time
                           </h3>
-                          <p className="text-xs text-zinc-500 mt-0.5">HKD per day</p>
+                          <p className="text-xs text-zinc-500 mt-0.5">
+                            HKD per day — green = tickets, rose = donations (stacked)
+                          </p>
                         </div>
-                        <span className="text-[11px] text-zinc-500">
-                          Peak{" "}
-                          <strong className="text-zinc-800">
-                            HKD {maxDayRevenue.toLocaleString()}
-                          </strong>
-                        </span>
+                        <div className="flex flex-wrap gap-3 text-[11px] text-zinc-500">
+                          <span className="inline-flex items-center gap-1.5">
+                            <span className="h-2.5 w-2.5 rounded-sm bg-emerald-500" />
+                            Tickets
+                          </span>
+                          <span className="inline-flex items-center gap-1.5">
+                            <span className="h-2.5 w-2.5 rounded-sm bg-rose-500" />
+                            Donations
+                          </span>
+                          <span>
+                            Peak{" "}
+                            <strong className="text-zinc-800">
+                              HKD{" "}
+                              {maxDayRevenue.toLocaleString(undefined, {
+                                minimumFractionDigits: 2,
+                                maximumFractionDigits: 2,
+                              })}
+                            </strong>
+                          </span>
+                        </div>
                       </div>
                       <div
                         className="mt-4 relative overflow-x-auto -mx-1"
@@ -2525,6 +2654,14 @@ export default function AdminDashboard() {
                             <linearGradient id="barGradHot" x1="0" y1="0" x2="0" y2="1">
                               <stop offset="0%" stopColor="#6ee7b7" />
                               <stop offset="100%" stopColor="#047857" />
+                            </linearGradient>
+                            <linearGradient id="barDon" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="0%" stopColor="#fb7185" />
+                              <stop offset="100%" stopColor="#e11d48" />
+                            </linearGradient>
+                            <linearGradient id="barDonHot" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="0%" stopColor="#fda4af" />
+                              <stop offset="100%" stopColor="#be123c" />
                             </linearGradient>
                           </defs>
                           {gridYs.map((gy, i) => (
@@ -2551,8 +2688,19 @@ export default function AdminDashboard() {
                           ))}
                           {tl.map((d, i) => {
                             const x = padL + barSlot * i + (barSlot - barW) / 2;
-                            const y = yRevenue(d.revenue);
-                            const h = Math.max(4, padT + plotH - y);
+                            const ticketRev = d.revenue || 0;
+                            const donRev = d.donations || 0;
+                            const combined = ticketRev + donRev;
+                            const yTop = yRevenue(combined);
+                            const yMid = yRevenue(ticketRev);
+                            const hTickets = Math.max(
+                              ticketRev > 0 ? 2 : 0,
+                              padT + plotH - yMid
+                            );
+                            const hDon = Math.max(
+                              donRev > 0 ? 2 : 0,
+                              yMid - yTop
+                            );
                             const active =
                               dashTip?.chart === "revenue" &&
                               dashTip.title === d.date;
@@ -2567,15 +2715,23 @@ export default function AdminDashboard() {
                                       78,
                                       Math.max(8, ((x + barW / 2) / chartW) * 100 - 8)
                                     ),
-                                    topPct: Math.max(6, (y / chartH) * 100 - 12),
+                                    topPct: Math.max(6, (yTop / chartH) * 100 - 12),
                                     title: d.date,
                                     rows: [
                                       {
-                                        label: "Revenue",
-                                        value: `HKD ${d.revenue.toLocaleString()}`,
+                                        label: "Tickets",
+                                        value: `HKD ${ticketRev.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
                                       },
                                       {
-                                        label: "Tickets",
+                                        label: "Donations",
+                                        value: `HKD ${donRev.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (${d.donationCount || 0})`,
+                                      },
+                                      {
+                                        label: "Combined",
+                                        value: `HKD ${combined.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+                                      },
+                                      {
+                                        label: "Ticket qty",
                                         value: String(d.tickets),
                                       },
                                       {
@@ -2586,22 +2742,55 @@ export default function AdminDashboard() {
                                   })
                                 }
                               >
-                                <rect
-                                  x={x}
-                                  y={y}
-                                  width={barW}
-                                  height={h}
-                                  rx={8}
-                                  ry={8}
-                                  fill={
-                                    active ? "url(#barGradHot)" : "url(#barGrad)"
-                                  }
-                                  opacity={
-                                    dashTip?.chart === "revenue" && !active
-                                      ? 0.45
-                                      : 0.95
-                                  }
-                                />
+                                {/* Ticket revenue (bottom) */}
+                                {ticketRev > 0 && (
+                                  <rect
+                                    x={x}
+                                    y={yMid}
+                                    width={barW}
+                                    height={hTickets}
+                                    rx={donRev > 0 ? 0 : 8}
+                                    ry={donRev > 0 ? 0 : 8}
+                                    fill={
+                                      active ? "url(#barGradHot)" : "url(#barGrad)"
+                                    }
+                                    opacity={
+                                      dashTip?.chart === "revenue" && !active
+                                        ? 0.45
+                                        : 0.95
+                                    }
+                                  />
+                                )}
+                                {/* Donations (top of stack) */}
+                                {donRev > 0 && (
+                                  <rect
+                                    x={x}
+                                    y={yTop}
+                                    width={barW}
+                                    height={hDon}
+                                    rx={8}
+                                    ry={8}
+                                    fill={
+                                      active ? "url(#barDonHot)" : "url(#barDon)"
+                                    }
+                                    opacity={
+                                      dashTip?.chart === "revenue" && !active
+                                        ? 0.45
+                                        : 0.95
+                                    }
+                                  />
+                                )}
+                                {/* Invisible hit target if both zero-ish */}
+                                {combined <= 0 && (
+                                  <rect
+                                    x={x}
+                                    y={padT + plotH - 4}
+                                    width={barW}
+                                    height={4}
+                                    rx={2}
+                                    fill="#e4e4e7"
+                                  />
+                                )}
                                 <text
                                   x={x + barW / 2}
                                   y={chartH - 14}
@@ -2652,7 +2841,14 @@ export default function AdminDashboard() {
       })()}
 
       {/* DONATIONS TAB (separate from ticket purchases) */}
-      {activeTab === "donations" && (
+      {activeTab === "donations" && (() => {
+        const filt = donationEventFilter.trim().toLowerCase();
+        const shown = filt
+          ? donations.filter((d) =>
+              (d.event_slug || "").toLowerCase().includes(filt)
+            )
+          : donations;
+        return (
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-8">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-4">
             <div>
@@ -2702,14 +2898,14 @@ export default function AdminDashboard() {
                     </td>
                   </tr>
                 )}
-                {!donationsLoading && donations.length === 0 && (
+                {!donationsLoading && shown.length === 0 && (
                   <tr>
                     <td colSpan={7} className="p-10 text-center text-zinc-400">
                       No donations found.
                     </td>
                   </tr>
                 )}
-                {donations.map((d, idx) => (
+                {shown.map((d, idx) => (
                   <tr key={d.id ?? idx} className="hover:bg-rose-50/30">
                     <td className="p-3 sm:p-4 text-xs text-zinc-500 whitespace-nowrap">
                       {formatHkDateTime(d.donated_at)}
@@ -2720,7 +2916,11 @@ export default function AdminDashboard() {
                       <div className="text-xs text-zinc-500">{d.phone}</div>
                     </td>
                     <td className="p-3 sm:p-4 text-right font-semibold tabular-nums text-rose-800 whitespace-nowrap">
-                      {d.currency || "HKD"} {d.amount}
+                      {d.currency || "HKD"}{" "}
+                      {Number(d.amount).toLocaleString(undefined, {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                      })}
                     </td>
                     <td className="p-3 sm:p-4">
                       <span className="font-mono text-xs rounded bg-zinc-100 px-2 py-0.5">
@@ -2738,20 +2938,24 @@ export default function AdminDashboard() {
               </tbody>
             </table>
           </div>
-          {donations.length > 0 && (
+          {shown.length > 0 && (
             <div className="mt-4 text-sm text-zinc-600">
               Total shown:{" "}
               <span className="font-semibold text-rose-800 tabular-nums">
                 HKD{" "}
-                {donations
+                {shown
                   .reduce((s, d) => s + (Number(d.amount) || 0), 0)
-                  .toLocaleString()}
+                  .toLocaleString(undefined, {
+                    minimumFractionDigits: 2,
+                    maximumFractionDigits: 2,
+                  })}
               </span>{" "}
-              · {donations.length} donation{donations.length !== 1 ? "s" : ""}
+              · {shown.length} donation{shown.length !== 1 ? "s" : ""}
             </div>
           )}
         </div>
-      )}
+        );
+      })()}
 
       {/* PURCHASES / REGISTRATION TAB */}
       {activeTab === "purchases" && (
