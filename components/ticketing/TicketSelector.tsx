@@ -192,19 +192,32 @@ export function TicketSelector({
               )}
               <p className="mt-1 text-xs text-amber-700">
                 Max {ticket.maxPerOrder ?? 6} per order
-                {displayRemaining != null &&
-                displayRemaining > 0 &&
-                displayRemaining < (ticket.maxPerOrder ?? 6)
-                  ? ` · only ${displayRemaining} left`
-                  : ""}
               </p>
-              {level === "ok" &&
-                displayRemaining != null &&
-                displayRemaining > LIMITED_STOCK_THRESHOLD && (
-                  <p className="mt-0.5 text-xs text-zinc-500">
-                    {displayRemaining} available
-                  </p>
-                )}
+              {/* Live availability on the card (updates as qty changes) */}
+              {maxAvailable != null && (
+                <p
+                  className={`mt-1.5 text-sm font-semibold tabular-nums ${
+                    soldOut
+                      ? "text-red-700"
+                      : displayRemaining != null &&
+                          displayRemaining <= LIMITED_STOCK_THRESHOLD
+                        ? "text-amber-800"
+                        : "text-emerald-800"
+                  }`}
+                >
+                  {soldOut
+                    ? "0 seats left"
+                    : `${displayRemaining} seat${
+                        displayRemaining === 1 ? "" : "s"
+                      } left`}
+                  {qty > 0 && !soldOut ? (
+                    <span className="font-normal text-zinc-500">
+                      {" "}
+                      · {qty} in cart
+                    </span>
+                  ) : null}
+                </p>
+              )}
             </div>
 
             <div className="flex items-center gap-4">
