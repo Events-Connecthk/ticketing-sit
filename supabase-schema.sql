@@ -83,6 +83,32 @@ TO anon
 USING (false);
 
 -- =========================================
+-- Donations (optional, separate from purchases)
+-- =========================================
+CREATE TABLE IF NOT EXISTS donations (
+  id BIGSERIAL PRIMARY KEY,
+  donated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  name TEXT NOT NULL,
+  phone TEXT NOT NULL,
+  email TEXT NOT NULL,
+  amount NUMERIC NOT NULL,
+  currency TEXT DEFAULT 'HKD',
+  event_slug TEXT NOT NULL,
+  order_reference TEXT,
+  payment_reference TEXT,
+  payment_method TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE donations ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Block anon donations" ON donations;
+CREATE POLICY "Block anon donations"
+ON donations FOR ALL TO anon USING (false) WITH CHECK (false);
+
+CREATE INDEX IF NOT EXISTS idx_donations_event_slug ON donations (event_slug);
+CREATE INDEX IF NOT EXISTS idx_donations_order_ref ON donations (order_reference);
+
+-- =========================================
 -- Check-in staff accounts (door / scanner only)
 -- =========================================
 CREATE TABLE IF NOT EXISTS checkin_staff (

@@ -413,10 +413,47 @@ async function cartToItemList(cart: OrderCart) {
   });
 
   if (lines.length === 0) {
+    const ticketOnly =
+      cart.ticketAmount != null
+        ? roundMoney(Number(cart.ticketAmount) || 0)
+        : roundMoney(
+            Math.max(
+              0,
+              (Number(cart.totalAmount) || 0) -
+                (Number(cart.donationAmount) || 0)
+            )
+          );
+    if (ticketOnly > 0) {
+      lines = [
+        {
+          itemNo: "tickets",
+          itemName: clean(`Tickets (${cart.eventSlug})`).slice(0, 128),
+          itemIcon: icon,
+          price: ticketOnly,
+          priceCurrency: "HKD" as const,
+          quantity: 1,
+        },
+      ];
+    }
+  }
+
+  const donationAmt = roundMoney(Number(cart.donationAmount) || 0);
+  if (donationAmt > 0) {
+    lines.push({
+      itemNo: "donation",
+      itemName: clean(`Donation (${cart.eventSlug})`).slice(0, 128),
+      itemIcon: icon,
+      price: donationAmt,
+      priceCurrency: "HKD" as const,
+      quantity: 1,
+    });
+  }
+
+  if (lines.length === 0) {
     lines = [
       {
-        itemNo: "tickets",
-        itemName: clean(`Tickets (${cart.eventSlug})`).slice(0, 128),
+        itemNo: "order",
+        itemName: clean(`Order (${cart.eventSlug})`).slice(0, 128),
         itemIcon: icon,
         price: roundMoney(cart.totalAmount),
         priceCurrency: "HKD" as const,
@@ -426,23 +463,44 @@ async function cartToItemList(cart: OrderCart) {
   }
 
   // payAmount must match sum(price * quantity) - discount (docs BigDecimal)
-  const listTotal = roundMoney(
-    lines.reduce((s, l) => s + l.price * l.quantity, 0)
-  );
+  // Scale ticket lines only so donation amount stays exact.
   const pay = roundMoney(cart.totalAmount);
-  if (listTotal > 0 && Math.abs(listTotal - pay) > 0.02) {
-    // Scale unit prices so line totals match cart total (promo / early bird)
-    const scale = pay / listTotal;
+  const donationLineAmt = donationAmt > 0 ? donationAmt : 0;
+  const ticketTarget = roundMoney(Math.max(0, pay - donationLineAmt));
+  const ticketIdxs = lines
+    .map((l, i) => (l.itemNo === "donation" ? -1 : i))
+    .filter((i) => i >= 0);
+  const ticketListTotal = roundMoney(
+    ticketIdxs.reduce(
+      (s, i) => s + lines[i].price * lines[i].quantity,
+      0
+    )
+  );
+  if (
+    ticketIdxs.length > 0 &&
+    ticketListTotal > 0 &&
+    Math.abs(ticketListTotal - ticketTarget) > 0.02
+  ) {
+    const scale = ticketTarget / ticketListTotal;
     let running = 0;
-    for (let i = 0; i < lines.length; i++) {
-      if (i === lines.length - 1) {
-        const lastLine = roundMoney(pay - running);
+    for (let t = 0; t < ticketIdxs.length; t++) {
+      const i = ticketIdxs[t];
+      if (t === ticketIdxs.length - 1) {
+        const lastLine = roundMoney(ticketTarget - running);
         lines[i].price = roundMoney(lastLine / lines[i].quantity);
       } else {
         lines[i].price = roundMoney(lines[i].price * scale);
         running = roundMoney(running + lines[i].price * lines[i].quantity);
       }
     }
+  }
+
+  // Final guard: if still off (e.g. free tickets + donation only), fix single order line
+  const listTotal = roundMoney(
+    lines.reduce((s, l) => s + l.price * l.quantity, 0)
+  );
+  if (listTotal > 0 && Math.abs(listTotal - pay) > 0.02 && lines.length === 1) {
+    lines[0].price = roundMoney(pay / lines[0].quantity);
   }
 
   return lines;
@@ -552,7 +610,11 @@ export async function initiateKpayPayment(
       payCurrency: "HKD",
       notifyUrl,
       returnUrl,
-      orderRemark: `Tickets ${cart.eventSlug}`.slice(0, 256),
+      orderRemark: (
+        (cart.donationAmount ?? 0) > 0
+          ? `Tickets+donation ${cart.eventSlug}`
+          : `Tickets ${cart.eventSlug}`
+      ).slice(0, 256),
       itemList,
     };
     if (cart.discountAmount && cart.discountAmount > 0) {

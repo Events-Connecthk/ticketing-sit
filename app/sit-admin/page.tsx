@@ -2,13 +2,21 @@
 
 import React, { useEffect, useState } from "react";
 import jsQR from "jsqr";
-import { PurchaseRecord, EventConfig, TicketType, BuyerFormField, DiscountCode } from "@/types";
+import {
+  PurchaseRecord,
+  EventConfig,
+  TicketType,
+  BuyerFormField,
+  DiscountCode,
+  DonationRecord,
+} from "@/types";
 import { getAllEvents, isSupabaseConfigured } from "@/lib/db/events";
 import {
   adminSaveEvent,
   adminGetAllEvents,
   adminDeleteEvent,
   adminGetAllPurchases,
+  adminGetAllDonations,
   adminSavePurchase,
   adminIssueManualTickets,
   adminListCheckinStaff,
@@ -61,14 +69,18 @@ export default function AdminDashboard() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [password, setPassword] = useState("");
   const [purchases, setPurchases] = useState<PurchaseRecord[]>([]);
+  const [donations, setDonations] = useState<DonationRecord[]>([]);
+  const [donationsLoading, setDonationsLoading] = useState(false);
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState("");
   const [eventFilter, setEventFilter] = useState("");
+  const [donationEventFilter, setDonationEventFilter] = useState("");
 
   // ===== NEW: Admin Tabs and Event Management =====
   const [activeTab, setActiveTab] = useState<
     | "dashboard"
     | "purchases"
+    | "donations"
     | "events"
     | "scanner"
     | "attendance"
@@ -127,6 +139,9 @@ export default function AdminDashboard() {
     enabled: true,
     paymentEnabled: true,
     ticketTemplate: "",
+    /** Optional donation at checkout */
+    donationEnabled: false,
+    donationDefaultAmount: 50,
     /** Empty = use default white-gold theme */
     primaryColor: "",
     secondaryColor: "",
@@ -202,6 +217,20 @@ export default function AdminDashboard() {
       console.error(e);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function loadDonations() {
+    setDonationsLoading(true);
+    try {
+      const data = await adminGetAllDonations({
+        eventSlug: donationEventFilter || undefined,
+      });
+      setDonations(data);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setDonationsLoading(false);
     }
   }
 
@@ -739,6 +768,12 @@ export default function AdminDashboard() {
   }, [isAuthenticated, search, eventFilter]);
 
   useEffect(() => {
+    if (isAuthenticated && activeTab === "donations") {
+      loadDonations();
+    }
+  }, [isAuthenticated, activeTab, donationEventFilter]);
+
+  useEffect(() => {
     if (
       isAuthenticated &&
       (activeTab === "events" ||
@@ -1062,6 +1097,8 @@ export default function AdminDashboard() {
       enabled: true,
       paymentEnabled: true,
       ticketTemplate: "",
+      donationEnabled: false,
+      donationDefaultAmount: 50,
       primaryColor: "",
       secondaryColor: "",
       backgroundColor: "",
@@ -1136,6 +1173,11 @@ export default function AdminDashboard() {
       enabled: false, // draft until ready
       paymentEnabled: ev.paymentEnabled !== false,
       ticketTemplate: ev.ticketTemplate || "",
+      donationEnabled: Boolean(ev.donationEnabled),
+      donationDefaultAmount: Math.max(
+        0,
+        Number(ev.donationDefaultAmount) || 50
+      ),
       primaryColor: theme.primaryColor,
       secondaryColor: theme.secondaryColor,
       backgroundColor: theme.backgroundColor,
@@ -1203,6 +1245,11 @@ export default function AdminDashboard() {
       enabled: ev.enabled !== false,
       paymentEnabled: ev.paymentEnabled !== false,
       ticketTemplate: ev.ticketTemplate || "",
+      donationEnabled: Boolean(ev.donationEnabled),
+      donationDefaultAmount: Math.max(
+        0,
+        Number(ev.donationDefaultAmount) || 50
+      ),
       primaryColor: theme.primaryColor,
       secondaryColor: theme.secondaryColor,
       backgroundColor: theme.backgroundColor,
@@ -1471,6 +1518,10 @@ export default function AdminDashboard() {
       enabled: eventForm.enabled,
       paymentEnabled: eventForm.paymentEnabled,
       ticketTemplate: eventForm.ticketTemplate || undefined,
+      donationEnabled: Boolean(eventForm.donationEnabled),
+      donationDefaultAmount: eventForm.donationEnabled
+        ? Math.max(0, Number(eventForm.donationDefaultAmount) || 0)
+        : undefined,
       // Always send arrays so remove/add persists (never leave undefined)
       ticketTypes: [...ticketTypesForm],
       buyerFormFields: [...buyerFormFields],
@@ -1784,6 +1835,12 @@ export default function AdminDashboard() {
             className={`shrink-0 px-3 sm:px-6 py-3 font-medium text-xs sm:text-sm border-b-2 transition-all whitespace-nowrap ${activeTab === "purchases" ? "border-zinc-900 text-zinc-900" : "border-transparent text-zinc-500 hover:text-zinc-700"}`}
           >
             Purchases
+          </button>
+          <button
+            onClick={() => setActiveTab("donations")}
+            className={`shrink-0 px-3 sm:px-6 py-3 font-medium text-xs sm:text-sm border-b-2 transition-all whitespace-nowrap ${activeTab === "donations" ? "border-rose-600 text-rose-800" : "border-transparent text-zinc-500 hover:text-zinc-700"}`}
+          >
+            Donations
           </button>
           <button
             onClick={() => setActiveTab("events")}
@@ -2593,6 +2650,108 @@ export default function AdminDashboard() {
           </div>
         );
       })()}
+
+      {/* DONATIONS TAB (separate from ticket purchases) */}
+      {activeTab === "donations" && (
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-8">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-4">
+            <div>
+              <h2 className="text-lg font-semibold">Donations</h2>
+              <p className="text-xs text-zinc-500 mt-0.5">
+                Tracked separately from ticket purchases. Run the donations table SQL
+                in Supabase if this list stays empty after real donations.
+              </p>
+            </div>
+            <button
+              onClick={loadDonations}
+              disabled={donationsLoading}
+              className="flex items-center gap-2 rounded-lg border px-3 py-2 text-sm hover:bg-zinc-100 self-start"
+            >
+              <RefreshCw
+                className={`h-4 w-4 ${donationsLoading ? "animate-spin" : ""}`}
+              />
+              Refresh
+            </button>
+          </div>
+          <div className="mb-4">
+            <input
+              value={donationEventFilter}
+              onChange={(e) => setDonationEventFilter(e.target.value)}
+              placeholder="Filter by event slug"
+              className="rounded-xl border py-2.5 px-4 bg-white w-full sm:w-72"
+            />
+          </div>
+          <div className="overflow-x-auto rounded-2xl border bg-white">
+            <table className="w-full text-sm min-w-[640px]">
+              <thead>
+                <tr className="border-b bg-rose-50/60 text-left">
+                  <th className="p-3 sm:p-4 font-medium whitespace-nowrap">Date</th>
+                  <th className="p-3 sm:p-4 font-medium">Name</th>
+                  <th className="p-3 sm:p-4 font-medium">Email / Phone</th>
+                  <th className="p-3 sm:p-4 font-medium text-right">Amount</th>
+                  <th className="p-3 sm:p-4 font-medium">Event</th>
+                  <th className="p-3 sm:p-4 font-medium">Order ref</th>
+                  <th className="p-3 sm:p-4 font-medium">Method</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y">
+                {donationsLoading && (
+                  <tr>
+                    <td colSpan={7} className="p-10 text-center text-zinc-400">
+                      Loading donations...
+                    </td>
+                  </tr>
+                )}
+                {!donationsLoading && donations.length === 0 && (
+                  <tr>
+                    <td colSpan={7} className="p-10 text-center text-zinc-400">
+                      No donations found.
+                    </td>
+                  </tr>
+                )}
+                {donations.map((d, idx) => (
+                  <tr key={d.id ?? idx} className="hover:bg-rose-50/30">
+                    <td className="p-3 sm:p-4 text-xs text-zinc-500 whitespace-nowrap">
+                      {formatHkDateTime(d.donated_at)}
+                    </td>
+                    <td className="p-3 sm:p-4 font-medium">{d.name}</td>
+                    <td className="p-3 sm:p-4">
+                      <div className="break-all">{d.email}</div>
+                      <div className="text-xs text-zinc-500">{d.phone}</div>
+                    </td>
+                    <td className="p-3 sm:p-4 text-right font-semibold tabular-nums text-rose-800 whitespace-nowrap">
+                      {d.currency || "HKD"} {d.amount}
+                    </td>
+                    <td className="p-3 sm:p-4">
+                      <span className="font-mono text-xs rounded bg-zinc-100 px-2 py-0.5">
+                        {d.event_slug}
+                      </span>
+                    </td>
+                    <td className="p-3 sm:p-4 font-mono text-xs text-zinc-600 break-all">
+                      {d.order_reference || d.payment_reference || "—"}
+                    </td>
+                    <td className="p-3 sm:p-4 text-xs text-zinc-600">
+                      {d.payment_method || "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {donations.length > 0 && (
+            <div className="mt-4 text-sm text-zinc-600">
+              Total shown:{" "}
+              <span className="font-semibold text-rose-800 tabular-nums">
+                HKD{" "}
+                {donations
+                  .reduce((s, d) => s + (Number(d.amount) || 0), 0)
+                  .toLocaleString()}
+              </span>{" "}
+              · {donations.length} donation{donations.length !== 1 ? "s" : ""}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* PURCHASES / REGISTRATION TAB */}
       {activeTab === "purchases" && (
@@ -4015,6 +4174,55 @@ export default function AdminDashboard() {
                     onChange={(e) => setEventForm({ ...eventForm, paymentEnabled: e.target.checked })}
                   />
                   <label htmlFor="paymentEnabled" className="text-sm">Require payment (uncheck for free registration-only events)</label>
+                </div>
+
+                {/* Optional donation at checkout */}
+                <div className="md:col-span-2 rounded-xl border border-rose-100 bg-rose-50/40 p-4 space-y-3">
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      id="donationEnabled"
+                      checked={eventForm.donationEnabled}
+                      onChange={(e) =>
+                        setEventForm({
+                          ...eventForm,
+                          donationEnabled: e.target.checked,
+                        })
+                      }
+                    />
+                    <label htmlFor="donationEnabled" className="text-sm font-medium">
+                      Enable optional donation at checkout
+                    </label>
+                  </div>
+                  <p className="text-xs text-zinc-600 pl-6">
+                    Buyers see a checkbox after entering details. If they opt in,
+                    they get a donation step with a default amount (they can change
+                    it to any amount). Donation is charged with the order but stored
+                    in a separate donations table.
+                  </p>
+                  {eventForm.donationEnabled && (
+                    <div className="pl-6 max-w-xs">
+                      <label className="text-xs font-medium text-zinc-500">
+                        Default donation amount (HKD)
+                      </label>
+                      <input
+                        type="number"
+                        min={0}
+                        step={1}
+                        value={eventForm.donationDefaultAmount}
+                        onChange={(e) =>
+                          setEventForm({
+                            ...eventForm,
+                            donationDefaultAmount: Math.max(
+                              0,
+                              Number(e.target.value) || 0
+                            ),
+                          })
+                        }
+                        className="mt-1 w-full border rounded-lg px-3 py-2 text-sm"
+                      />
+                    </div>
+                  )}
                 </div>
 
                 {/* Custom Ticket Template Background (Image or PDF) */}

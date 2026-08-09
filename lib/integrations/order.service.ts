@@ -113,6 +113,12 @@ export async function processSuccessfulPurchase(
           ? "manual"
           : "kpay");
 
+    const donationAmt = Math.max(0, Number(cart.donationAmount) || 0);
+    const ticketAmt =
+      cart.ticketAmount != null
+        ? Math.max(0, Number(cart.ticketAmount) || 0)
+        : Math.max(0, (Number(cart.totalAmount) || 0) - donationAmt);
+
     const purchaseRecord: Omit<PurchaseRecord, "id"> = {
       bought_at: new Date().toISOString(),
       name: cart.buyer.name,
@@ -120,8 +126,9 @@ export async function processSuccessfulPurchase(
       email: cart.buyer.email,
       number_of_tickets: ticketUnits.length || totalTickets,
       payment_method: paymentMethod,
-      amount: cart.totalAmount,
-      currency: cart.currency,
+      // Ticket portion only (donation stored separately)
+      amount: ticketAmt,
+      currency: cart.currency === "FREE" ? "HKD" : cart.currency,
       event_slug: cart.eventSlug,
       ticket_breakdown: ticketUnits,
       order_reference: orderReference,
@@ -132,6 +139,33 @@ export async function processSuccessfulPurchase(
 
     console.log("[OrderService] Saving purchase to DB...");
     const savedRecord = await savePurchase(purchaseRecord);
+
+    // Skip donation insert on idempotent / race duplicate
+    const isDuplicatePurchase =
+      Boolean(savedRecord.order_reference) &&
+      savedRecord.order_reference !== orderReference;
+
+    if (donationAmt > 0 && !isDuplicatePurchase) {
+      try {
+        const { saveDonation } = await import("@/lib/db/donations");
+        await saveDonation({
+          donated_at: new Date().toISOString(),
+          name: cart.buyer.name,
+          phone: cart.buyer.phone,
+          email: cart.buyer.email,
+          amount: donationAmt,
+          currency:
+            cart.currency === "FREE" ? "HKD" : cart.currency || "HKD",
+          event_slug: cart.eventSlug,
+          order_reference: savedRecord.order_reference || orderReference,
+          payment_reference: paymentReference,
+          payment_method: paymentMethod,
+        });
+        console.log("[OrderService] Donation saved:", donationAmt);
+      } catch (donErr) {
+        console.error("[OrderService] Donation save failed (non-blocking):", donErr);
+      }
+    }
     // Prefer DB order ref if insert was a race/duplicate (23505 → existing row)
     const finalOrderRef =
       savedRecord.order_reference || orderReference;

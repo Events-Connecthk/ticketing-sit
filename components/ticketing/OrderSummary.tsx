@@ -40,17 +40,30 @@ export function OrderSummary({ cart, event, compact = false }: OrderSummaryProps
                   {ticketType.name} × {sel.quantity}
                 </span>
                 <span className="tabular-nums">
-                  {cart.currency} {(ticketType.price * sel.quantity).toFixed(0)}
+                  {cart.currency === "FREE" ? "HKD" : cart.currency}{" "}
+                  {(ticketType.price * sel.quantity).toFixed(0)}
                 </span>
               </div>
             );
           })}
+          {(cart.donationAmount ?? 0) > 0 && (
+            <div className="flex justify-between py-1 text-rose-700">
+              <span>Donation</span>
+              <span className="tabular-nums">
+                {cart.currency === "FREE" ? "HKD" : cart.currency}{" "}
+                {Number(cart.donationAmount).toFixed(0)}
+              </span>
+            </div>
+          )}
         </div>
 
         <div className="flex justify-between border-t pt-3 font-semibold text-base">
-          <span>Total ({totalTickets} ticket{totalTickets !== 1 ? "s" : ""})</span>
+          <span>
+            Total ({totalTickets} ticket{totalTickets !== 1 ? "s" : ""}
+            {(cart.donationAmount ?? 0) > 0 ? " + donation" : ""})
+          </span>
           <span className="tabular-nums">
-            {cart.currency} {cart.totalAmount}
+            {cart.currency === "FREE" ? "Free" : `${cart.currency} ${cart.totalAmount}`}
           </span>
         </div>
         {cart.appliedDiscountCode && cart.discountAmount && (
@@ -58,6 +71,17 @@ export function OrderSummary({ cart, event, compact = false }: OrderSummaryProps
             {cart.appliedDiscountCode} applied (-{cart.discountAmount})
           </div>
         )}
+        {(cart.ticketAmount != null || (cart.donationAmount ?? 0) > 0) &&
+          cart.currency !== "FREE" && (
+            <div className="text-xs text-zinc-500 text-right space-y-0.5">
+              {cart.ticketAmount != null && (
+                <div>Tickets: {cart.currency} {Number(cart.ticketAmount).toFixed(0)}</div>
+              )}
+              {(cart.donationAmount ?? 0) > 0 && (
+                <div>Donation: {cart.currency} {Number(cart.donationAmount).toFixed(0)}</div>
+              )}
+            </div>
+          )}
       </div>
 
       {!compact && (

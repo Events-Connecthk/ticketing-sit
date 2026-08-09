@@ -79,6 +79,10 @@ export interface EventConfig {
   // Custom ticket template PDF path (e.g. /ticket-templates/my-event.pdf)
   // The dynamic text/QR will be overlaid at the same positions as the default template
   ticketTemplate?: string;
+  /** Optional donation at checkout (stored in event.metadata) */
+  donationEnabled?: boolean;
+  /** Default donation amount shown to buyer (they can change it) */
+  donationDefaultAmount?: number;
   // Optional metadata for future extensibility
   metadata?: Record<string, unknown>;
 }
@@ -114,11 +118,31 @@ export interface OrderCart {
   eventSlug: string;
   tickets: TicketSelection[];
   buyer: BuyerInfo;
+  /** Total charged (tickets after discount + donation) */
   totalAmount: number;
   currency: string;
   // Applied event-level promo code (independent of ticket types)
   appliedDiscountCode?: string;
   discountAmount?: number;
+  /** Ticket subtotal after discount (excludes donation) */
+  ticketAmount?: number;
+  /** Optional donation amount (tracked separately) */
+  donationAmount?: number;
+}
+
+/** Donation record (separate table from purchases) */
+export interface DonationRecord {
+  id?: string | number;
+  donated_at: string;
+  name: string;
+  phone: string;
+  email: string;
+  amount: number;
+  currency?: string;
+  event_slug: string;
+  order_reference?: string;
+  payment_reference?: string;
+  payment_method?: string;
 }
 
 // ============================================

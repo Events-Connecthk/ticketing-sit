@@ -19,8 +19,9 @@ import { getEventTheme } from "@/lib/tickets/event-theme";
  *
  * Flow:
  *   1. Select tickets → live total
- *   2. Fill buyer details
- *   3. Proceed to /checkout with cart state passed via URL + localStorage fallback
+ *   2. Fill buyer details (+ optional “I want to donate” checkbox)
+ *   3. If donate checked → donation amount page (default from admin, editable)
+ *   4. Proceed to /checkout (or free path) with cart including donationAmount
  */
 
 interface EventPageProps {
@@ -50,6 +51,12 @@ export default function EventPage({ params }: EventPageProps) {
         const hasTickets = loaded.ticketTypes && loaded.ticketTypes.length > 0;
         const needsTicketSelection = hasTickets && loaded.paymentEnabled !== false;
         setStep(needsTicketSelection ? "tickets" : "details");
+        setWantToDonate(false);
+        setDonationAmount(
+          loaded.donationEnabled
+            ? Math.max(0, Number(loaded.donationDefaultAmount) || 0)
+            : 0
+        );
       }
     });
     getEventTicketSoldCounts(eventSlug)
@@ -57,7 +64,7 @@ export default function EventPage({ params }: EventPageProps) {
       .catch(() => setSoldByType({}));
   }, [eventSlug]);
 
-  const [step, setStep] = useState<"tickets" | "details">("details");
+  const [step, setStep] = useState<"tickets" | "details" | "donation">("details");
   const [selections, setSelections] = useState<TicketSelection[]>([]);
   const [buyer, setBuyer] = useState<BuyerInfo | null>(null);
   const [customBuyerValues, setCustomBuyerValues] = useState<Record<string, string>>({});
@@ -66,6 +73,10 @@ export default function EventPage({ params }: EventPageProps) {
   const [discountCodeError, setDiscountCodeError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [soldByType, setSoldByType] = useState<Record<string, number>>({});
+  /** User opted in on details form (donation step only if checked) */
+  const [wantToDonate, setWantToDonate] = useState(false);
+  /** Donation amount on donation step (any amount user chooses) */
+  const [donationAmount, setDonationAmount] = useState<number>(0);
 
   React.useEffect(() => {
     if (event) {
@@ -118,15 +129,35 @@ export default function EventPage({ params }: EventPageProps) {
 
   // Order-level discount code (independent of ticket type)
   const discountAmount = appliedDiscount ? Math.round(totalAmount * (appliedDiscount.percent / 100)) : 0;
-  const finalTotal = Math.max(0, totalAmount - discountAmount);
+  const ticketTotal = Math.max(0, totalAmount - discountAmount);
+  const chargeTotal =
+    ticketTotal + (wantToDonate ? Math.max(0, Number(donationAmount) || 0) : 0);
 
   const handleTicketChange = (newSelections: TicketSelection[]) => {
     setSelections(newSelections);
   };
 
-  // Event free OR cart only free ticket types (finalTotal 0) → skip KPay
-  const cartIsFree =
-    event.paymentEnabled === false || finalTotal <= 0;
+  // Skip KPay only when nothing to charge (tickets free/zero and no donation)
+  const cartIsFree = chargeTotal <= 0;
+
+  const buildCart = (
+    finalBuyer: BuyerInfo,
+    donAmt: number
+  ): OrderCart => {
+    const safeDon = Math.max(0, Number(donAmt) || 0);
+    const total = ticketTotal + safeDon;
+    return {
+      eventSlug: event!.slug,
+      tickets: selections,
+      buyer: finalBuyer,
+      ticketAmount: ticketTotal,
+      donationAmount: safeDon > 0 ? safeDon : undefined,
+      totalAmount: total,
+      currency: total <= 0 ? "FREE" : currency,
+      appliedDiscountCode: appliedDiscount?.code,
+      discountAmount: discountAmount || undefined,
+    };
+  };
 
   const handleBuyerSubmit = (data: BuyerInfo) => {
     setBuyer(data);
@@ -134,56 +165,71 @@ export default function EventPage({ params }: EventPageProps) {
       alert("Select at least one ticket.");
       return;
     }
-    const hasTickets = event.ticketTypes && event.ticketTypes.length > 0;
-    if (hasTickets && !cartIsFree) {
-      proceedToCheckout(data);
+    // Optional donation page after details
+    if (event.donationEnabled && wantToDonate) {
+      setDonationAmount(
+        Math.max(0, Number(event.donationDefaultAmount) || donationAmount || 0)
+      );
+      setStep("donation");
+      return;
+    }
+    finishOrder(data, 0);
+  };
+
+  const handleDonationContinue = () => {
+    if (!buyer) return;
+    const amt = Math.max(0, Number(donationAmount) || 0);
+    if (wantToDonate && amt <= 0) {
+      alert("Enter a donation amount greater than 0, or go back and uncheck donation.");
+      return;
+    }
+    finishOrder(buyer, amt);
+  };
+
+  const finishOrder = (buyerData: BuyerInfo, donAmt: number) => {
+    const total = ticketTotal + Math.max(0, donAmt);
+    if (total <= 0) {
+      void handleFreeRegistration(buyerData, 0);
     } else {
-      handleFreeRegistration(data);
+      void proceedToCheckout(buyerData, donAmt);
     }
   };
 
-  const proceedToCheckout = async (buyerData?: BuyerInfo) => {
+  const proceedToCheckout = async (
+    buyerData?: BuyerInfo,
+    donAmt: number = 0
+  ) => {
     const finalBuyer = buyerData || buyer;
     if (!event || !finalBuyer || totalTickets === 0) return;
 
+    const cart = buildCart(finalBuyer, donAmt);
+
     // Safety: free cart should never hit KPay checkout
-    if (cartIsFree) {
-      await handleFreeRegistration(finalBuyer);
+    if (cart.totalAmount <= 0) {
+      await handleFreeRegistration(finalBuyer, 0);
       return;
     }
 
-    const cart: OrderCart = {
-      eventSlug: event.slug,
-      tickets: selections,
-      buyer: finalBuyer,
-      totalAmount: finalTotal,
-      currency,
-      appliedDiscountCode: appliedDiscount?.code,
-      discountAmount: discountAmount || undefined,
-    };
-
-    // Persist cart temporarily (checkout page will read it)
-    // In production you could also encode a short-lived JWT or store server-side session.
     if (typeof window !== "undefined") {
       sessionStorage.setItem("pendingCart", JSON.stringify(cart));
     }
 
     setIsLoading(true);
-
-    // Navigate to dedicated checkout page
     router.push(`/${event.slug}/checkout`);
   };
 
-  async function handleFreeRegistration(buyerData: BuyerInfo) {
+  async function handleFreeRegistration(
+    buyerData: BuyerInfo,
+    donAmt: number = 0
+  ) {
     if (!event) return;
+    // Donation with free tickets still needs payment
+    if (donAmt > 0) {
+      await proceedToCheckout(buyerData, donAmt);
+      return;
+    }
     const slug = event.slug;
-    const freeCart: OrderCart = {
-      eventSlug: slug,
-      tickets: selections,
-      buyer: buyerData,
-      totalAmount: 0,
-      currency: "FREE",
-    };
+    const freeCart = buildCart(buyerData, 0);
 
     if (typeof window !== "undefined") {
       sessionStorage.setItem("pendingCart", JSON.stringify(freeCart));
@@ -192,7 +238,6 @@ export default function EventPage({ params }: EventPageProps) {
     setIsLoading(true);
 
     try {
-      // Process free registration / free ticket types directly (no KPay)
       const { processSuccessfulPurchase } = await import(
         "@/lib/integrations/order.service"
       );
@@ -214,6 +259,10 @@ export default function EventPage({ params }: EventPageProps) {
 
   const goBackToTickets = () => {
     setStep("tickets");
+  };
+
+  const goBackFromDonation = () => {
+    setStep("details");
   };
 
   const theme = getEventTheme(event);
@@ -311,11 +360,93 @@ export default function EventPage({ params }: EventPageProps) {
                     className="btn-gold w-full rounded-xl py-4 font-medium text-lg disabled:opacity-60 disabled:cursor-not-allowed"
                   >
                     {totalTickets > 0
-                      ? cartIsFree
-                        ? "Get free tickets"
-                        : "Proceed to Checkout"
+                      ? "Continue"
                       : "Select tickets to continue"}
                   </button>
+                </div>
+              </>
+            ) : step === "donation" ? (
+              <>
+                <div className="mb-6">
+                  <h2 className="text-2xl font-semibold tracking-tight">Make a donation</h2>
+                  <p className="text-sm text-zinc-600 mt-1">
+                    Optional support for this event. You can keep the suggested amount or enter any amount you like.
+                  </p>
+                </div>
+                <div
+                  className="rounded-2xl border p-6 space-y-5"
+                  style={{
+                    background: "var(--event-surface)",
+                    borderColor: "var(--border)",
+                  }}
+                >
+                  <div>
+                    <label className="block text-sm font-medium mb-1">
+                      Donation amount ({currency})
+                    </label>
+                    <input
+                      type="number"
+                      min={1}
+                      step={1}
+                      value={Number.isFinite(donationAmount) ? donationAmount : ""}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        if (v === "") {
+                          setDonationAmount(0);
+                          return;
+                        }
+                        setDonationAmount(Math.max(0, Number(v) || 0));
+                      }}
+                      className="w-full border rounded-lg px-3 py-3 text-lg font-medium tabular-nums"
+                    />
+                    <p className="text-xs text-zinc-500 mt-2">
+                      Suggested default: {currency}{" "}
+                      {Math.max(0, Number(event.donationDefaultAmount) || 0)}. Change freely.
+                    </p>
+                  </div>
+                  <div className="rounded-xl bg-zinc-50 border px-4 py-3 text-sm space-y-1">
+                    <div className="flex justify-between">
+                      <span>Tickets</span>
+                      <span className="tabular-nums">
+                        {ticketTotal <= 0 ? "Free" : `${currency} ${ticketTotal}`}
+                      </span>
+                    </div>
+                    <div className="flex justify-between text-rose-700">
+                      <span>Donation</span>
+                      <span className="tabular-nums">
+                        {currency} {Math.max(0, donationAmount || 0)}
+                      </span>
+                    </div>
+                    <div className="flex justify-between font-semibold border-t pt-2 mt-1">
+                      <span>Total to pay</span>
+                      <span className="tabular-nums">
+                        {currency}{" "}
+                        {ticketTotal + Math.max(0, donationAmount || 0)}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="flex gap-3 pt-1">
+                    <button
+                      type="button"
+                      onClick={goBackFromDonation}
+                      className="flex-1 rounded-lg border py-3 font-medium"
+                      disabled={isLoading}
+                    >
+                      Back
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleDonationContinue}
+                      disabled={isLoading || Math.max(0, donationAmount || 0) <= 0}
+                      className="btn-gold flex-1 rounded-lg py-3 font-medium disabled:opacity-60"
+                    >
+                      {isLoading
+                        ? "Please wait…"
+                        : ticketTotal + Math.max(0, donationAmount || 0) <= 0
+                          ? "Continue"
+                          : "Continue to payment"}
+                    </button>
+                  </div>
                 </div>
               </>
             ) : (
@@ -391,6 +522,31 @@ export default function EventPage({ params }: EventPageProps) {
                       </div>
                     ))}
 
+                    {/* Optional donation opt-in (admin enables per event) */}
+                    {event.donationEnabled && (
+                      <div className="pt-2 border-t">
+                        <label className="flex items-start gap-3 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            className="mt-1 h-4 w-4"
+                            checked={wantToDonate}
+                            onChange={(e) => setWantToDonate(e.target.checked)}
+                          />
+                          <span>
+                            <span className="block text-sm font-medium">
+                              I would like to make a donation
+                            </span>
+                            <span className="block text-xs text-zinc-500 mt-0.5">
+                              If checked, you can set the amount on the next step
+                              (suggested {currency}{" "}
+                              {Math.max(0, Number(event.donationDefaultAmount) || 0)}).
+                              Donation is added to your total and tracked separately.
+                            </span>
+                          </span>
+                        </label>
+                      </div>
+                    )}
+
                     {/* Promo / Discount Code (event level) */}
                     {event.discountCodes && event.discountCodes.length > 0 && (
                       <div className="pt-2 border-t">
@@ -464,8 +620,12 @@ export default function EventPage({ params }: EventPageProps) {
 
                     <div className="flex gap-3 pt-2">
                       <button type="button" onClick={goBackToTickets} className="flex-1 rounded-lg border py-3 font-medium">Back</button>
-                      <button type="submit" className="btn-gold flex-1 rounded-lg py-3 font-medium">
-                        {cartIsFree ? "Get free tickets" : "Proceed to Checkout"}
+                      <button type="submit" className="btn-gold flex-1 rounded-lg py-3 font-medium" disabled={isLoading}>
+                        {wantToDonate && event.donationEnabled
+                          ? "Continue to donation"
+                          : cartIsFree
+                            ? "Get free tickets"
+                            : "Proceed to Checkout"}
                       </button>
                     </div>
                   </form>
@@ -502,26 +662,43 @@ export default function EventPage({ params }: EventPageProps) {
                         </div>
                       );
                     })}
-                    <div className="border-t pt-3 mt-2 flex justify-between font-semibold">
-                      <span>Total</span>
-                      <span>
-                        {finalTotal <= 0
-                          ? "Free"
-                          : `${currency} ${finalTotal}`}
-                      </span>
-                    </div>
                     {appliedDiscount && (
                       <div className="text-xs text-emerald-600 text-right">
                         {appliedDiscount.code} (-{appliedDiscount.percent}%)
                       </div>
                     )}
+                    {(wantToDonate || step === "donation") && (
+                      <div className="flex justify-between text-rose-700">
+                        <span>Donation</span>
+                        <span className="tabular-nums">
+                          {currency} {Math.max(0, donationAmount || 0)}
+                        </span>
+                      </div>
+                    )}
+                    <div className="border-t pt-3 mt-2 flex justify-between font-semibold">
+                      <span>Total</span>
+                      <span>
+                        {ticketTotal +
+                          (wantToDonate || step === "donation"
+                            ? Math.max(0, donationAmount || 0)
+                            : 0) <=
+                        0
+                          ? "Free"
+                          : `${currency} ${
+                              ticketTotal +
+                              (wantToDonate || step === "donation"
+                                ? Math.max(0, donationAmount || 0)
+                                : 0)
+                            }`}
+                      </span>
+                    </div>
                   </div>
                 ) : (
                   <p className="text-sm text-zinc-500">No tickets selected yet.</p>
                 )}
               </div>
 
-              {buyer && step === "details" && (
+              {buyer && (step === "details" || step === "donation") && (
                 <div
                   className="rounded-2xl border p-6 text-sm"
                   style={{

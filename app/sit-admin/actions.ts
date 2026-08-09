@@ -62,6 +62,7 @@ export async function logoutAdmin(): Promise<void> {
 }
 
 function mapRowToEventConfig(data: any): EventConfig {
+  const meta = (data.metadata || {}) as Record<string, unknown>;
   return {
     slug: data.slug,
     name: data.name,
@@ -74,6 +75,14 @@ function mapRowToEventConfig(data: any): EventConfig {
     enabled: data.enabled !== false,
     paymentEnabled: data.payment_enabled !== false && data.paymentEnabled !== false,
     ticketTemplate: data.ticket_template || data.ticketTemplate || undefined,
+    donationEnabled:
+      meta.donationEnabled === true || data.donation_enabled === true,
+    donationDefaultAmount:
+      meta.donationDefaultAmount != null
+        ? Number(meta.donationDefaultAmount)
+        : data.donation_default_amount != null
+          ? Number(data.donation_default_amount)
+          : undefined,
     ticketTypes: (data.ticket_types || data.ticketTypes || []).map((t: any) => ({
       ...t,
       enabled: t.enabled !== false,
@@ -158,6 +167,20 @@ export async function adminSaveEvent(event: EventConfig): Promise<EventConfig | 
       discountCodes: event.discountCodes || [],
     };
 
+    const meta = {
+      ...((cleanEvent.metadata || {}) as Record<string, unknown>),
+    };
+    if (cleanEvent.donationEnabled) {
+      meta.donationEnabled = true;
+      meta.donationDefaultAmount = Math.max(
+        0,
+        Number(cleanEvent.donationDefaultAmount) || 0
+      );
+    } else {
+      delete meta.donationEnabled;
+      delete meta.donationDefaultAmount;
+    }
+
     // Always include full field set so "remove ticket type / form field" actually clears DB
     const upsertPayload: Record<string, unknown> = {
       slug: cleanEvent.slug,
@@ -174,7 +197,7 @@ export async function adminSaveEvent(event: EventConfig): Promise<EventConfig | 
       discount_codes: cleanEvent.discountCodes,
       ticket_template: cleanEvent.ticketTemplate || null,
       image: cleanEvent.image || null,
-      metadata: cleanEvent.metadata || {},
+      metadata: meta,
     };
 
     const supabaseAdmin = getSupabaseAdmin();
@@ -269,6 +292,13 @@ export async function adminDeleteEvent(
       };
     }
 
+    // 1b) Remove donations for this slug (separate table)
+    try {
+      await supabaseAdmin.from("donations").delete().eq("event_slug", clean);
+    } catch {
+      /* table may not exist yet */
+    }
+
     // 2) Remove pending KPay carts for this event if table exists
     try {
       await supabaseAdmin
@@ -355,6 +385,22 @@ export async function adminGetAllPurchases(filters?: {
     return (data || []) as PurchaseRecord[];
   } catch (err) {
     console.error("[Admin Actions] adminGetAllPurchases error:", err);
+    return [];
+  }
+}
+
+/**
+ * Admin-only: list donations (separate from ticket purchases).
+ */
+export async function adminGetAllDonations(filters?: {
+  eventSlug?: string;
+}): Promise<import("@/types").DonationRecord[]> {
+  try {
+    await requireAdmin();
+    const { getAllDonations } = await import("@/lib/db/donations");
+    return getAllDonations({ eventSlug: filters?.eventSlug });
+  } catch (err) {
+    console.error("[Admin Actions] adminGetAllDonations error:", err);
     return [];
   }
 }

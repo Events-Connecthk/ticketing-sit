@@ -21,6 +21,15 @@ let memoryEvents: EventConfig[] = [];
 
 // Helper: normalize enabled defaults
 function normalizeEvent(raw: any): EventConfig {
+  const meta = (raw.metadata || {}) as Record<string, unknown>;
+  const donationEnabled =
+    meta.donationEnabled === true || raw.donation_enabled === true;
+  const donationDefaultRaw =
+    meta.donationDefaultAmount != null
+      ? Number(meta.donationDefaultAmount)
+      : raw.donation_default_amount != null
+        ? Number(raw.donation_default_amount)
+        : undefined;
   return {
     slug: raw.slug,
     name: raw.name,
@@ -33,6 +42,13 @@ function normalizeEvent(raw: any): EventConfig {
     enabled: raw.enabled !== false,
     paymentEnabled: raw.paymentEnabled !== false && raw.payment_enabled !== false,
     ticketTemplate: raw.ticketTemplate || raw.ticket_template || undefined,
+    donationEnabled: donationEnabled || undefined,
+    donationDefaultAmount:
+      donationEnabled && donationDefaultRaw != null && !Number.isNaN(donationDefaultRaw)
+        ? Math.max(0, donationDefaultRaw)
+        : donationEnabled
+          ? 0
+          : undefined,
     ticketTypes: (raw.ticketTypes || raw.ticket_types || []).map((t: any) => ({
       ...t,
       enabled: t.enabled !== false,
