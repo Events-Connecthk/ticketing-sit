@@ -14,8 +14,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Ticketing System SIT | Professional Event Ticketing",
-  description: "Professional event ticketing platform. Browse events and purchase tickets with ease.",
+  title: "Connect Events",
+  description: "Connect Events. Browse events and purchase tickets with ease.",
   icons: {
     icon: "/favicon.ico",
   },
@@ -42,7 +42,7 @@ export default function RootLayout({
         <header className="border-b bg-white/95 backdrop-blur z-50 sticky top-0 border-[#EDE4D3]">
           <div className="max-w-5xl mx-auto px-4 sm:px-6 h-14 flex items-center text-sm gap-3">
             <a href="/" className="font-semibold tracking-tight text-[#2C2520] truncate min-w-0">
-              Ticketing System SIT
+              Connect Events
             </a>
           </div>
         </header>
@@ -51,8 +51,7 @@ export default function RootLayout({
 
         <footer className="border-t py-8 text-center text-sm" style={{ borderColor: '#EDE4D3', color: '#6B5E50' }}>
           <div className="max-w-5xl mx-auto px-6">
-            <p>© {new Date().getFullYear()} Ticketing System SIT. All rights reserved.</p>
-            <p className="mt-1 text-xs">Professional event ticketing platform.</p>
+            <p>© {new Date().getFullYear()} Connect Events. All rights reserved.</p>
           </div>
         </footer>
 

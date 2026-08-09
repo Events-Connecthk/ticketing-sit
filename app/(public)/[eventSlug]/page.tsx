@@ -436,8 +436,8 @@ export default function EventPage({ params }: EventPageProps) {
                         </span>
                         <span className="block text-xs text-zinc-500 mt-0.5">
                           {hasTicketTypes
-                            ? "Optional — added to your ticket total and tracked separately."
-                            : "You can donate without a ticket. Tracked separately."}
+                            ? "Optional. Added to your total if you leave this checked."
+                            : "Optional. Donate without a ticket if you want."}
                         </span>
                       </span>
                     </label>

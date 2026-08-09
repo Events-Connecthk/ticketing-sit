@@ -8,9 +8,9 @@ export default function Home() {
   return (
     <div className="min-h-[calc(100vh-3.5rem)] flex items-center justify-center px-6" style={{ background: 'linear-gradient(180deg, #FAF8F5 0%, #F5F0E6 100%)' }}>
       <div className="max-w-lg text-center">
-        <h1 className="text-6xl tracking-tighter font-semibold mb-4 text-[#2C2520]">Ticketing System SIT</h1>
+        <h1 className="text-6xl tracking-tighter font-semibold mb-4 text-[#2C2520]">Connect Events</h1>
         <p className="text-xl mb-8" style={{ color: '#6B5E50' }}>
-          A professional platform for managing and selling event tickets.
+          Events and ticketing for Connect.
         </p>
 
         <div className="flex flex-col sm:flex-row gap-3 justify-center">
