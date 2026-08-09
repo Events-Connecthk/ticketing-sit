@@ -131,12 +131,11 @@ export default function EventPage({ params }: EventPageProps) {
   const cartIsFree = chargeTotal <= 0;
 
   /**
-   * Events with ticket types: ticket selection is required (donation is optional add-on).
-   * No ticket types (e.g. free reg + donation): donation or free-reg-only can continue.
+   * Events with ticket types: ticket selection is required.
+   * Donation is always optional (never required to continue).
+   * No ticket types (free registration): always can continue.
    */
-  const canContinueSelection = hasTicketTypes
-    ? totalTickets > 0
-    : effectiveDonation > 0 || event.paymentEnabled === false;
+  const canContinueSelection = hasTicketTypes ? totalTickets > 0 : true;
 
   const handleTicketChange = (newSelections: TicketSelection[]) => {
     setSelections(newSelections);
@@ -167,15 +166,7 @@ export default function EventPage({ params }: EventPageProps) {
       alert("Select at least one ticket to continue.");
       return;
     }
-    if (
-      !hasTicketTypes &&
-      totalTickets === 0 &&
-      effectiveDonation <= 0 &&
-      event.paymentEnabled !== false
-    ) {
-      alert("Add a donation to continue, or contact the organizer.");
-      return;
-    }
+    // Donation is optional: only validate amount if they opted in
     if (wantToDonate && event.donationEnabled && effectiveDonation <= 0) {
       alert("Enter a donation amount greater than 0, or uncheck donation.");
       return;
@@ -199,9 +190,8 @@ export default function EventPage({ params }: EventPageProps) {
     const finalBuyer = buyerData || buyer;
     if (!event || !finalBuyer) return;
     const safeDon = Math.max(0, Number(donAmt) || 0);
-    // Ticketed events require tickets; donation-only only when no ticket types
+    // Ticketed events require tickets. Free reg (no ticket types) can be $0.
     if (hasTicketTypes && totalTickets === 0) return;
-    if (!hasTicketTypes && totalTickets === 0 && safeDon <= 0) return;
 
     const cart = buildCart(finalBuyer, safeDon);
 
@@ -449,9 +439,7 @@ export default function EventPage({ params }: EventPageProps) {
                   >
                     {canContinueSelection
                       ? "Continue"
-                      : hasTicketTypes
-                        ? "Select tickets to continue"
-                        : "Add a donation to continue"}
+                      : "Select tickets to continue"}
                   </button>
                 </div>
               </>
