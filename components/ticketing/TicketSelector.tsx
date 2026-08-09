@@ -9,6 +9,7 @@ import {
   getStockLevel,
   LIMITED_STOCK_THRESHOLD,
 } from "@/lib/tickets/inventory";
+import { formatMoney, roundMoney } from "@/lib/money";
 
 interface TicketSelectorProps {
   ticketTypes: TicketType[];
@@ -52,11 +53,13 @@ export function TicketSelector({
     onChange(next);
   };
 
-  const total = selections.reduce((sum, sel) => {
-    const type = ticketTypes.find((t) => t.id === sel.ticketTypeId);
-    if (!type || type.isFree) return sum;
-    return sum + type.price * sel.quantity;
-  }, 0);
+  const total = roundMoney(
+    selections.reduce((sum, sel) => {
+      const type = ticketTypes.find((t) => t.id === sel.ticketTypeId);
+      if (!type || type.isFree) return sum;
+      return sum + type.price * sel.quantity;
+    }, 0)
+  );
 
   const totalTickets = selections.reduce((s, sel) => s + sel.quantity, 0);
 
@@ -64,7 +67,9 @@ export function TicketSelector({
     <div className="space-y-4">
       {ticketTypes.map((ticket) => {
         const qty = getQuantity(ticket.id);
-        const lineTotal = ticket.isFree ? 0 : ticket.price * qty;
+        const lineTotal = ticket.isFree
+          ? 0
+          : roundMoney(ticket.price * qty);
         const remaining = getRemaining(ticket, soldByType);
         const max = getMaxSelectable(ticket, remaining);
         const level = getStockLevel(remaining);
@@ -94,7 +99,9 @@ export function TicketSelector({
               <div className="flex flex-wrap items-baseline gap-2">
                 <h4 className="font-semibold text-lg">{ticket.name}</h4>
                 <span className="text-sm" style={{ color: "#6B5E50" }}>
-                  {ticket.isFree ? "Free" : `${currency} ${ticket.price}`}
+                  {ticket.isFree
+                    ? "Free"
+                    : `${currency} ${formatMoney(ticket.price)}`}
                 </span>
                 {ticket.isFree && (
                   <span className="text-xs font-semibold uppercase tracking-wide text-emerald-800 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded">
@@ -159,7 +166,7 @@ export function TicketSelector({
                     ? "Free"
                     : "-"
                   : lineTotal > 0
-                    ? `${currency} ${lineTotal}`
+                    ? `${currency} ${formatMoney(lineTotal)}`
                     : "-"}
               </div>
             </div>
@@ -175,7 +182,7 @@ export function TicketSelector({
           {totalTickets} ticket{totalTickets !== 1 ? "s" : ""} selected
         </div>
         <div className="text-xl font-semibold tabular-nums text-[#2C2520]">
-          Total: {currency} {total}
+          Total: {currency} {formatMoney(total)}
         </div>
       </div>
     </div>

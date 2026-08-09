@@ -31,6 +31,7 @@ import { generateTicketPdf } from "../pdf/generate-ticket";
 import { sendConfirmationEmail } from "./email";
 import { loadEventBySlug } from "../config/events";
 import { expandTicketsWithSerials, makeOrderReference } from "../tickets/serials";
+import { roundMoney } from "@/lib/money";
 
 // Prevent double-fulfillment within a single serverless instance
 const processedPaymentRefs = new Map<string, string>(); // paymentRef → orderReference
@@ -113,11 +114,13 @@ export async function processSuccessfulPurchase(
           ? "manual"
           : "kpay");
 
-    const donationAmt = Math.max(0, Number(cart.donationAmount) || 0);
+    const donationAmt = roundMoney(Math.max(0, Number(cart.donationAmount) || 0));
     const ticketAmt =
       cart.ticketAmount != null
-        ? Math.max(0, Number(cart.ticketAmount) || 0)
-        : Math.max(0, (Number(cart.totalAmount) || 0) - donationAmt);
+        ? roundMoney(Math.max(0, Number(cart.ticketAmount) || 0))
+        : roundMoney(
+            Math.max(0, (Number(cart.totalAmount) || 0) - donationAmt)
+          );
 
     const purchaseRecord: Omit<PurchaseRecord, "id"> = {
       bought_at: new Date().toISOString(),

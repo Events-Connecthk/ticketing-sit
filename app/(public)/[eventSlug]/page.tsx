@@ -10,6 +10,7 @@ import { getEventTicketSoldCounts } from "@/app/sit-admin/actions";
 import { getRemaining } from "@/lib/tickets/inventory";
 import { isDiscountCodeActive } from "@/lib/tickets/validity";
 import { getEventTheme } from "@/lib/tickets/event-theme";
+import { formatMoney, roundMoney } from "@/lib/money";
 
 /**
  * Dynamic Event Page
@@ -52,10 +53,11 @@ export default function EventPage({ params }: EventPageProps) {
         const needsSelection =
           hasTickets || Boolean(loaded.donationEnabled);
         setStep(needsSelection ? "tickets" : "details");
-        setWantToDonate(false);
+        // Donation checked by default when enabled (user can uncheck)
+        setWantToDonate(Boolean(loaded.donationEnabled));
         setDonationAmount(
           loaded.donationEnabled
-            ? Math.max(0, Number(loaded.donationDefaultAmount) || 0)
+            ? roundMoney(Math.max(0, Number(loaded.donationDefaultAmount) || 0))
             : 0
         );
       }
@@ -115,17 +117,24 @@ export default function EventPage({ params }: EventPageProps) {
     return { ...sel, effectivePrice: eff.discounted, originalPrice: eff.original, discountName: eff.appliedDiscountName };
   });
 
-  const totalAmount = effectiveSelections.reduce((sum, sel) => sum + (sel.effectivePrice || 0) * sel.quantity, 0);
+  const totalAmount = roundMoney(
+    effectiveSelections.reduce(
+      (sum, sel) => sum + (sel.effectivePrice || 0) * sel.quantity,
+      0
+    )
+  );
   const totalTickets = selections.reduce((s, sel) => s + sel.quantity, 0);
 
-  // Order-level discount code (independent of ticket type)
-  const discountAmount = appliedDiscount ? Math.round(totalAmount * (appliedDiscount.percent / 100)) : 0;
-  const ticketTotal = Math.max(0, totalAmount - discountAmount);
+  // Order-level discount code (independent of ticket type) — always 2 d.p.
+  const discountAmount = appliedDiscount
+    ? roundMoney(totalAmount * (appliedDiscount.percent / 100))
+    : 0;
+  const ticketTotal = roundMoney(Math.max(0, totalAmount - discountAmount));
   const effectiveDonation =
     event.donationEnabled && wantToDonate
-      ? Math.max(0, Number(donationAmount) || 0)
+      ? roundMoney(Math.max(0, Number(donationAmount) || 0))
       : 0;
-  const chargeTotal = ticketTotal + effectiveDonation;
+  const chargeTotal = roundMoney(ticketTotal + effectiveDonation);
   const hasTicketTypes = availableTicketTypes.length > 0;
   /** Free reg with no ticket types and no donation, or zero-charge cart */
   const cartIsFree = chargeTotal <= 0;
@@ -145,8 +154,8 @@ export default function EventPage({ params }: EventPageProps) {
     finalBuyer: BuyerInfo,
     donAmt: number
   ): OrderCart => {
-    const safeDon = Math.max(0, Number(donAmt) || 0);
-    const total = ticketTotal + safeDon;
+    const safeDon = roundMoney(Math.max(0, Number(donAmt) || 0));
+    const total = roundMoney(ticketTotal + safeDon);
     return {
       eventSlug: event!.slug,
       tickets: selections,
@@ -360,9 +369,11 @@ export default function EventPage({ params }: EventPageProps) {
                           setWantToDonate(on);
                           if (on && (!donationAmount || donationAmount <= 0)) {
                             setDonationAmount(
-                              Math.max(
-                                0,
-                                Number(event.donationDefaultAmount) || 0
+                              roundMoney(
+                                Math.max(
+                                  0,
+                                  Number(event.donationDefaultAmount) || 0
+                                )
                               )
                             );
                           }
@@ -397,13 +408,17 @@ export default function EventPage({ params }: EventPageProps) {
                               setDonationAmount(0);
                               return;
                             }
-                            setDonationAmount(Math.max(0, Number(v) || 0));
+                            setDonationAmount(
+                              roundMoney(Math.max(0, Number(v) || 0))
+                            );
                           }}
                           className="w-full max-w-xs border rounded-lg px-3 py-2 text-base font-medium tabular-nums"
                         />
                         <p className="text-xs text-zinc-500 mt-1.5">
                           Default {currency}{" "}
-                          {Math.max(0, Number(event.donationDefaultAmount) || 0)}
+                          {formatMoney(
+                            Math.max(0, Number(event.donationDefaultAmount) || 0)
+                          )}
                           . Change to any amount.
                         </p>
                       </div>
@@ -641,22 +656,37 @@ export default function EventPage({ params }: EventPageProps) {
                         <div key={idx} className="flex justify-between">
                           <span>{type.name} × {sel.quantity}{sel.discountName ? ` (${sel.discountName})` : ''}</span>
                           <span className="font-medium tabular-nums">
-                            {isDiscounted && <span className="line-through text-xs text-zinc-400 mr-1">{currency} {sel.originalPrice! * sel.quantity}</span>}
-                            {currency} {sel.effectivePrice! * sel.quantity}
+                            {isDiscounted && (
+                              <span className="line-through text-xs text-zinc-400 mr-1">
+                                {currency}{" "}
+                                {formatMoney(
+                                  (sel.originalPrice || 0) * sel.quantity
+                                )}
+                              </span>
+                            )}
+                            {currency}{" "}
+                            {formatMoney(
+                              (sel.effectivePrice || 0) * sel.quantity
+                            )}
                           </span>
                         </div>
                       );
                     })}
-                    {appliedDiscount && (
-                      <div className="text-xs text-emerald-600 text-right">
-                        {appliedDiscount.code} (-{appliedDiscount.percent}%)
+                    {appliedDiscount && discountAmount > 0 && (
+                      <div className="flex justify-between text-xs text-emerald-600">
+                        <span>
+                          {appliedDiscount.code} (-{appliedDiscount.percent}%)
+                        </span>
+                        <span className="tabular-nums">
+                          −{currency} {formatMoney(discountAmount)}
+                        </span>
                       </div>
                     )}
                     {effectiveDonation > 0 && (
                       <div className="flex justify-between text-rose-700">
                         <span>Donation</span>
                         <span className="tabular-nums">
-                          {currency} {effectiveDonation}
+                          {currency} {formatMoney(effectiveDonation)}
                         </span>
                       </div>
                     )}
@@ -665,7 +695,7 @@ export default function EventPage({ params }: EventPageProps) {
                       <span>
                         {chargeTotal <= 0
                           ? "Free"
-                          : `${currency} ${chargeTotal}`}
+                          : `${currency} ${formatMoney(chargeTotal)}`}
                       </span>
                     </div>
                   </div>

@@ -20,6 +20,7 @@
 
 import { Resend } from "resend";
 import { EventConfig, EmailSendResult } from "@/types";
+import { formatMoney } from "@/lib/money";
 
 const RESEND_API_KEY = process.env.RESEND_API_KEY || "";
 // Recommended:
@@ -81,7 +82,7 @@ export async function sendConfirmationEmail(
         <p style="margin: 4px 0;"><strong>Location:</strong> ${event.location}</p>
         <p style="margin: 4px 0;"><strong>Tickets:</strong> ${ticketCount}</p>
         <p style="margin: 4px 0; font-size: 18px;"><strong>Total:</strong> ${
-          totalAmount === 0 ? "Free" : `${currency} ${totalAmount}`
+          totalAmount === 0 ? "Free" : `${currency} ${formatMoney(totalAmount)}`
         }</p>
       </div>
 

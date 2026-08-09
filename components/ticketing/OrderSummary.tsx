@@ -2,6 +2,7 @@
 
 import React from "react";
 import { OrderCart, EventConfig } from "@/types";
+import { formatMoney } from "@/lib/money";
 
 interface OrderSummaryProps {
   cart: OrderCart;
@@ -15,6 +16,7 @@ interface OrderSummaryProps {
  */
 export function OrderSummary({ cart, event, compact = false }: OrderSummaryProps) {
   const totalTickets = cart.tickets.reduce((sum, t) => sum + t.quantity, 0);
+  const cur = cart.currency === "FREE" ? "HKD" : cart.currency;
 
   return (
     <div className={`rounded-2xl border card ${compact ? "p-5" : "p-6"}`} style={{ borderColor: '#EDE4D3' }}>
@@ -40,8 +42,7 @@ export function OrderSummary({ cart, event, compact = false }: OrderSummaryProps
                   {ticketType.name} × {sel.quantity}
                 </span>
                 <span className="tabular-nums">
-                  {cart.currency === "FREE" ? "HKD" : cart.currency}{" "}
-                  {(ticketType.price * sel.quantity).toFixed(0)}
+                  {cur} {formatMoney(ticketType.price * sel.quantity)}
                 </span>
               </div>
             );
@@ -50,8 +51,7 @@ export function OrderSummary({ cart, event, compact = false }: OrderSummaryProps
             <div className="flex justify-between py-1 text-rose-700">
               <span>Donation</span>
               <span className="tabular-nums">
-                {cart.currency === "FREE" ? "HKD" : cart.currency}{" "}
-                {Number(cart.donationAmount).toFixed(0)}
+                {cur} {formatMoney(Number(cart.donationAmount))}
               </span>
             </div>
           )}
@@ -63,22 +63,30 @@ export function OrderSummary({ cart, event, compact = false }: OrderSummaryProps
             {(cart.donationAmount ?? 0) > 0 ? " + donation" : ""})
           </span>
           <span className="tabular-nums">
-            {cart.currency === "FREE" ? "Free" : `${cart.currency} ${cart.totalAmount}`}
+            {cart.currency === "FREE"
+              ? "Free"
+              : `${cart.currency} ${formatMoney(cart.totalAmount)}`}
           </span>
         </div>
-        {cart.appliedDiscountCode && cart.discountAmount && (
+        {cart.appliedDiscountCode && (cart.discountAmount ?? 0) > 0 && (
           <div className="text-xs text-emerald-600 text-right -mt-1">
-            {cart.appliedDiscountCode} applied (-{cart.discountAmount})
+            {cart.appliedDiscountCode} applied (−{formatMoney(cart.discountAmount!)})
           </div>
         )}
         {(cart.ticketAmount != null || (cart.donationAmount ?? 0) > 0) &&
           cart.currency !== "FREE" && (
             <div className="text-xs text-zinc-500 text-right space-y-0.5">
               {cart.ticketAmount != null && (
-                <div>Tickets: {cart.currency} {Number(cart.ticketAmount).toFixed(0)}</div>
+                <div>
+                  Tickets: {cart.currency}{" "}
+                  {formatMoney(Number(cart.ticketAmount))}
+                </div>
               )}
               {(cart.donationAmount ?? 0) > 0 && (
-                <div>Donation: {cart.currency} {Number(cart.donationAmount).toFixed(0)}</div>
+                <div>
+                  Donation: {cart.currency}{" "}
+                  {formatMoney(Number(cart.donationAmount))}
+                </div>
               )}
             </div>
           )}

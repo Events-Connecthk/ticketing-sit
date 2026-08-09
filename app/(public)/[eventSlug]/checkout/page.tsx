@@ -12,6 +12,7 @@ import {
   getKpaySessionDebug,
 } from "@/lib/integrations/order.service";
 import { ArrowLeft, CreditCard } from "lucide-react";
+import { formatMoney } from "@/lib/money";
 
 /**
  * Checkout Page
@@ -614,7 +615,7 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
                     : "Processing payment..."
                 : isFreeEvent
                   ? "Register for Free"
-                  : `Pay ${currentCart.currency} ${currentCart.totalAmount} with KPay`}
+                  : `Pay ${currentCart.currency} ${formatMoney(currentCart.totalAmount)} with KPay`}
             </button>
 
             <p className="text-center text-xs text-zinc-500 mt-3">

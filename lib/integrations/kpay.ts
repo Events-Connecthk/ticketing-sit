@@ -17,6 +17,7 @@
 import { readFileSync, existsSync } from "fs";
 import path from "path";
 import { OrderCart, PaymentInitiationResult } from "@/types";
+import { roundMoney } from "@/lib/money";
 import {
   buildOfficialSignatureText,
   buildSignPayload,
@@ -167,10 +168,6 @@ function siteOrigin(): string {
   }
 
   return "http://localhost:3000";
-}
-
-function roundMoney(n: number): number {
-  return Math.round((n + Number.EPSILON) * 100) / 100;
 }
 
 function buildOutTradeNo(): string {

@@ -10,6 +10,7 @@
 import { EventConfig, TicketType } from "@/types";
 import { getEventBySlug as getDbEvent, getAllEvents as getDbEvents } from "../db/events";
 import { hkTodayYmd } from "@/lib/time/hk";
+import { roundMoney } from "@/lib/money";
 
 // Base ticket types (used for default seed)
 const generalAdmission: TicketType = {
@@ -129,7 +130,10 @@ export function getEffectivePrice(
     }
   }
 
-  const discounted = Math.max(0, Math.round(original * (1 - bestDiscount / 100) * 100) / 100);
+  const discounted = Math.max(
+    0,
+    roundMoney(original * (1 - bestDiscount / 100))
+  );
   return {
     original,
     discounted: bestDiscount > 0 ? discounted : original,
