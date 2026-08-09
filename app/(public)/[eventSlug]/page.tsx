@@ -14,14 +14,10 @@ import { getEventTheme } from "@/lib/tickets/event-theme";
 /**
  * Dynamic Event Page
  *
- * Accessible at /at-the-peak (and future slugs).
- * Fully data-driven from lib/config/events.ts
- *
  * Flow:
- *   1. Select tickets → live total
- *   2. Fill buyer details (+ optional “I want to donate” checkbox)
- *   3. If donate checked → donation amount page (default from admin, editable)
- *   4. Proceed to /checkout (or free path) with cart including donationAmount
+ *   1. Select tickets (+ optional donation checkbox + amount on same step)
+ *   2. Fill buyer details
+ *   3. Checkout / free path (donation-only allowed when donation amount > 0)
  */
 
 interface EventPageProps {
@@ -48,9 +44,14 @@ export default function EventPage({ params }: EventPageProps) {
       setEvent(loaded);
       setEventLoading(false);
       if (loaded) {
-        const hasTickets = loaded.ticketTypes && loaded.ticketTypes.length > 0;
-        const needsTicketSelection = hasTickets && loaded.paymentEnabled !== false;
-        setStep(needsTicketSelection ? "tickets" : "details");
+        const hasTickets = (loaded.ticketTypes || []).some(
+          (t) => t.enabled !== false
+        );
+        // Show tickets step if there are tickets to pick, or donation is on
+        // (so free events with no tickets can still donate).
+        const needsSelection =
+          hasTickets || Boolean(loaded.donationEnabled);
+        setStep(needsSelection ? "tickets" : "details");
         setWantToDonate(false);
         setDonationAmount(
           loaded.donationEnabled
@@ -64,7 +65,7 @@ export default function EventPage({ params }: EventPageProps) {
       .catch(() => setSoldByType({}));
   }, [eventSlug]);
 
-  const [step, setStep] = useState<"tickets" | "details" | "donation">("details");
+  const [step, setStep] = useState<"tickets" | "details">("details");
   const [selections, setSelections] = useState<TicketSelection[]>([]);
   const [buyer, setBuyer] = useState<BuyerInfo | null>(null);
   const [customBuyerValues, setCustomBuyerValues] = useState<Record<string, string>>({});
@@ -73,20 +74,10 @@ export default function EventPage({ params }: EventPageProps) {
   const [discountCodeError, setDiscountCodeError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [soldByType, setSoldByType] = useState<Record<string, number>>({});
-  /** User opted in on details form (donation step only if checked) */
+  /** Donation opt-in on tickets step */
   const [wantToDonate, setWantToDonate] = useState(false);
-  /** Donation amount on donation step (any amount user chooses) */
+  /** Editable amount (default from admin) */
   const [donationAmount, setDonationAmount] = useState<number>(0);
-
-  React.useEffect(() => {
-    if (event) {
-      const has = event.ticketTypes && event.ticketTypes.length > 0;
-      const needs = has && event.paymentEnabled !== false;
-      if (!needs && step === "tickets") {
-        setStep("details");
-      }
-    }
-  }, [event, step]);
 
   if (!eventSlug || eventLoading) {
     return <div className="min-h-[60vh] flex items-center justify-center">Loading event...</div>;
@@ -130,15 +121,24 @@ export default function EventPage({ params }: EventPageProps) {
   // Order-level discount code (independent of ticket type)
   const discountAmount = appliedDiscount ? Math.round(totalAmount * (appliedDiscount.percent / 100)) : 0;
   const ticketTotal = Math.max(0, totalAmount - discountAmount);
-  const chargeTotal =
-    ticketTotal + (wantToDonate ? Math.max(0, Number(donationAmount) || 0) : 0);
+  const effectiveDonation =
+    event.donationEnabled && wantToDonate
+      ? Math.max(0, Number(donationAmount) || 0)
+      : 0;
+  const chargeTotal = ticketTotal + effectiveDonation;
+  const hasTicketTypes = availableTicketTypes.length > 0;
+  /** Free reg with no ticket types and no donation, or zero-charge cart */
+  const cartIsFree = chargeTotal <= 0;
+
+  /** Can leave selection step: tickets, or donation amount, or free-reg-only */
+  const canContinueSelection =
+    totalTickets > 0 ||
+    effectiveDonation > 0 ||
+    (!hasTicketTypes && event.paymentEnabled === false);
 
   const handleTicketChange = (newSelections: TicketSelection[]) => {
     setSelections(newSelections);
   };
-
-  // Skip KPay only when nothing to charge (tickets free/zero and no donation)
-  const cartIsFree = chargeTotal <= 0;
 
   const buildCart = (
     finalBuyer: BuyerInfo,
@@ -161,29 +161,22 @@ export default function EventPage({ params }: EventPageProps) {
 
   const handleBuyerSubmit = (data: BuyerInfo) => {
     setBuyer(data);
-    if (totalTickets === 0) {
-      alert("Select at least one ticket.");
+    if (totalTickets === 0 && effectiveDonation <= 0) {
+      if (hasTicketTypes) {
+        alert("Select at least one ticket, or add a donation.");
+        return;
+      }
+      if (event.paymentEnabled !== false) {
+        alert("Select a ticket or donation to continue.");
+        return;
+      }
+      // Free registration-only (no tickets, no donation)
+    }
+    if (wantToDonate && event.donationEnabled && effectiveDonation <= 0) {
+      alert("Enter a donation amount greater than 0, or uncheck donation.");
       return;
     }
-    // Optional donation page after details
-    if (event.donationEnabled && wantToDonate) {
-      setDonationAmount(
-        Math.max(0, Number(event.donationDefaultAmount) || donationAmount || 0)
-      );
-      setStep("donation");
-      return;
-    }
-    finishOrder(data, 0);
-  };
-
-  const handleDonationContinue = () => {
-    if (!buyer) return;
-    const amt = Math.max(0, Number(donationAmount) || 0);
-    if (wantToDonate && amt <= 0) {
-      alert("Enter a donation amount greater than 0, or go back and uncheck donation.");
-      return;
-    }
-    finishOrder(buyer, amt);
+    finishOrder(data, effectiveDonation);
   };
 
   const finishOrder = (buyerData: BuyerInfo, donAmt: number) => {
@@ -200,9 +193,12 @@ export default function EventPage({ params }: EventPageProps) {
     donAmt: number = 0
   ) => {
     const finalBuyer = buyerData || buyer;
-    if (!event || !finalBuyer || totalTickets === 0) return;
+    if (!event || !finalBuyer) return;
+    const safeDon = Math.max(0, Number(donAmt) || 0);
+    // Allow donation-only (no tickets)
+    if (totalTickets === 0 && safeDon <= 0) return;
 
-    const cart = buildCart(finalBuyer, donAmt);
+    const cart = buildCart(finalBuyer, safeDon);
 
     // Safety: free cart should never hit KPay checkout
     if (cart.totalAmount <= 0) {
@@ -223,7 +219,7 @@ export default function EventPage({ params }: EventPageProps) {
     donAmt: number = 0
   ) {
     if (!event) return;
-    // Donation with free tickets still needs payment
+    // Donation still needs payment even if tickets are free / absent
     if (donAmt > 0) {
       await proceedToCheckout(buyerData, donAmt);
       return;
@@ -259,10 +255,6 @@ export default function EventPage({ params }: EventPageProps) {
 
   const goBackToTickets = () => {
     setStep("tickets");
-  };
-
-  const goBackFromDonation = () => {
-    setStep("details");
   };
 
   const theme = getEventTheme(event);
@@ -333,127 +325,143 @@ export default function EventPage({ params }: EventPageProps) {
             {step === "tickets" ? (
               <>
                 <div className="mb-6">
-                  <h2 className="text-2xl font-semibold tracking-tight">Select your tickets</h2>
-                  <p className="text-sm text-zinc-600 mt-1">Choose quantity for each ticket type.</p>
+                  <h2 className="text-2xl font-semibold tracking-tight">
+                    {hasTicketTypes ? "Select your tickets" : "Registration"}
+                  </h2>
+                  <p className="text-sm text-zinc-600 mt-1">
+                    {hasTicketTypes
+                      ? "Choose quantity for each ticket type."
+                      : event.donationEnabled
+                        ? "Optional donation below, then continue with your details."
+                        : "Continue to enter your details."}
+                  </p>
                 </div>
 
-                <TicketSelector
-                  ticketTypes={availableTicketTypes}
-                  selections={selections}
-                  onChange={handleTicketChange}
-                  currency={currency}
-                  soldByType={soldByType}
-                />
+                {hasTicketTypes && (
+                  <TicketSelector
+                    ticketTypes={availableTicketTypes}
+                    selections={selections}
+                    onChange={handleTicketChange}
+                    currency={currency}
+                    soldByType={soldByType}
+                  />
+                )}
+
+                {event.donationEnabled && (
+                  <div
+                    className="mt-6 rounded-2xl border p-5 space-y-3"
+                    style={{
+                      background: "var(--event-surface)",
+                      borderColor: "var(--border)",
+                    }}
+                  >
+                    <label className="flex items-start gap-3 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        className="mt-1 h-4 w-4"
+                        checked={wantToDonate}
+                        onChange={(e) => {
+                          const on = e.target.checked;
+                          setWantToDonate(on);
+                          if (on && (!donationAmount || donationAmount <= 0)) {
+                            setDonationAmount(
+                              Math.max(
+                                0,
+                                Number(event.donationDefaultAmount) || 0
+                              )
+                            );
+                          }
+                        }}
+                      />
+                      <span>
+                        <span className="block text-sm font-medium">
+                          I would like to make a donation
+                        </span>
+                        <span className="block text-xs text-zinc-500 mt-0.5">
+                          Added to your total and tracked separately from tickets.
+                          {!hasTicketTypes &&
+                            " You can donate even without selecting a ticket."}
+                        </span>
+                      </span>
+                    </label>
+                    {wantToDonate && (
+                      <div className="pl-7">
+                        <label className="block text-sm font-medium mb-1">
+                          Donation amount ({currency})
+                        </label>
+                        <input
+                          type="number"
+                          min={1}
+                          step={1}
+                          value={
+                            Number.isFinite(donationAmount) ? donationAmount : ""
+                          }
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            if (v === "") {
+                              setDonationAmount(0);
+                              return;
+                            }
+                            setDonationAmount(Math.max(0, Number(v) || 0));
+                          }}
+                          className="w-full max-w-xs border rounded-lg px-3 py-2 text-base font-medium tabular-nums"
+                        />
+                        <p className="text-xs text-zinc-500 mt-1.5">
+                          Default {currency}{" "}
+                          {Math.max(0, Number(event.donationDefaultAmount) || 0)}
+                          . Change to any amount.
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 <div className="mt-6">
                   <button
                     onClick={() => {
-                      if (totalTickets > 0) setStep("details");
+                      if (!canContinueSelection) return;
+                      if (
+                        wantToDonate &&
+                        event.donationEnabled &&
+                        effectiveDonation <= 0
+                      ) {
+                        alert(
+                          "Enter a donation amount greater than 0, or uncheck donation."
+                        );
+                        return;
+                      }
+                      setStep("details");
                     }}
                     disabled={
-                      totalTickets === 0 ||
-                      availableTicketTypes.every((t) => {
-                        const rem = getRemaining(t, soldByType);
-                        return rem !== null && rem <= 0;
-                      })
+                      !canContinueSelection ||
+                      (hasTicketTypes &&
+                        availableTicketTypes.length > 0 &&
+                        totalTickets === 0 &&
+                        effectiveDonation <= 0 &&
+                        availableTicketTypes.every((t) => {
+                          const rem = getRemaining(t, soldByType);
+                          return rem !== null && rem <= 0;
+                        }))
                     }
                     className="btn-gold w-full rounded-xl py-4 font-medium text-lg disabled:opacity-60 disabled:cursor-not-allowed"
                   >
-                    {totalTickets > 0
+                    {canContinueSelection
                       ? "Continue"
-                      : "Select tickets to continue"}
+                      : hasTicketTypes
+                        ? "Select tickets or donation to continue"
+                        : "Add a donation to continue"}
                   </button>
-                </div>
-              </>
-            ) : step === "donation" ? (
-              <>
-                <div className="mb-6">
-                  <h2 className="text-2xl font-semibold tracking-tight">Make a donation</h2>
-                  <p className="text-sm text-zinc-600 mt-1">
-                    Optional support for this event. You can keep the suggested amount or enter any amount you like.
-                  </p>
-                </div>
-                <div
-                  className="rounded-2xl border p-6 space-y-5"
-                  style={{
-                    background: "var(--event-surface)",
-                    borderColor: "var(--border)",
-                  }}
-                >
-                  <div>
-                    <label className="block text-sm font-medium mb-1">
-                      Donation amount ({currency})
-                    </label>
-                    <input
-                      type="number"
-                      min={1}
-                      step={1}
-                      value={Number.isFinite(donationAmount) ? donationAmount : ""}
-                      onChange={(e) => {
-                        const v = e.target.value;
-                        if (v === "") {
-                          setDonationAmount(0);
-                          return;
-                        }
-                        setDonationAmount(Math.max(0, Number(v) || 0));
-                      }}
-                      className="w-full border rounded-lg px-3 py-3 text-lg font-medium tabular-nums"
-                    />
-                    <p className="text-xs text-zinc-500 mt-2">
-                      Suggested default: {currency}{" "}
-                      {Math.max(0, Number(event.donationDefaultAmount) || 0)}. Change freely.
-                    </p>
-                  </div>
-                  <div className="rounded-xl bg-zinc-50 border px-4 py-3 text-sm space-y-1">
-                    <div className="flex justify-between">
-                      <span>Tickets</span>
-                      <span className="tabular-nums">
-                        {ticketTotal <= 0 ? "Free" : `${currency} ${ticketTotal}`}
-                      </span>
-                    </div>
-                    <div className="flex justify-between text-rose-700">
-                      <span>Donation</span>
-                      <span className="tabular-nums">
-                        {currency} {Math.max(0, donationAmount || 0)}
-                      </span>
-                    </div>
-                    <div className="flex justify-between font-semibold border-t pt-2 mt-1">
-                      <span>Total to pay</span>
-                      <span className="tabular-nums">
-                        {currency}{" "}
-                        {ticketTotal + Math.max(0, donationAmount || 0)}
-                      </span>
-                    </div>
-                  </div>
-                  <div className="flex gap-3 pt-1">
-                    <button
-                      type="button"
-                      onClick={goBackFromDonation}
-                      className="flex-1 rounded-lg border py-3 font-medium"
-                      disabled={isLoading}
-                    >
-                      Back
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleDonationContinue}
-                      disabled={isLoading || Math.max(0, donationAmount || 0) <= 0}
-                      className="btn-gold flex-1 rounded-lg py-3 font-medium disabled:opacity-60"
-                    >
-                      {isLoading
-                        ? "Please wait…"
-                        : ticketTotal + Math.max(0, donationAmount || 0) <= 0
-                          ? "Continue"
-                          : "Continue to payment"}
-                    </button>
-                  </div>
                 </div>
               </>
             ) : (
               <>
                 <div className="mb-6">
                   <h2 className="text-2xl font-semibold tracking-tight">Your details</h2>
-                  <p className="text-sm text-zinc-600 mt-1">We need this information to issue your tickets.</p>
+                  <p className="text-sm text-zinc-600 mt-1">
+                    {totalTickets > 0
+                      ? "We need this information to issue your tickets."
+                      : "We need this information for your registration / donation."}
+                  </p>
                 </div>
 
                 <div
@@ -521,31 +529,6 @@ export default function EventPage({ params }: EventPageProps) {
                         )}
                       </div>
                     ))}
-
-                    {/* Optional donation opt-in (admin enables per event) */}
-                    {event.donationEnabled && (
-                      <div className="pt-2 border-t">
-                        <label className="flex items-start gap-3 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            className="mt-1 h-4 w-4"
-                            checked={wantToDonate}
-                            onChange={(e) => setWantToDonate(e.target.checked)}
-                          />
-                          <span>
-                            <span className="block text-sm font-medium">
-                              I would like to make a donation
-                            </span>
-                            <span className="block text-xs text-zinc-500 mt-0.5">
-                              If checked, you can set the amount on the next step
-                              (suggested {currency}{" "}
-                              {Math.max(0, Number(event.donationDefaultAmount) || 0)}).
-                              Donation is added to your total and tracked separately.
-                            </span>
-                          </span>
-                        </label>
-                      </div>
-                    )}
 
                     {/* Promo / Discount Code (event level) */}
                     {event.discountCodes && event.discountCodes.length > 0 && (
@@ -619,12 +602,24 @@ export default function EventPage({ params }: EventPageProps) {
                     )}
 
                     <div className="flex gap-3 pt-2">
-                      <button type="button" onClick={goBackToTickets} className="flex-1 rounded-lg border py-3 font-medium">Back</button>
-                      <button type="submit" className="btn-gold flex-1 rounded-lg py-3 font-medium" disabled={isLoading}>
-                        {wantToDonate && event.donationEnabled
-                          ? "Continue to donation"
+                      <button
+                        type="button"
+                        onClick={goBackToTickets}
+                        className="flex-1 rounded-lg border py-3 font-medium"
+                      >
+                        Back
+                      </button>
+                      <button
+                        type="submit"
+                        className="btn-gold flex-1 rounded-lg py-3 font-medium"
+                        disabled={isLoading}
+                      >
+                        {isLoading
+                          ? "Please wait…"
                           : cartIsFree
-                            ? "Get free tickets"
+                            ? totalTickets > 0
+                              ? "Get free tickets"
+                              : "Complete registration"
                             : "Proceed to Checkout"}
                       </button>
                     </div>
@@ -646,11 +641,11 @@ export default function EventPage({ params }: EventPageProps) {
               >
                 <div className="uppercase text-xs tracking-[1px] font-medium mb-3" style={{ color: "var(--event-secondary)" }}>Order Summary</div>
 
-                {totalTickets > 0 ? (
+                {totalTickets > 0 || effectiveDonation > 0 ? (
                   <div className="space-y-2 text-sm">
                     {effectiveSelections.map((sel: any, idx) => {
                       const type = availableTicketTypes.find((t) => t.id === sel.ticketTypeId);
-                      if (!type) return null;
+                      if (!type || !sel.quantity) return null;
                       const isDiscounted = sel.effectivePrice && sel.effectivePrice < (sel.originalPrice || type.price);
                       return (
                         <div key={idx} className="flex justify-between">
@@ -667,38 +662,35 @@ export default function EventPage({ params }: EventPageProps) {
                         {appliedDiscount.code} (-{appliedDiscount.percent}%)
                       </div>
                     )}
-                    {(wantToDonate || step === "donation") && (
+                    {effectiveDonation > 0 && (
                       <div className="flex justify-between text-rose-700">
                         <span>Donation</span>
                         <span className="tabular-nums">
-                          {currency} {Math.max(0, donationAmount || 0)}
+                          {currency} {effectiveDonation}
                         </span>
                       </div>
                     )}
                     <div className="border-t pt-3 mt-2 flex justify-between font-semibold">
                       <span>Total</span>
                       <span>
-                        {ticketTotal +
-                          (wantToDonate || step === "donation"
-                            ? Math.max(0, donationAmount || 0)
-                            : 0) <=
-                        0
+                        {chargeTotal <= 0
                           ? "Free"
-                          : `${currency} ${
-                              ticketTotal +
-                              (wantToDonate || step === "donation"
-                                ? Math.max(0, donationAmount || 0)
-                                : 0)
-                            }`}
+                          : `${currency} ${chargeTotal}`}
                       </span>
                     </div>
                   </div>
                 ) : (
-                  <p className="text-sm text-zinc-500">No tickets selected yet.</p>
+                  <p className="text-sm text-zinc-500">
+                    {hasTicketTypes
+                      ? "No tickets selected yet."
+                      : event.donationEnabled
+                        ? "Optional donation available above."
+                        : "Continue to enter your details."}
+                  </p>
                 )}
               </div>
 
-              {buyer && (step === "details" || step === "donation") && (
+              {buyer && step === "details" && (
                 <div
                   className="rounded-2xl border p-6 text-sm"
                   style={{

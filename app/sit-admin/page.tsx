@@ -4195,10 +4195,10 @@ export default function AdminDashboard() {
                     </label>
                   </div>
                   <p className="text-xs text-zinc-600 pl-6">
-                    Buyers see a checkbox after entering details. If they opt in,
-                    they get a donation step with a default amount (they can change
-                    it to any amount). Donation is charged with the order but stored
-                    in a separate donations table.
+                    On the ticket selection step, buyers can check a donation box
+                    and edit the amount (default below; any amount allowed). Works
+                    for free events too — donation-only checkout if no tickets are
+                    selected. Charged with the order; stored in the donations table.
                   </p>
                   {eventForm.donationEnabled && (
                     <div className="pl-6 max-w-xs">
