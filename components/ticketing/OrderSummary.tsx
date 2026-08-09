@@ -35,6 +35,7 @@ export function OrderSummary({ cart, event, compact = false }: OrderSummaryProps
           {cart.tickets.map((sel, idx) => {
             const ticketType = event.ticketTypes.find((t) => t.id === sel.ticketTypeId);
             if (!ticketType) return null;
+            const line = ticketType.price * sel.quantity;
 
             return (
               <div key={idx} className="flex justify-between py-1">
@@ -42,11 +43,30 @@ export function OrderSummary({ cart, event, compact = false }: OrderSummaryProps
                   {ticketType.name} × {sel.quantity}
                 </span>
                 <span className="tabular-nums">
-                  {cur} {formatMoney(ticketType.price * sel.quantity)}
+                  {cur} {formatMoney(line)}
                 </span>
               </div>
             );
           })}
+          {cart.appliedDiscountCode && (cart.discountAmount ?? 0) > 0 && (
+            <div className="flex justify-between py-1 text-red-600 font-medium">
+              <span>
+                {cart.appliedDiscountCode}
+                {cart.ticketAmount != null && cart.discountAmount
+                  ? ` (−${formatMoney(
+                      cart.ticketAmount + cart.discountAmount > 0
+                        ? (cart.discountAmount /
+                            (cart.ticketAmount + cart.discountAmount)) *
+                          100
+                        : 0
+                    )}%)`
+                  : ""}
+              </span>
+              <span className="tabular-nums">
+                −{cur} {formatMoney(cart.discountAmount!)}
+              </span>
+            </div>
+          )}
           {(cart.donationAmount ?? 0) > 0 && (
             <div className="flex justify-between py-1 text-rose-700">
               <span>Donation</span>
@@ -68,11 +88,6 @@ export function OrderSummary({ cart, event, compact = false }: OrderSummaryProps
               : `${cart.currency} ${formatMoney(cart.totalAmount)}`}
           </span>
         </div>
-        {cart.appliedDiscountCode && (cart.discountAmount ?? 0) > 0 && (
-          <div className="text-xs text-emerald-600 text-right -mt-1">
-            {cart.appliedDiscountCode} applied (−{formatMoney(cart.discountAmount!)})
-          </div>
-        )}
         {(cart.ticketAmount != null || (cart.donationAmount ?? 0) > 0) &&
           cart.currency !== "FREE" && (
             <div className="text-xs text-zinc-500 text-right space-y-0.5">

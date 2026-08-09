@@ -9,6 +9,7 @@ import {
   BuyerFormField,
   DiscountCode,
   DonationRecord,
+  SeatDayCapacity,
 } from "@/types";
 import { getAllEvents, isSupabaseConfigured } from "@/lib/db/events";
 import {
@@ -151,6 +152,8 @@ export default function AdminDashboard() {
   const [buyerFormFields, setBuyerFormFields] = useState<BuyerFormField[]>([]);
   const [ticketTypesForm, setTicketTypesForm] = useState<TicketType[]>([]);
   const [discountCodesForm, setDiscountCodesForm] = useState<DiscountCode[]>([]);
+  /** Shared day seating (multi-day tickets deduct from each day) */
+  const [seatDaysForm, setSeatDaysForm] = useState<SeatDayCapacity[]>([]);
 
   // Temporary new ticket type input
   const [newTicket, setNewTicket] = useState<Partial<TicketType>>({
@@ -1152,6 +1155,7 @@ export default function AdminDashboard() {
     setTicketTypesForm([]);
     setBuyerFormFields([]);
     setDiscountCodesForm([]);
+    setSeatDaysForm([]);
     setNewTicket({
       id: "",
       name: "",
@@ -1252,6 +1256,12 @@ export default function AdminDashboard() {
         id: `dc-dup-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
       }))
     );
+    setSeatDaysForm(
+      (ev.seatDays || []).map((s) => ({
+        date: s.date,
+        capacity: s.capacity,
+      }))
+    );
     setNewTicket({
       id: "",
       name: "",
@@ -1307,6 +1317,12 @@ export default function AdminDashboard() {
     setTicketTypesForm([...(ev.ticketTypes || [])]);
     setBuyerFormFields([...(ev.buyerFormFields || [])]);
     setDiscountCodesForm([...(ev.discountCodes || [])]);
+    setSeatDaysForm(
+      (ev.seatDays || []).map((s) => ({
+        date: s.date,
+        capacity: s.capacity,
+      }))
+    );
     setNewTicket({
       id: "",
       name: "",
@@ -1567,6 +1583,15 @@ export default function AdminDashboard() {
       donationDefaultAmount: eventForm.donationEnabled
         ? Math.max(0, Number(eventForm.donationDefaultAmount) || 0)
         : undefined,
+      seatDays:
+        seatDaysForm.length > 0
+          ? seatDaysForm
+              .map((s) => ({
+                date: String(s.date || "").slice(0, 10),
+                capacity: Math.max(0, Number(s.capacity) || 0),
+              }))
+              .filter((s) => /^\d{4}-\d{2}-\d{2}$/.test(s.date))
+          : undefined,
       // Always send arrays so remove/add persists (never leave undefined)
       ticketTypes: [...ticketTypesForm],
       buyerFormFields: [...buyerFormFields],
@@ -4378,6 +4403,130 @@ export default function AdminDashboard() {
                     onChange={(e) => setEventForm({ ...eventForm, paymentEnabled: e.target.checked })}
                   />
                   <label htmlFor="paymentEnabled" className="text-sm">Require payment (uncheck for free registration-only events)</label>
+                </div>
+
+                {/* Shared seating by day (accumulated inventory) */}
+                <div className="md:col-span-2 rounded-xl border border-blue-100 bg-blue-50/40 p-4 space-y-3">
+                  <div>
+                    <div className="text-sm font-medium">
+                      Accumulated seating by day
+                    </div>
+                    <p className="text-xs text-zinc-600 mt-1">
+                      Set total seats for each event day (e.g. 600). Ticket types
+                      use <strong>Valid from / Valid to</strong> to cover one or
+                      more days. A multi-day ticket deducts one seat from every
+                      day it covers. Leave empty for no shared day pool (per-type
+                      stock only).
+                    </p>
+                  </div>
+                  {seatDaysForm.length > 0 && (
+                    <div className="space-y-2">
+                      {seatDaysForm.map((sd, idx) => (
+                        <div
+                          key={idx}
+                          className="flex flex-wrap items-end gap-2"
+                        >
+                          <label className="text-xs text-zinc-500">
+                            Date
+                            <input
+                              type="date"
+                              value={sd.date}
+                              onChange={(e) => {
+                                const next = [...seatDaysForm];
+                                next[idx] = {
+                                  ...next[idx],
+                                  date: e.target.value,
+                                };
+                                setSeatDaysForm(next);
+                              }}
+                              className="mt-0.5 block border rounded-lg px-2 py-1.5 text-sm"
+                            />
+                          </label>
+                          <label className="text-xs text-zinc-500">
+                            Capacity (seats)
+                            <input
+                              type="number"
+                              min={0}
+                              value={sd.capacity}
+                              onChange={(e) => {
+                                const next = [...seatDaysForm];
+                                next[idx] = {
+                                  ...next[idx],
+                                  capacity: Math.max(
+                                    0,
+                                    parseInt(e.target.value) || 0
+                                  ),
+                                };
+                                setSeatDaysForm(next);
+                              }}
+                              className="mt-0.5 block w-28 border rounded-lg px-2 py-1.5 text-sm"
+                            />
+                          </label>
+                          <button
+                            type="button"
+                            className="text-xs text-red-600 border border-red-200 rounded-lg px-2 py-1.5 hover:bg-red-50"
+                            onClick={() =>
+                              setSeatDaysForm(
+                                seatDaysForm.filter((_, i) => i !== idx)
+                              )
+                            }
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      className="text-xs border rounded-lg px-3 py-1.5 hover:bg-white bg-white/80"
+                      onClick={() =>
+                        setSeatDaysForm([
+                          ...seatDaysForm,
+                          {
+                            date: eventForm.date || "",
+                            capacity: 600,
+                          },
+                        ])
+                      }
+                    >
+                      + Add seat day
+                    </button>
+                    {eventForm.date && eventForm.endDate && eventForm.endDate !== eventForm.date && (
+                      <button
+                        type="button"
+                        className="text-xs border rounded-lg px-3 py-1.5 hover:bg-white bg-white/80"
+                        onClick={() => {
+                          // Fill from event start..end (calendar range, max 14 days)
+                          const start = eventForm.date;
+                          const end = eventForm.endDate;
+                          if (!start || !end || end < start) return;
+                          const days: SeatDayCapacity[] = [];
+                          const d = new Date(start + "T12:00:00");
+                          const endD = new Date(end + "T12:00:00");
+                          let n = 0;
+                          while (d <= endD && n < 14) {
+                            const ymd = d.toISOString().slice(0, 10);
+                            if (!seatDaysForm.some((s) => s.date === ymd)) {
+                              days.push({ date: ymd, capacity: 600 });
+                            }
+                            d.setDate(d.getDate() + 1);
+                            n++;
+                          }
+                          if (days.length) {
+                            setSeatDaysForm(
+                              [...seatDaysForm, ...days].sort((a, b) =>
+                                a.date.localeCompare(b.date)
+                              )
+                            );
+                          }
+                        }}
+                      >
+                        + Fill from event dates (600 each)
+                      </button>
+                    )}
+                  </div>
                 </div>
 
                 {/* Optional donation at checkout */}

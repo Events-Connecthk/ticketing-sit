@@ -6,8 +6,8 @@ import { TicketSelector } from "@/components/ticketing";
 import { loadEventBySlug, getEffectivePrice } from "@/lib/config/events";
 import { EventConfig, TicketSelection, BuyerInfo, OrderCart, BuyerFormField } from "@/types";
 import { Calendar, MapPin, Users } from "lucide-react";
-import { getEventTicketSoldCounts } from "@/app/sit-admin/actions";
-import { getRemaining } from "@/lib/tickets/inventory";
+import { getEventInventory } from "@/app/sit-admin/actions";
+import { getRemainingCombined } from "@/lib/tickets/inventory";
 import { isDiscountCodeActive } from "@/lib/tickets/validity";
 import { getEventTheme } from "@/lib/tickets/event-theme";
 import { formatMoney, roundMoney } from "@/lib/money";
@@ -62,9 +62,15 @@ export default function EventPage({ params }: EventPageProps) {
         );
       }
     });
-    getEventTicketSoldCounts(eventSlug)
-      .then(setSoldByType)
-      .catch(() => setSoldByType({}));
+    getEventInventory(eventSlug)
+      .then((inv) => {
+        setSoldByType(inv.soldByType || {});
+        setSoldByDay(inv.soldByDay || {});
+      })
+      .catch(() => {
+        setSoldByType({});
+        setSoldByDay({});
+      });
   }, [eventSlug]);
 
   const [step, setStep] = useState<"tickets" | "details">("details");
@@ -76,6 +82,7 @@ export default function EventPage({ params }: EventPageProps) {
   const [discountCodeError, setDiscountCodeError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [soldByType, setSoldByType] = useState<Record<string, number>>({});
+  const [soldByDay, setSoldByDay] = useState<Record<string, number>>({});
   /** Donation opt-in on tickets step */
   const [wantToDonate, setWantToDonate] = useState(false);
   /** Editable amount (default from admin) */
@@ -348,7 +355,51 @@ export default function EventPage({ params }: EventPageProps) {
                     onChange={handleTicketChange}
                     currency={currency}
                     soldByType={soldByType}
+                    soldByDay={soldByDay}
+                    seatDays={event.seatDays}
                   />
+                )}
+
+                {event.seatDays && event.seatDays.length > 0 && (
+                  <div className="mt-4 rounded-xl border bg-blue-50/50 border-blue-100 px-4 py-3 text-xs text-blue-900 space-y-1">
+                    <div className="font-medium">Seating by day</div>
+                    {event.seatDays.map((sd) => {
+                      const used = soldByDay[sd.date] || 0;
+                      const left = Math.max(0, Number(sd.capacity) - used);
+                      // seats reserved by current cart on this day
+                      let cartUse = 0;
+                      for (const sel of selections) {
+                        const tt = availableTicketTypes.find(
+                          (t) => t.id === sel.ticketTypeId
+                        );
+                        if (!tt || !sel.quantity) continue;
+                        const from = tt.validFrom || tt.validTo;
+                        const to = tt.validTo || tt.validFrom;
+                        const covers =
+                          !from && !to
+                            ? true
+                            : sd.date >= (from || sd.date) &&
+                              sd.date <= (to || from || sd.date);
+                        if (covers) cartUse += sel.quantity;
+                      }
+                      const afterCart = Math.max(0, left - cartUse);
+                      return (
+                        <div
+                          key={sd.date}
+                          className="flex justify-between tabular-nums gap-4"
+                        >
+                          <span>{sd.date}</span>
+                          <span>
+                            {afterCart} / {sd.capacity} seats left
+                            {cartUse > 0 ? ` (${cartUse} in cart)` : ""}
+                          </span>
+                        </div>
+                      );
+                    })}
+                    <p className="text-blue-800/70 pt-0.5">
+                      Multi-day tickets use one seat on each day they cover.
+                    </p>
+                  </div>
                 )}
 
                 {event.donationEnabled && (
@@ -446,7 +497,14 @@ export default function EventPage({ params }: EventPageProps) {
                       !canContinueSelection ||
                       (hasTicketTypes &&
                         availableTicketTypes.every((t) => {
-                          const rem = getRemaining(t, soldByType);
+                          const rem = getRemainingCombined(
+                            t,
+                            soldByType,
+                            soldByDay,
+                            event.seatDays,
+                            selections,
+                            availableTicketTypes
+                          );
                           return rem !== null && rem <= 0;
                         }))
                     }
@@ -651,31 +709,49 @@ export default function EventPage({ params }: EventPageProps) {
                     {effectiveSelections.map((sel: any, idx) => {
                       const type = availableTicketTypes.find((t) => t.id === sel.ticketTypeId);
                       if (!type || !sel.quantity) return null;
-                      const isDiscounted = sel.effectivePrice && sel.effectivePrice < (sel.originalPrice || type.price);
+                      const orig = (sel.originalPrice ?? type.price) * sel.quantity;
+                      const disc = (sel.effectivePrice ?? type.price) * sel.quantity;
+                      const isDiscounted = disc < orig - 0.001;
+                      const pct =
+                        isDiscounted && orig > 0
+                          ? roundMoney(((orig - disc) / orig) * 100)
+                          : 0;
                       return (
-                        <div key={idx} className="flex justify-between">
-                          <span>{type.name} × {sel.quantity}{sel.discountName ? ` (${sel.discountName})` : ''}</span>
-                          <span className="font-medium tabular-nums">
-                            {isDiscounted && (
-                              <span className="line-through text-xs text-zinc-400 mr-1">
-                                {currency}{" "}
-                                {formatMoney(
-                                  (sel.originalPrice || 0) * sel.quantity
-                                )}
+                        <div key={idx} className="flex justify-between gap-2">
+                          <span>
+                            {type.name} × {sel.quantity}
+                            {sel.discountName ? (
+                              <span className="text-red-600 text-xs ml-1">
+                                ({sel.discountName})
                               </span>
-                            )}
-                            {currency}{" "}
-                            {formatMoney(
-                              (sel.effectivePrice || 0) * sel.quantity
+                            ) : null}
+                          </span>
+                          <span className="font-medium tabular-nums text-right">
+                            {isDiscounted ? (
+                              <>
+                                <span className="line-through text-xs text-zinc-400 mr-1">
+                                  {currency} {formatMoney(orig)}
+                                </span>
+                                <span className="text-red-600 text-xs mr-1">
+                                  −{formatMoney(pct)}%
+                                </span>
+                                <span>
+                                  {currency} {formatMoney(disc)}
+                                </span>
+                              </>
+                            ) : (
+                              <>
+                                {currency} {formatMoney(disc)}
+                              </>
                             )}
                           </span>
                         </div>
                       );
                     })}
                     {appliedDiscount && discountAmount > 0 && (
-                      <div className="flex justify-between text-xs text-emerald-600">
+                      <div className="flex justify-between text-sm text-red-600 font-medium">
                         <span>
-                          {appliedDiscount.code} (-{appliedDiscount.percent}%)
+                          {appliedDiscount.code} (−{appliedDiscount.percent}%)
                         </span>
                         <span className="tabular-nums">
                           −{currency} {formatMoney(discountAmount)}

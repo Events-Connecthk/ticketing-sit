@@ -59,6 +59,14 @@ export interface DiscountCode {
   validUntil?: string;
 }
 
+/** Per-calendar-day seat pool (shared across ticket types covering that day). */
+export interface SeatDayCapacity {
+  /** YYYY-MM-DD (Hong Kong event day) */
+  date: string;
+  /** Total seats available that day (shared) */
+  capacity: number;
+}
+
 export interface EventConfig {
   slug: string;
   name: string;
@@ -83,6 +91,11 @@ export interface EventConfig {
   donationEnabled?: boolean;
   /** Default donation amount shown to buyer (they can change it) */
   donationDefaultAmount?: number;
+  /**
+   * Shared seating by day (stored in metadata.seatDays).
+   * A multi-day ticket (validFrom–validTo spanning days) deducts 1 seat from each day it covers.
+   */
+  seatDays?: SeatDayCapacity[];
   // Optional metadata for future extensibility
   metadata?: Record<string, unknown>;
 }

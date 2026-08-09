@@ -30,6 +30,17 @@ function normalizeEvent(raw: any): EventConfig {
       : raw.donation_default_amount != null
         ? Number(raw.donation_default_amount)
         : undefined;
+  const seatDaysRaw = Array.isArray(meta.seatDays)
+    ? meta.seatDays
+    : Array.isArray(raw.seatDays)
+      ? raw.seatDays
+      : [];
+  const seatDays = seatDaysRaw
+    .map((s: any) => ({
+      date: String(s?.date || "").slice(0, 10),
+      capacity: Math.max(0, Number(s?.capacity) || 0),
+    }))
+    .filter((s: { date: string }) => /^\d{4}-\d{2}-\d{2}$/.test(s.date));
   return {
     slug: raw.slug,
     name: raw.name,
@@ -49,6 +60,7 @@ function normalizeEvent(raw: any): EventConfig {
         : donationEnabled
           ? 0
           : undefined,
+    seatDays: seatDays.length ? seatDays : undefined,
     ticketTypes: (raw.ticketTypes || raw.ticket_types || []).map((t: any) => ({
       ...t,
       enabled: t.enabled !== false,

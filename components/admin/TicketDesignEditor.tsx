@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   TicketDesign,
   DesignElement,
@@ -44,9 +44,38 @@ export function TicketDesignEditor({ value, onChange, onUploadImage }: Props) {
     origH: number;
   } | null>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
+  const stageRef = useRef<HTMLDivElement>(null);
   const sample = useMemo(() => sampleTicketData(), []);
 
-  const scale = PX_PER_MM_SCREEN;
+  /** Fit canvas into stage while keeping true mm proportions (matches PDF aspect). */
+  const [stageSize, setStageSize] = useState({ w: 640, h: 520 });
+  useEffect(() => {
+    const el = stageRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver((entries) => {
+      const cr = entries[0]?.contentRect;
+      if (!cr) return;
+      setStageSize({
+        w: Math.max(200, cr.width),
+        h: Math.max(240, cr.height),
+      });
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  const pad = 24;
+  const fitScale = useMemo(() => {
+    const wMm = Math.max(20, design.canvas.widthMm || 20);
+    const hMm = Math.max(20, design.canvas.heightMm || 20);
+    const availW = Math.max(120, stageSize.w - pad * 2);
+    const availH = Math.max(160, stageSize.h - pad * 2);
+    const s = Math.min(availW / wMm, availH / hMm);
+    // Cap so tiny tickets aren't huge; floor so huge tickets still visible
+    return Math.min(PX_PER_MM_SCREEN * 1.35, Math.max(0.9, s));
+  }, [design.canvas.widthMm, design.canvas.heightMm, stageSize.w, stageSize.h]);
+
+  const scale = fitScale;
   const cw = design.canvas.widthMm * scale;
   const ch = design.canvas.heightMm * scale;
 
@@ -279,44 +308,42 @@ export function TicketDesignEditor({ value, onChange, onUploadImage }: Props) {
           <option value="portrait">Portrait</option>
           <option value="landscape">Landscape</option>
         </select>
-        {design.canvas.preset === "Custom" && (
-          <>
-            <label className="text-xs text-zinc-500">
-              W mm
-              <input
-                type="number"
-                className="ml-1 w-16 border rounded px-1 py-0.5"
-                value={design.canvas.widthMm}
-                onChange={(e) =>
-                  setDesign({
-                    ...design,
-                    canvas: {
-                      ...design.canvas,
-                      widthMm: Math.max(20, Number(e.target.value) || 20),
-                    },
-                  })
-                }
-              />
-            </label>
-            <label className="text-xs text-zinc-500">
-              H mm
-              <input
-                type="number"
-                className="ml-1 w-16 border rounded px-1 py-0.5"
-                value={design.canvas.heightMm}
-                onChange={(e) =>
-                  setDesign({
-                    ...design,
-                    canvas: {
-                      ...design.canvas,
-                      heightMm: Math.max(20, Number(e.target.value) || 20),
-                    },
-                  })
-                }
-              />
-            </label>
-          </>
-        )}
+        <label className="text-xs text-zinc-500">
+          W mm
+          <input
+            type="number"
+            className="ml-1 w-16 border rounded px-1 py-0.5"
+            value={Math.round(design.canvas.widthMm * 10) / 10}
+            onChange={(e) =>
+              setDesign({
+                ...design,
+                canvas: {
+                  ...design.canvas,
+                  preset: "Custom",
+                  widthMm: Math.max(20, Number(e.target.value) || 20),
+                },
+              })
+            }
+          />
+        </label>
+        <label className="text-xs text-zinc-500">
+          H mm
+          <input
+            type="number"
+            className="ml-1 w-16 border rounded px-1 py-0.5"
+            value={Math.round(design.canvas.heightMm * 10) / 10}
+            onChange={(e) =>
+              setDesign({
+                ...design,
+                canvas: {
+                  ...design.canvas,
+                  preset: "Custom",
+                  heightMm: Math.max(20, Number(e.target.value) || 20),
+                },
+              })
+            }
+          />
+        </label>
         <span
           className={`text-xs px-2 py-0.5 rounded-full ${
             design.status === "published"
@@ -434,19 +461,28 @@ export function TicketDesignEditor({ value, onChange, onUploadImage }: Props) {
           </button>
         </div>
 
-        {/* Canvas */}
+        {/* Canvas stage — size changes update visible ticket proportions */}
         <div
-          className="lg:col-span-7 overflow-auto p-4 bg-zinc-200/80 flex justify-center items-start"
+          ref={stageRef}
+          className="lg:col-span-7 overflow-auto p-4 bg-zinc-200/80 flex flex-col items-center min-h-[420px] h-[min(70vh,640px)]"
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
           onPointerLeave={onPointerUp}
         >
+          <div className="text-[10px] text-zinc-600 mb-2 tabular-nums shrink-0">
+            {design.canvas.widthMm.toFixed(1)} × {design.canvas.heightMm.toFixed(1)}{" "}
+            mm · {design.canvas.orientation} · {design.canvas.preset} · scale{" "}
+            {scale.toFixed(2)} px/mm
+          </div>
           <div
             ref={canvasRef}
-            className="relative shadow-xl bg-white"
+            key={`canvas-${design.canvas.widthMm}-${design.canvas.heightMm}-${design.canvas.orientation}`}
+            className="relative shadow-xl bg-white shrink-0"
             style={{
               width: cw,
               height: ch,
+              maxWidth: "100%",
+              aspectRatio: `${design.canvas.widthMm} / ${design.canvas.heightMm}`,
               backgroundColor: design.background.color,
               backgroundImage: design.background.imageUrl
                 ? `url(${design.background.imageUrl})`
@@ -462,6 +498,7 @@ export function TicketDesignEditor({ value, onChange, onUploadImage }: Props) {
               backgroundPosition: `${design.background.positionX}% ${design.background.positionY}%`,
               backgroundRepeat: "no-repeat",
               opacity: 1,
+              transition: "width 0.15s ease, height 0.15s ease",
             }}
             onClick={() => setSelectedId(null)}
           >

@@ -83,6 +83,20 @@ function mapRowToEventConfig(data: any): EventConfig {
         : data.donation_default_amount != null
           ? Number(data.donation_default_amount)
           : undefined,
+    seatDays: (() => {
+      const raw = Array.isArray(meta.seatDays)
+        ? meta.seatDays
+        : Array.isArray(data.seatDays)
+          ? data.seatDays
+          : [];
+      const days = raw
+        .map((s: any) => ({
+          date: String(s?.date || "").slice(0, 10),
+          capacity: Math.max(0, Number(s?.capacity) || 0),
+        }))
+        .filter((s: { date: string }) => /^\d{4}-\d{2}-\d{2}$/.test(s.date));
+      return days.length ? days : undefined;
+    })(),
     ticketTypes: (data.ticket_types || data.ticketTypes || []).map((t: any) => ({
       ...t,
       enabled: t.enabled !== false,
@@ -101,28 +115,53 @@ function mapRowToEventConfig(data: any): EventConfig {
 export async function getEventTicketSoldCounts(
   eventSlug: string
 ): Promise<Record<string, number>> {
-  if (!eventSlug) return {};
+  const inv = await getEventInventory(eventSlug);
+  return inv.soldByType;
+}
+
+/**
+ * Public inventory: sold by ticket type + sold by seat day (shared capacity).
+ */
+export async function getEventInventory(eventSlug: string): Promise<{
+  soldByType: Record<string, number>;
+  soldByDay: Record<string, number>;
+}> {
+  const empty = { soldByType: {}, soldByDay: {} };
+  if (!eventSlug) return empty;
   try {
+    const { countSoldByTicketType, countSoldBySeatDay } = await import(
+      "@/lib/tickets/inventory"
+    );
+    const { loadEventBySlug } = await import("@/lib/config/events");
+    const event = await loadEventBySlug(eventSlug);
+
+    let rows: any[] = [];
     const supabaseAdmin = getSupabaseAdmin();
     if (!supabaseAdmin) {
       const { getAllPurchases } = await import("@/lib/db/purchases");
-      const { countSoldByTicketType } = await import("@/lib/tickets/inventory");
-      const rows = await getAllPurchases({ eventSlug });
-      return countSoldByTicketType(rows);
+      rows = await getAllPurchases({ eventSlug });
+    } else {
+      const { data, error } = await supabaseAdmin
+        .from("purchases")
+        .select("ticket_breakdown, number_of_tickets")
+        .eq("event_slug", eventSlug);
+      if (error) {
+        console.error("[Admin Actions] getEventInventory:", error);
+        return empty;
+      }
+      rows = data || [];
     }
-    const { data, error } = await supabaseAdmin
-      .from("purchases")
-      .select("ticket_breakdown, number_of_tickets")
-      .eq("event_slug", eventSlug);
-    if (error) {
-      console.error("[Admin Actions] getEventTicketSoldCounts:", error);
-      return {};
-    }
-    const { countSoldByTicketType } = await import("@/lib/tickets/inventory");
-    return countSoldByTicketType(data || []);
+
+    const soldByType = countSoldByTicketType(rows);
+    const soldByDay = countSoldBySeatDay(
+      rows,
+      event?.ticketTypes || [],
+      event?.seatDays
+    );
+    return { soldByType, soldByDay };
   } catch (err) {
-    console.error("[Admin Actions] getEventTicketSoldCounts error:", err);
-    return {};
+    console.error("[Admin Actions] getEventInventory error:", err);
+    return empty;
   }
 }
 
@@ -179,6 +218,18 @@ export async function adminSaveEvent(event: EventConfig): Promise<EventConfig | 
     } else {
       delete meta.donationEnabled;
       delete meta.donationDefaultAmount;
+    }
+
+    if (cleanEvent.seatDays && cleanEvent.seatDays.length > 0) {
+      meta.seatDays = cleanEvent.seatDays
+        .map((s) => ({
+          date: String(s.date || "").slice(0, 10),
+          capacity: Math.max(0, Number(s.capacity) || 0),
+        }))
+        .filter((s) => /^\d{4}-\d{2}-\d{2}$/.test(s.date));
+      if (!(meta.seatDays as unknown[]).length) delete meta.seatDays;
+    } else {
+      delete meta.seatDays;
     }
 
     // Always include full field set so "remove ticket type / form field" actually clears DB
