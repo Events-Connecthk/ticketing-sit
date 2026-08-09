@@ -53,12 +53,10 @@ export function TicketSelector({
     );
 
   const updateQuantity = (ticket: TicketType, newQuantity: number) => {
+    // remainingFor excludes this type's own cart line, so it is the absolute max
+    // you can select of this type (not "remaining + current").
     const remaining = remainingFor(ticket);
-    // remaining already excludes this type's cart qty, so max is remaining + current
-    const current = getQuantity(ticket.id);
-    const effectiveRemaining =
-      remaining === null ? null : remaining + current;
-    const max = getMaxSelectable(ticket, effectiveRemaining);
+    const max = getMaxSelectable(ticket, remaining);
     const clamped = Math.max(0, Math.min(newQuantity, max));
 
     let next = [...selections];
@@ -90,14 +88,22 @@ export function TicketSelector({
     <div className="space-y-4">
       {ticketTypes.map((ticket) => {
         const qty = getQuantity(ticket.id);
-        const remaining = remainingFor(ticket);
-        // remaining is seats left after cart (excluding this type); add back current for display/stock
+        // Max available of this type (ignores own cart line, accounts for other types in cart)
+        const maxAvailable = remainingFor(ticket);
+        // How many more can still be added after current selection
         const displayRemaining =
-          remaining === null ? null : remaining + qty;
-        const max = getMaxSelectable(ticket, displayRemaining);
-        const level = getStockLevel(displayRemaining);
+          maxAvailable === null ? null : Math.max(0, maxAvailable - qty);
+        const max = getMaxSelectable(ticket, maxAvailable);
+        // Sold out only if nothing can be bought at all (not merely fully selected)
+        const level = getStockLevel(
+          maxAvailable === null ? null : maxAvailable
+        );
         const soldOut = level === "sold_out";
-        const limited = level === "limited";
+        const limited =
+          level === "limited" ||
+          (displayRemaining !== null &&
+            displayRemaining > 0 &&
+            displayRemaining <= LIMITED_STOCK_THRESHOLD);
 
         const pricing = getEffectivePrice(ticket, new Date(), Math.max(1, qty || 1));
         const unitOriginal = pricing.original;
