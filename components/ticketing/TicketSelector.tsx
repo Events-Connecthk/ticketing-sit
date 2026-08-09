@@ -88,22 +88,18 @@ export function TicketSelector({
     <div className="space-y-4">
       {ticketTypes.map((ticket) => {
         const qty = getQuantity(ticket.id);
-        // Max available of this type (ignores own cart line, accounts for other types in cart)
+        // Absolute max of this type (shared day pool includes other types in cart)
         const maxAvailable = remainingFor(ticket);
-        // How many more can still be added after current selection
+        // Seats still free for this type after current cart line
         const displayRemaining =
           maxAvailable === null ? null : Math.max(0, maxAvailable - qty);
         const max = getMaxSelectable(ticket, maxAvailable);
-        // Sold out only if nothing can be bought at all (not merely fully selected)
-        const level = getStockLevel(
-          maxAvailable === null ? null : maxAvailable
-        );
-        const soldOut = level === "sold_out";
+        // Sold out if absolute max is 0 (cannot buy even with empty own line)
+        const soldOut = maxAvailable !== null && maxAvailable <= 0;
         const limited =
-          level === "limited" ||
-          (displayRemaining !== null &&
-            displayRemaining > 0 &&
-            displayRemaining <= LIMITED_STOCK_THRESHOLD);
+          !soldOut &&
+          displayRemaining !== null &&
+          displayRemaining <= LIMITED_STOCK_THRESHOLD;
 
         const pricing = getEffectivePrice(ticket, new Date(), Math.max(1, qty || 1));
         const unitOriginal = pricing.original;
@@ -193,14 +189,13 @@ export function TicketSelector({
               <p className="mt-1 text-xs text-amber-700">
                 Max {ticket.maxPerOrder ?? 6} per order
               </p>
-              {/* Live availability on the card (updates as qty changes) */}
+              {/* Live shared-pool availability (other types in cart count too) */}
               {maxAvailable != null && (
                 <p
                   className={`mt-1.5 text-sm font-semibold tabular-nums ${
                     soldOut
                       ? "text-red-700"
-                      : displayRemaining != null &&
-                          displayRemaining <= LIMITED_STOCK_THRESHOLD
+                      : limited
                         ? "text-amber-800"
                         : "text-emerald-800"
                   }`}
@@ -210,7 +205,7 @@ export function TicketSelector({
                     : `${displayRemaining} seat${
                         displayRemaining === 1 ? "" : "s"
                       } left`}
-                  {qty > 0 && !soldOut ? (
+                  {qty > 0 ? (
                     <span className="font-normal text-zinc-500">
                       {" "}
                       · {qty} in cart

@@ -122,10 +122,33 @@ export function countSoldBySeatDay(
 }
 
 /**
- * Remaining for a ticket type considering:
- * 1) per-type quantityAvailable
- * 2) shared seat-day capacities (min remaining across days this type covers)
- * 3) other tickets already in the cart (shared day pool)
+ * Seats taken in the cart per event day (all ticket types in cart).
+ * Multi-day lines add their qty to every day they cover.
+ */
+export function cartUseByDay(
+  cart: TicketSelection[],
+  allTypes: TicketType[],
+  seatDayDates: string[]
+): Record<string, number> {
+  const typeMap = new Map(allTypes.map((t) => [t.id, t]));
+  const use: Record<string, number> = {};
+  for (const sel of cart || []) {
+    const tt = typeMap.get(sel.ticketTypeId);
+    if (!tt) continue;
+    const q = Math.max(0, Math.floor(Number(sel.quantity) || 0));
+    if (q <= 0) continue;
+    for (const day of daysCoveredByTicket(tt, seatDayDates)) {
+      use[day] = (use[day] || 0) + q;
+    }
+  }
+  return use;
+}
+
+/**
+ * Max quantity of `ticket` that can be in the cart (absolute, not "more").
+ * Shared day pool: every cart line (including other types) that covers a day
+ * reduces that day's free seats. Multi-day tickets therefore lower Day 1 / Day 2
+ * availability on those cards too.
  *
  * null = unlimited on all axes
  */
@@ -139,47 +162,72 @@ export function getRemainingCombined(
 ): number | null {
   const typeRem = getRemaining(ticket, soldByType);
 
-  const seatDates = (seatDays || []).map((s) => s.date).filter(Boolean);
+  const seatDates = (seatDays || [])
+    .map((s) => String(s.date || "").slice(0, 10))
+    .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d));
   const capByDay = new Map(
-    (seatDays || []).map((s) => [s.date, Math.max(0, Number(s.capacity) || 0)])
+    (seatDays || []).map((s) => [
+      String(s.date || "").slice(0, 10),
+      Math.max(0, Number(s.capacity) || 0),
+    ])
   );
 
   if (!seatDates.length || !capByDay.size) {
-    return typeRem;
-  }
-
-  const typeMap = new Map(allTypes.map((t) => [t.id, t]));
-  // Seats reserved by other cart lines (exclude this ticket type)
-  const cartDayUse: Record<string, number> = {};
-  for (const sel of cart) {
-    if (sel.ticketTypeId === ticket.id) continue;
-    const tt = typeMap.get(sel.ticketTypeId);
-    if (!tt) continue;
-    const q = Math.max(0, Number(sel.quantity) || 0);
-    if (q <= 0) continue;
-    for (const day of daysCoveredByTicket(tt, seatDates)) {
-      cartDayUse[day] = (cartDayUse[day] || 0) + q;
-    }
+    // No shared day pool: only per-type stock, minus this type already in cart
+    if (typeRem === null) return null;
+    const own = Math.max(
+      0,
+      Number(
+        cart.find((c) => c.ticketTypeId === ticket.id)?.quantity || 0
+      )
+    );
+    // Return absolute max for this type (sold already in typeRem)
+    return typeRem + own;
   }
 
   const covered = daysCoveredByTicket(ticket, seatDates);
   if (covered.length === 0) {
-    return typeRem;
+    if (typeRem === null) return null;
+    const own = Math.max(
+      0,
+      Number(
+        cart.find((c) => c.ticketTypeId === ticket.id)?.quantity || 0
+      )
+    );
+    return typeRem + own;
   }
 
-  let seatRem = Infinity;
+  const cartDay = cartUseByDay(cart, allTypes, seatDates);
+  const ownQty = Math.max(
+    0,
+    Math.floor(
+      Number(cart.find((c) => c.ticketTypeId === ticket.id)?.quantity || 0)
+    )
+  );
+
+  // Free seats per day AFTER full cart, then add back this type's own use so
+  // result is "max total qty of this type allowed" (not "how many more").
+  let seatMax = Infinity;
   for (const day of covered) {
     const cap = capByDay.get(day);
     if (cap == null) continue;
-    const used =
-      (soldByDay[day] || 0) + (cartDayUse[day] || 0);
-    seatRem = Math.min(seatRem, Math.max(0, cap - used));
+    const sold = soldByDay[day] || 0;
+    const inCart = cartDay[day] || 0;
+    // Own contribution on this day (only if this type covers it — it does)
+    const freeAfterOthers = Math.max(0, cap - sold - inCart + ownQty);
+    seatMax = Math.min(seatMax, freeAfterOthers);
   }
 
-  if (!Number.isFinite(seatRem)) {
-    return typeRem;
+  if (!Number.isFinite(seatMax)) {
+    if (typeRem === null) return null;
+    return typeRem + ownQty;
   }
 
-  if (typeRem === null) return seatRem;
-  return Math.max(0, Math.min(typeRem, seatRem));
+  // Type stock: remaining inventory for this type + already in cart = absolute max
+  let typeMax = Infinity;
+  if (typeRem !== null) {
+    typeMax = typeRem + ownQty;
+  }
+
+  return Math.max(0, Math.min(seatMax, typeMax));
 }
