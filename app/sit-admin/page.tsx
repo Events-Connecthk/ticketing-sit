@@ -14,6 +14,7 @@ import {
 import { getAllEvents, isSupabaseConfigured } from "@/lib/db/events";
 import {
   adminSaveEvent,
+  adminSaveEventDetailed,
   adminGetAllEvents,
   adminDeleteEvent,
   adminGetAllPurchases,
@@ -53,6 +54,7 @@ import {
   type TicketDesign,
 } from "@/lib/tickets/ticket-design";
 import { TicketDesignEditor } from "@/components/admin/TicketDesignEditor";
+import { buildDayCapacityRows } from "@/lib/tickets/capacity";
 
 /**
  * Admin Dashboard
@@ -519,6 +521,11 @@ export default function AdminDashboard() {
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([date, v]) => ({ date, ...v }));
 
+    // FR 6.6: per event-day capacity (shared pool), derived remaining
+    const dayCapacityRows = event
+      ? buildDayCapacityRows(event, rows)
+      : [];
+
     return {
       event,
       orderCount: rows.length,
@@ -531,6 +538,7 @@ export default function AdminDashboard() {
       donationEnabled: Boolean(event?.donationEnabled),
       typeRows,
       timeline,
+      dayCapacityRows,
     };
   }
 
@@ -1614,7 +1622,13 @@ export default function AdminDashboard() {
     };
 
     try {
-      const saved = await adminSaveEvent(newEvent);
+      const result = await adminSaveEventDetailed(newEvent);
+      if (!result.ok) {
+        toast.error(result.error || "Could not save event.");
+        alert(result.error || "Could not save event.");
+        return;
+      }
+      const saved = result.event;
       if (saved) {
         // Close first so UI never looks "stuck" on the form
         setShowEventModal(false);
@@ -2053,7 +2067,7 @@ export default function AdminDashboard() {
                   </h2>
                   <p className="text-sm text-zinc-600 mt-1 max-w-xl">
                     Tickets, inventory, ticket revenue, donations, and charts.
-                    Admin only — does not change checkout.
+                    Admin only. Does not change checkout.
                   </p>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
@@ -2197,6 +2211,78 @@ export default function AdminDashboard() {
                       </div>
                     ))}
                   </div>
+
+                  {/* FR 6.6: per event-day seating */}
+                  {dash.dayCapacityRows && dash.dayCapacityRows.length > 0 && (
+                    <div className="dash-glass-card p-4 sm:p-6">
+                      <div className="flex flex-wrap items-end justify-between gap-2 mb-3">
+                        <div>
+                          <h3 className="font-semibold text-sm text-zinc-900">
+                            Seating by event day
+                          </h3>
+                          <p className="text-xs text-zinc-500 mt-0.5">
+                            Shared capacity. Multi-day tickets count on every day they cover.
+                            Remaining = capacity minus sold (derived, not a stored counter).
+                          </p>
+                        </div>
+                        <span className="text-[11px] text-zinc-500">
+                          Low stock under 10% remaining
+                        </span>
+                      </div>
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm min-w-[520px]">
+                          <thead>
+                            <tr className="text-left text-xs text-zinc-500 border-b">
+                              <th className="py-2 pr-3 font-medium">Day</th>
+                              <th className="py-2 pr-3 font-medium text-right">Capacity</th>
+                              <th className="py-2 pr-3 font-medium text-right">Sold</th>
+                              <th className="py-2 pr-3 font-medium text-right">Remaining</th>
+                              <th className="py-2 pr-3 font-medium">Status</th>
+                              <th className="py-2 font-medium">By ticket type</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y">
+                            {dash.dayCapacityRows.map((d) => (
+                              <tr key={d.date} className="align-top">
+                                <td className="py-2.5 pr-3 font-mono text-xs">
+                                  {d.date}
+                                </td>
+                                <td className="py-2.5 pr-3 text-right tabular-nums">
+                                  {d.capacity}
+                                </td>
+                                <td className="py-2.5 pr-3 text-right tabular-nums font-medium">
+                                  {d.sold}
+                                </td>
+                                <td className="py-2.5 pr-3 text-right tabular-nums font-semibold">
+                                  {d.remaining}
+                                </td>
+                                <td className="py-2.5 pr-3">
+                                  {d.status === "sold_out" ? (
+                                    <span className="text-xs font-semibold text-red-700 bg-red-50 border border-red-200 px-2 py-0.5 rounded">
+                                      Sold out
+                                    </span>
+                                  ) : d.status === "low" ? (
+                                    <span className="text-xs font-semibold text-amber-800 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded">
+                                      Low stock
+                                    </span>
+                                  ) : (
+                                    <span className="text-xs text-emerald-700">OK</span>
+                                  )}
+                                </td>
+                                <td className="py-2.5 text-xs text-zinc-600">
+                                  {d.byType.length === 0
+                                    ? "—"
+                                    : d.byType
+                                        .map((t) => `${t.name}: ${t.sold}`)
+                                        .join(" · ")}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
 
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                     <div className="dash-glass-card p-4 sm:p-6">
@@ -4409,14 +4495,15 @@ export default function AdminDashboard() {
                 <div className="md:col-span-2 rounded-xl border border-blue-100 bg-blue-50/40 p-4 space-y-3">
                   <div>
                     <div className="text-sm font-medium">
-                      Accumulated seating by day
+                      Event days and seating capacity
                     </div>
                     <p className="text-xs text-zinc-600 mt-1">
-                      Set total seats for each event day (e.g. 600). Ticket types
-                      use <strong>Valid from / Valid to</strong> to cover one or
-                      more days. A multi-day ticket deducts one seat from every
-                      day it covers. Leave empty for no shared day pool (per-type
-                      stock only).
+                      Define each admission day with its max seats (can differ by
+                      day). Capacity is shared across ticket types. Selling one
+                      multi-day ticket deducts one seat from every covered day.
+                      You can raise capacity anytime; you cannot set it below
+                      seats already sold. Leave empty for no shared day pool
+                      (per-type stock only).
                     </p>
                   </div>
                   {seatDaysForm.length > 0 && (
@@ -4811,6 +4898,63 @@ export default function AdminDashboard() {
                               className="w-full border rounded-lg px-2 py-1.5 text-sm text-zinc-900"
                             />
                           </label>
+                          {seatDaysForm.length > 0 && (
+                            <div className="sm:col-span-2 md:col-span-3 lg:col-span-4">
+                              <div className="text-[11px] text-zinc-500 mb-1">
+                                Day coverage (select event days this type admits to).
+                                After sales of this type, coverage is locked: archive
+                                (hide) the type and create a new one to change it.
+                              </div>
+                              <div className="flex flex-wrap gap-2">
+                                {seatDaysForm.map((sd) => {
+                                  const checked = (t.coveredDays || []).includes(
+                                    sd.date
+                                  );
+                                  return (
+                                    <label
+                                      key={sd.date}
+                                      className={`inline-flex items-center gap-1.5 text-xs border rounded-lg px-2 py-1 cursor-pointer ${
+                                        checked
+                                          ? "bg-blue-50 border-blue-300 text-blue-900"
+                                          : "bg-white border-zinc-200"
+                                      }`}
+                                    >
+                                      <input
+                                        type="checkbox"
+                                        checked={checked}
+                                        onChange={(e) => {
+                                          setTicketTypesForm(
+                                            ticketTypesForm.map((tt) => {
+                                              if (tt.id !== t.id) return tt;
+                                              const cur = new Set(
+                                                tt.coveredDays || []
+                                              );
+                                              if (e.target.checked) cur.add(sd.date);
+                                              else cur.delete(sd.date);
+                                              const list = [...cur].sort();
+                                              // Keep validFrom/to in sync with min/max coverage
+                                              return {
+                                                ...tt,
+                                                coveredDays: list,
+                                                validFrom: list[0] || tt.validFrom,
+                                                validTo:
+                                                  list[list.length - 1] ||
+                                                  tt.validTo,
+                                              };
+                                            })
+                                          );
+                                        }}
+                                      />
+                                      {sd.date}
+                                      <span className="text-zinc-400">
+                                        ({sd.capacity})
+                                      </span>
+                                    </label>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          )}
                         </div>
                         <div className="flex flex-wrap items-center gap-2">
                           <button

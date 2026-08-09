@@ -26,15 +26,30 @@ export interface TicketType {
    * Cart of only free types issues tickets immediately (like free events).
    */
   isFree?: boolean;
+  /**
+   * Archived types stay for historical purchases but are not sold.
+   * Use when day coverage must change after sales (create a new type instead).
+   */
+  archived?: boolean;
   discounts?: DiscountRule[]; // customizable discounts
   redemptionLimit?: number; // how many times this ticket can be redeemed (e.g. 1 = single day, 3 = 3-day access)
   /**
+   * Explicit event-day coverage (YYYY-MM-DD list). Preferred over validFrom/validTo
+   * for multi-day seat capacity. Must be a non-empty subset of event.seatDays when
+   * seat days are configured. Immutable after tickets of this type are sold.
+   */
+  coveredDays?: string[];
+  /**
    * Optional calendar validity (YYYY-MM-DD, Hong Kong day).
    * Used by admin scanner - e.g. Day-1 only vs Day-2 only.
-   * Omit both = valid any day.
+   * Also used as coverage range when coveredDays is empty.
+   * Omit both = valid any day / all seat days.
    */
   validFrom?: string;
   validTo?: string;
+  /** Optional sale window (YYYY-MM-DD) — when this type can be purchased */
+  saleFrom?: string;
+  saleUntil?: string;
 }
 
 export interface DiscountRule {

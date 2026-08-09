@@ -41,13 +41,24 @@ export function getRemaining(
   return Math.max(0, Number(cap) - sold);
 }
 
-/** YYYY-MM-DD list covered by a ticket's validFrom/validTo (inclusive). */
+/**
+ * YYYY-MM-DD list covered by a ticket.
+ * Prefer explicit coveredDays (subset of event days); else validFrom/validTo range.
+ * No coverage set → full-event pass (all seat days).
+ */
 export function daysCoveredByTicket(
   ticket: TicketType,
   seatDayDates: string[]
 ): string[] {
   if (!seatDayDates.length) return [];
   const sorted = [...seatDayDates].sort();
+  const explicit = (ticket.coveredDays || [])
+    .map((d) => String(d).slice(0, 10))
+    .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d));
+  if (explicit.length > 0) {
+    const allowed = new Set(sorted);
+    return [...new Set(explicit.filter((d) => allowed.has(d)))].sort();
+  }
   const from = ticket.validFrom || ticket.validTo;
   const to = ticket.validTo || ticket.validFrom;
   // No dates → full-event pass: occupies every seat day

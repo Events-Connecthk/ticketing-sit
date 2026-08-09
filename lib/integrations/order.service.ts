@@ -86,6 +86,42 @@ export async function processSuccessfulPurchase(
   }
 
   try {
+    // FR 6.3–6.4: capacity is per event day; block issue if any covered day is full.
+    // Re-check against DB at issue time so concurrent checkouts cannot oversell.
+    if ((event.seatDays && event.seatDays.length > 0) || cart.tickets.length > 0) {
+      const { getAllPurchases } = await import("@/lib/db/purchases");
+      const { assertCanIssueTickets } = await import("@/lib/tickets/capacity");
+      let purchases: Awaited<ReturnType<typeof getAllPurchases>> = [];
+      try {
+        purchases = await getAllPurchases({ eventSlug: cart.eventSlug });
+      } catch {
+        purchases = [];
+      }
+      // Prefer service-role path if purchases empty under RLS
+      if (!purchases.length) {
+        try {
+          const { getSupabaseAdmin } = await import("@/lib/supabase/server");
+          const admin = getSupabaseAdmin();
+          if (admin) {
+            const { data } = await admin
+              .from("purchases")
+              .select(
+                "ticket_breakdown, number_of_tickets, payment_method, order_reference"
+              )
+              .eq("event_slug", cart.eventSlug);
+            purchases = (data || []) as typeof purchases;
+          }
+        } catch {
+          /* ignore */
+        }
+      }
+      const capErr = assertCanIssueTickets(event, cart.tickets, purchases);
+      if (capErr) {
+        console.warn("[OrderService] Capacity denied:", capErr);
+        return { success: false, error: capErr };
+      }
+    }
+
     // 1. Calculate total tickets
     const totalTickets = cart.tickets.reduce((sum, t) => sum + t.quantity, 0);
 

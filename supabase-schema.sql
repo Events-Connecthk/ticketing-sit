@@ -109,6 +109,25 @@ CREATE INDEX IF NOT EXISTS idx_donations_event_slug ON donations (event_slug);
 CREATE INDEX IF NOT EXISTS idx_donations_order_ref ON donations (order_reference);
 
 -- =========================================
+-- Event-day capacity audit (optional; app also logs in events.metadata.capacityAudit)
+-- =========================================
+CREATE TABLE IF NOT EXISTS capacity_audit (
+  id BIGSERIAL PRIMARY KEY,
+  event_slug TEXT NOT NULL,
+  day_date DATE NOT NULL,
+  old_capacity INTEGER,
+  new_capacity INTEGER,
+  actor TEXT,
+  note TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+ALTER TABLE capacity_audit ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Block anon capacity_audit" ON capacity_audit;
+CREATE POLICY "Block anon capacity_audit"
+ON capacity_audit FOR ALL TO anon USING (false) WITH CHECK (false);
+CREATE INDEX IF NOT EXISTS idx_capacity_audit_event ON capacity_audit (event_slug);
+
+-- =========================================
 -- Check-in staff accounts (door / scanner only)
 -- =========================================
 CREATE TABLE IF NOT EXISTS checkin_staff (

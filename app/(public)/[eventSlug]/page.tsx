@@ -111,8 +111,10 @@ export default function EventPage({ params }: EventPageProps) {
     );
   }
 
-  // Only show enabled ticket types to users
-  const availableTicketTypes = event.ticketTypes.filter((t) => t.enabled !== false);
+  // Only show enabled, non-archived ticket types to users
+  const availableTicketTypes = event.ticketTypes.filter(
+    (t) => t.enabled !== false && !t.archived
+  );
 
   const currency = availableTicketTypes[0]?.currency || "HKD";
 

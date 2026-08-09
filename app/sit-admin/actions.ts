@@ -191,11 +191,26 @@ export async function adminGetAllEvents(): Promise<EventConfig[]> {
   }
 }
 
+export type AdminSaveEventResult = {
+  ok: boolean;
+  event?: EventConfig | null;
+  error?: string;
+};
+
 /**
  * Admin-only: Save event using SERVICE_ROLE (bypasses RLS).
- * Always writes arrays (including empty) so removals persist.
+ * Enforces FR 6.1 capacity floor and 6.2 coverage immutability after sales.
  */
-export async function adminSaveEvent(event: EventConfig): Promise<EventConfig | null> {
+export async function adminSaveEvent(
+  event: EventConfig
+): Promise<EventConfig | null> {
+  const res = await adminSaveEventDetailed(event);
+  return res.ok ? res.event ?? null : null;
+}
+
+export async function adminSaveEventDetailed(
+  event: EventConfig
+): Promise<AdminSaveEventResult> {
   try {
     await requireAdmin();
     const cleanEvent = {
@@ -205,6 +220,84 @@ export async function adminSaveEvent(event: EventConfig): Promise<EventConfig | 
       buyerFormFields: event.buyerFormFields || [],
       discountCodes: event.discountCodes || [],
     };
+
+    // Load prior event + sold counts for FR validation
+    let previous: EventConfig | null = null;
+    try {
+      const { loadEventBySlug } = await import("@/lib/config/events");
+      previous = await loadEventBySlug(cleanEvent.slug);
+    } catch {
+      /* new event */
+    }
+
+    const {
+      validateSeatDayCapacityChanges,
+      validateTicketCoverageImmutable,
+      buildCapacityAuditEntries,
+      filterValidPurchases,
+    } = await import("@/lib/tickets/capacity");
+    const { countSoldBySeatDay, countSoldByTicketType } = await import(
+      "@/lib/tickets/inventory"
+    );
+
+    let purchases: any[] = [];
+    try {
+      const supabaseAdmin = getSupabaseAdmin();
+      if (supabaseAdmin) {
+        const { data } = await supabaseAdmin
+          .from("purchases")
+          .select("ticket_breakdown, number_of_tickets, payment_method")
+          .eq("event_slug", cleanEvent.slug);
+        purchases = data || [];
+      } else {
+        const { getAllPurchases } = await import("@/lib/db/purchases");
+        purchases = await getAllPurchases({ eventSlug: cleanEvent.slug });
+      }
+    } catch {
+      purchases = [];
+    }
+    const validPurchases = filterValidPurchases(purchases);
+    const soldByDay = countSoldBySeatDay(
+      validPurchases,
+      previous?.ticketTypes || cleanEvent.ticketTypes,
+      previous?.seatDays || cleanEvent.seatDays
+    );
+    const soldByType = countSoldByTicketType(validPurchases);
+
+    const capCheck = validateSeatDayCapacityChanges(
+      previous?.seatDays,
+      cleanEvent.seatDays,
+      soldByDay
+    );
+    if (!capCheck.ok) {
+      return { ok: false, error: capCheck.error };
+    }
+
+    const covCheck = validateTicketCoverageImmutable(
+      previous?.ticketTypes,
+      cleanEvent.ticketTypes,
+      soldByType,
+      cleanEvent.seatDays || previous?.seatDays
+    );
+    if (!covCheck.ok) {
+      return { ok: false, error: covCheck.error };
+    }
+
+    // Ticket types with seat days must have non-empty coverage
+    if (cleanEvent.seatDays && cleanEvent.seatDays.length > 0) {
+      const daySet = new Set(cleanEvent.seatDays.map((s) => s.date));
+      for (const t of cleanEvent.ticketTypes) {
+        if (t.enabled === false || t.archived) continue;
+        const cov = (t.coveredDays || []).filter((d) => daySet.has(d));
+        const hasRange = Boolean(t.validFrom || t.validTo);
+        if (cov.length === 0 && !hasRange) {
+          return {
+            ok: false,
+            error: `Ticket type "${t.name}" needs day coverage (select event days or set valid from/to).`,
+          };
+        }
+      }
+    }
 
     const meta = {
       ...((cleanEvent.metadata || {}) as Record<string, unknown>),
@@ -232,7 +325,19 @@ export async function adminSaveEvent(event: EventConfig): Promise<EventConfig | 
       delete meta.seatDays;
     }
 
-    // Always include full field set so "remove ticket type / form field" actually clears DB
+    // FR 6.1 audit log for capacity changes
+    const auditEntries = buildCapacityAuditEntries(
+      previous?.seatDays,
+      cleanEvent.seatDays,
+      "admin"
+    );
+    if (auditEntries.length) {
+      const prevLog = Array.isArray(meta.capacityAudit)
+        ? (meta.capacityAudit as unknown[])
+        : [];
+      meta.capacityAudit = [...prevLog, ...auditEntries].slice(-200);
+    }
+
     const upsertPayload: Record<string, unknown> = {
       slug: cleanEvent.slug,
       name: cleanEvent.name,
@@ -255,7 +360,11 @@ export async function adminSaveEvent(event: EventConfig): Promise<EventConfig | 
     if (!supabaseAdmin) {
       console.warn("[Admin] No service role key - saving to memory only");
       const { saveEvent } = await import("@/lib/db/events");
-      return saveEvent(cleanEvent as EventConfig);
+      const saved = await saveEvent({
+        ...cleanEvent,
+        metadata: meta,
+      } as EventConfig);
+      return { ok: true, event: saved };
     }
 
     let { data, error } = await supabaseAdmin
@@ -264,7 +373,6 @@ export async function adminSaveEvent(event: EventConfig): Promise<EventConfig | 
       .select()
       .single();
 
-    // Retry without newer columns if schema is behind
     if (error && (error.code === "PGRST204" || error.message?.includes("column"))) {
       console.warn(
         "[Admin Actions] Event upsert missing columns, retrying minimal payload:",
@@ -292,13 +400,16 @@ export async function adminSaveEvent(event: EventConfig): Promise<EventConfig | 
 
     if (error) {
       console.error("[Admin Actions] Supabase event save error:", error);
-      return null;
+      return { ok: false, error: error.message };
     }
 
-    return mapRowToEventConfig(data);
+    return { ok: true, event: mapRowToEventConfig(data) };
   } catch (err) {
     console.error("[Admin Actions] adminSaveEvent error:", err);
-    return null;
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : "Save failed",
+    };
   }
 }
 
@@ -598,6 +709,29 @@ export async function adminIssueManualTickets(
     const event = await loadEventBySlug(eventSlug);
     if (!event) {
       return { success: false, error: "Event not found." };
+    }
+
+    // FR 6.4: same capacity rules as public sales (atomic re-check at issue)
+    {
+      const { assertCanIssueTickets } = await import("@/lib/tickets/capacity");
+      let purchases: any[] = [];
+      const supabaseAdmin = getSupabaseAdmin();
+      if (supabaseAdmin) {
+        const { data } = await supabaseAdmin
+          .from("purchases")
+          .select(
+            "ticket_breakdown, number_of_tickets, payment_method, order_reference"
+          )
+          .eq("event_slug", eventSlug);
+        purchases = data || [];
+      } else {
+        const { getAllPurchases } = await import("@/lib/db/purchases");
+        purchases = await getAllPurchases({ eventSlug });
+      }
+      const capErr = assertCanIssueTickets(event, tickets, purchases);
+      if (capErr) {
+        return { success: false, error: capErr };
+      }
     }
 
     const typeMap = new Map(
