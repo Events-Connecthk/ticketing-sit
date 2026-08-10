@@ -4780,10 +4780,27 @@ export default function AdminDashboard() {
                   <div className="border rounded-xl divide-y mb-4">
                     {ticketTypesForm.map((t, idx) => (
                       <div key={idx} className="p-3 sm:p-4 flex flex-col gap-3 text-sm">
-                        <div className="font-medium">
-                          {t.name}{" "}
-                          <span className="font-mono text-xs text-zinc-400">
-                            (ID: {t.id})
+                        <div className="flex flex-wrap items-end gap-3">
+                          <label className="flex flex-col gap-0.5 text-[11px] text-zinc-500 flex-1 min-w-[12rem]">
+                            Ticket name
+                            <input
+                              type="text"
+                              value={t.name}
+                              onChange={(e) =>
+                                setTicketTypesForm(
+                                  ticketTypesForm.map((tt) =>
+                                    tt.id === t.id
+                                      ? { ...tt, name: e.target.value }
+                                      : tt
+                                  )
+                                )
+                              }
+                              className="w-full border rounded-lg px-2 py-1.5 text-sm text-zinc-900 font-medium"
+                              placeholder="Ticket name"
+                            />
+                          </label>
+                          <span className="font-mono text-xs text-zinc-400 pb-2">
+                            ID: {t.id}
                           </span>
                         </div>
                         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
