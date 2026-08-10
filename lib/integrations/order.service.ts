@@ -28,7 +28,7 @@ import {
   getPurchaseByPaymentReference,
 } from "../db/purchases";
 import { generateTicketPdf } from "../pdf/generate-ticket";
-import { sendConfirmationEmail } from "./email";
+import { sendAdminOrderNotification, sendConfirmationEmail } from "./email";
 import { loadEventBySlug } from "../config/events";
 import { expandTicketsWithSerials, makeOrderReference } from "../tickets/serials";
 import { roundMoney } from "@/lib/money";
@@ -262,6 +262,42 @@ export async function processSuccessfulPurchase(
             "[OrderService] Email result (background):",
             emailResult.success
           );
+
+          // Admin / organizer notification (same pipeline: free, paid, manual)
+          try {
+            const ticketSummary = (cart.tickets || [])
+              .filter((t) => t.quantity > 0)
+              .map((t) => {
+                const name =
+                  event.ticketTypes.find((tt) => tt.id === t.ticketTypeId)
+                    ?.name || t.ticketTypeId;
+                return `${name} × ${t.quantity}`;
+              })
+              .join(", ");
+            const adminResult = await sendAdminOrderNotification({
+              event,
+              orderReference: finalOrderRef,
+              buyerName: cart.buyer.name,
+              buyerEmail: cart.buyer.email,
+              buyerPhone: cart.buyer.phone,
+              ticketCount: ticketUnits.length || totalTickets,
+              totalAmount: cart.totalAmount,
+              currency: cart.currency === "FREE" ? "HKD" : cart.currency,
+              paymentMethod,
+              ticketSummary: ticketSummary || undefined,
+              donationAmount: donationAmt > 0 ? donationAmt : undefined,
+              adminUrl: `${baseUrl}/sit-admin`,
+            });
+            console.log(
+              "[OrderService] Admin notify result:",
+              adminResult.success
+            );
+          } catch (adminEmailErr) {
+            console.error(
+              "[OrderService] Admin notify failed (non-blocking):",
+              adminEmailErr
+            );
+          }
         } catch (bgError) {
           console.error(
             "[OrderService] Background email error (non-blocking):",

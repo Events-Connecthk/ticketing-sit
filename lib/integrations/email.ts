@@ -28,6 +28,11 @@ const RESEND_API_KEY = process.env.RESEND_API_KEY || "";
 // - REPLY_TO   = atthepeak@connecthk.org         (where they can reply / ask questions)
 const FROM_EMAIL = process.env.FROM_EMAIL || "no-reply@events.connecthk.org";
 const REPLY_TO = process.env.REPLY_TO || "atthepeak@connecthk.org";
+/** Admin gets order alerts here (comma-separated allowed). Falls back to REPLY_TO. */
+const ADMIN_NOTIFY_EMAIL =
+  process.env.ADMIN_NOTIFY_EMAIL ||
+  process.env.ORDER_NOTIFY_EMAIL ||
+  REPLY_TO;
 
 let resendClient: Resend | null = null;
 
@@ -163,6 +168,125 @@ export async function sendConfirmationEmail(
     return {
       success: false,
       error: err instanceof Error ? err.message : "Email delivery failed",
+    };
+  }
+}
+
+export interface AdminOrderNotifyParams {
+  event: EventConfig;
+  orderReference: string;
+  buyerName: string;
+  buyerEmail: string;
+  buyerPhone: string;
+  ticketCount: number;
+  totalAmount: number;
+  currency: string;
+  paymentMethod?: string;
+  /** e.g. "Day 1 × 2, Full × 1" */
+  ticketSummary?: string;
+  donationAmount?: number;
+  adminUrl?: string;
+}
+
+/**
+ * Notify organizers when someone buys or registers.
+ * Uses ADMIN_NOTIFY_EMAIL (or ORDER_NOTIFY_EMAIL / REPLY_TO).
+ * Supports multiple recipients: comma-separated list.
+ */
+export async function sendAdminOrderNotification(
+  params: AdminOrderNotifyParams
+): Promise<EmailSendResult> {
+  const recipients = String(ADMIN_NOTIFY_EMAIL || "")
+    .split(/[,;]/)
+    .map((s) => s.trim())
+    .filter((s) => s.includes("@"));
+
+  if (recipients.length === 0) {
+    console.warn(
+      "[Email] No ADMIN_NOTIFY_EMAIL / REPLY_TO configured — skip admin notify"
+    );
+    return { success: false, error: "No admin notify address" };
+  }
+
+  const {
+    event,
+    orderReference,
+    buyerName,
+    buyerEmail,
+    buyerPhone,
+    ticketCount,
+    totalAmount,
+    currency,
+    paymentMethod,
+    ticketSummary,
+    donationAmount,
+    adminUrl,
+  } = params;
+
+  const cur = currency === "FREE" ? "HKD" : currency || "HKD";
+  const totalLabel =
+    totalAmount <= 0 ? "Free" : `${cur} ${formatMoney(totalAmount)}`;
+  const subject = `[Connect Events] New order ${orderReference} — ${event.name}`;
+
+  const html = `
+    <div style="font-family: system-ui, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px;">
+      <h1 style="color: #111; margin-bottom: 8px; font-size: 20px;">New ticket order</h1>
+      <p style="color: #444; margin: 0 0 16px;">
+        Someone registered / purchased tickets on <strong>${event.name}</strong>.
+      </p>
+      <div style="background: #f8f8f8; padding: 20px; border-radius: 8px; margin: 16px 0;">
+        <p style="margin: 4px 0;"><strong>Order:</strong> ${orderReference}</p>
+        <p style="margin: 4px 0;"><strong>Event:</strong> ${event.name} <span style="color:#888">(${event.slug})</span></p>
+        <p style="margin: 4px 0;"><strong>Buyer:</strong> ${buyerName}</p>
+        <p style="margin: 4px 0;"><strong>Email:</strong> ${buyerEmail}</p>
+        <p style="margin: 4px 0;"><strong>Phone:</strong> ${buyerPhone || "—"}</p>
+        <p style="margin: 4px 0;"><strong>Tickets:</strong> ${ticketCount}${
+          ticketSummary ? ` (${ticketSummary})` : ""
+        }</p>
+        ${
+          donationAmount && donationAmount > 0
+            ? `<p style="margin: 4px 0;"><strong>Donation:</strong> ${cur} ${formatMoney(donationAmount)}</p>`
+            : ""
+        }
+        <p style="margin: 4px 0;"><strong>Total:</strong> ${totalLabel}</p>
+        <p style="margin: 4px 0;"><strong>Payment:</strong> ${paymentMethod || "—"}</p>
+      </div>
+      ${
+        adminUrl
+          ? `<p style="margin: 16px 0;"><a href="${adminUrl}" style="color: #0f766e;">Open admin dashboard</a></p>`
+          : ""
+      }
+      <p style="font-size: 12px; color: #888; margin-top: 24px;">
+        Automated notice from Connect Events. Buyer also received their confirmation email.
+      </p>
+    </div>
+  `;
+
+  const client = getResendClient();
+  if (!client) {
+    console.log("[Email SIMULATED] Admin notify to:", recipients.join(", "));
+    console.log("[Email SIMULATED] Subject:", subject);
+    return { success: true, messageId: "simulated-admin-" + Date.now() };
+  }
+
+  try {
+    const result = await client.emails.send({
+      from: `Connect Events <${FROM_EMAIL}>`,
+      to: recipients,
+      replyTo: buyerEmail || REPLY_TO,
+      subject,
+      html,
+    });
+    if (result.error) {
+      console.error("[Email] Admin notify Resend error:", result.error);
+      return { success: false, error: result.error.message };
+    }
+    return { success: true, messageId: result.data?.id };
+  } catch (err) {
+    console.error("[Email] Admin notify exception:", err);
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "Admin email failed",
     };
   }
 }
