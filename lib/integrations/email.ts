@@ -27,12 +27,12 @@ const RESEND_API_KEY = process.env.RESEND_API_KEY || "";
 // - FROM_EMAIL = no-reply@events.connecthk.org   (what buyers see as sender)
 // - REPLY_TO   = atthepeak@connecthk.org         (where they can reply / ask questions)
 const FROM_EMAIL = process.env.FROM_EMAIL || "no-reply@events.connecthk.org";
-const REPLY_TO = process.env.REPLY_TO || "atthepeak@connecthk.org";
-/** Global fallback admin alerts (comma-separated). Falls back to REPLY_TO. */
+const REPLY_TO = process.env.REPLY_TO || "events@connecthk.org";
+/** Global default admin alerts (comma-separated). Prefer events@connecthk.org. */
 const ADMIN_NOTIFY_EMAIL =
   process.env.ADMIN_NOTIFY_EMAIL ||
   process.env.ORDER_NOTIFY_EMAIL ||
-  REPLY_TO;
+  "events@connecthk.org";
 
 /** Resolve admin recipients: event-level first, then env/global. */
 export function resolveAdminNotifyEmails(
