@@ -148,6 +148,8 @@ export default function AdminDashboard() {
     donationEnabled: false,
     donationDefaultAmount: 50,
     hideSeatCounts: false,
+    /** Per-event admin order notification emails (comma-separated) */
+    adminNotifyEmail: "",
     /** Empty = use default white-gold theme */
     primaryColor: "",
     secondaryColor: "",
@@ -1159,6 +1161,7 @@ export default function AdminDashboard() {
       donationEnabled: false,
       donationDefaultAmount: 50,
       hideSeatCounts: false,
+      adminNotifyEmail: "",
       primaryColor: "",
       secondaryColor: "",
       backgroundColor: "",
@@ -1240,6 +1243,7 @@ export default function AdminDashboard() {
         Number(ev.donationDefaultAmount) || 50
       ),
       hideSeatCounts: Boolean(ev.hideSeatCounts),
+      adminNotifyEmail: ev.adminNotifyEmail || "",
       primaryColor: theme.primaryColor,
       secondaryColor: theme.secondaryColor,
       backgroundColor: theme.backgroundColor,
@@ -1319,6 +1323,7 @@ export default function AdminDashboard() {
         Number(ev.donationDefaultAmount) || 50
       ),
       hideSeatCounts: Boolean(ev.hideSeatCounts),
+      adminNotifyEmail: ev.adminNotifyEmail || "",
       primaryColor: theme.primaryColor,
       secondaryColor: theme.secondaryColor,
       backgroundColor: theme.backgroundColor,
@@ -1598,6 +1603,7 @@ export default function AdminDashboard() {
         ? Math.max(0, Number(eventForm.donationDefaultAmount) || 0)
         : undefined,
       hideSeatCounts: Boolean(eventForm.hideSeatCounts),
+      adminNotifyEmail: eventForm.adminNotifyEmail?.trim() || undefined,
       seatDays:
         seatDaysForm.length > 0
           ? seatDaysForm
@@ -4711,6 +4717,29 @@ export default function AdminDashboard() {
                   <label htmlFor="hideSeatCounts" className="text-sm">
                     Hide remaining seat counts from buyers (still enforces stock limits)
                   </label>
+                </div>
+
+                <div className="md:col-span-2">
+                  <label className="text-xs font-medium text-zinc-500">
+                    Admin notification email(s) for this event
+                  </label>
+                  <input
+                    type="text"
+                    value={eventForm.adminNotifyEmail || ""}
+                    onChange={(e) =>
+                      setEventForm({
+                        ...eventForm,
+                        adminNotifyEmail: e.target.value,
+                      })
+                    }
+                    placeholder="events@connecthk.org, someone@connecthk.org"
+                    className="mt-1 w-full border rounded-lg px-3 py-2 text-sm"
+                  />
+                  <p className="text-[10px] text-zinc-500 mt-1">
+                    New orders and ticket change/delete alerts for this event only.
+                    Comma-separated for multiple. Leave empty to use the global
+                    ADMIN_NOTIFY_EMAIL / REPLY_TO setting.
+                  </p>
                 </div>
 
                 {/* Shared seating by day (accumulated inventory) */}

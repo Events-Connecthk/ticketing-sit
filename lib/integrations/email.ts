@@ -28,11 +28,22 @@ const RESEND_API_KEY = process.env.RESEND_API_KEY || "";
 // - REPLY_TO   = atthepeak@connecthk.org         (where they can reply / ask questions)
 const FROM_EMAIL = process.env.FROM_EMAIL || "no-reply@events.connecthk.org";
 const REPLY_TO = process.env.REPLY_TO || "atthepeak@connecthk.org";
-/** Admin gets order alerts here (comma-separated allowed). Falls back to REPLY_TO. */
+/** Global fallback admin alerts (comma-separated). Falls back to REPLY_TO. */
 const ADMIN_NOTIFY_EMAIL =
   process.env.ADMIN_NOTIFY_EMAIL ||
   process.env.ORDER_NOTIFY_EMAIL ||
   REPLY_TO;
+
+/** Resolve admin recipients: event-level first, then env/global. */
+export function resolveAdminNotifyEmails(
+  eventOverride?: string | null
+): string[] {
+  const raw = String(eventOverride || "").trim() || ADMIN_NOTIFY_EMAIL || "";
+  return raw
+    .split(/[,;]/)
+    .map((s) => s.trim())
+    .filter((s) => s.includes("@"));
+}
 
 let resendClient: Resend | null = null;
 
@@ -201,15 +212,9 @@ export async function sendAdminTicketChangeNotification(params: {
   fromTypeName?: string;
   toTypeName?: string;
   note?: string;
+  /** Per-event admin emails (comma-separated); overrides global env */
+  notifyEmails?: string | null;
 }): Promise<EmailSendResult> {
-  const recipients = String(ADMIN_NOTIFY_EMAIL || "")
-    .split(/[,;]/)
-    .map((s) => s.trim())
-    .filter((s) => s.includes("@"));
-  if (recipients.length === 0) {
-    return { success: false, error: "No admin notify address" };
-  }
-
   const {
     kind,
     eventName,
@@ -222,7 +227,13 @@ export async function sendAdminTicketChangeNotification(params: {
     fromTypeName,
     toTypeName,
     note,
+    notifyEmails,
   } = params;
+
+  const recipients = resolveAdminNotifyEmails(notifyEmails);
+  if (recipients.length === 0) {
+    return { success: false, error: "No admin notify address" };
+  }
 
   const subject =
     kind === "deleted"
@@ -291,18 +302,6 @@ export async function sendAdminTicketChangeNotification(params: {
 export async function sendAdminOrderNotification(
   params: AdminOrderNotifyParams
 ): Promise<EmailSendResult> {
-  const recipients = String(ADMIN_NOTIFY_EMAIL || "")
-    .split(/[,;]/)
-    .map((s) => s.trim())
-    .filter((s) => s.includes("@"));
-
-  if (recipients.length === 0) {
-    console.warn(
-      "[Email] No ADMIN_NOTIFY_EMAIL / REPLY_TO configured — skip admin notify"
-    );
-    return { success: false, error: "No admin notify address" };
-  }
-
   const {
     event,
     orderReference,
@@ -317,6 +316,14 @@ export async function sendAdminOrderNotification(
     donationAmount,
     adminUrl,
   } = params;
+
+  const recipients = resolveAdminNotifyEmails(event.adminNotifyEmail);
+  if (recipients.length === 0) {
+    console.warn(
+      "[Email] No event adminNotifyEmail / ADMIN_NOTIFY_EMAIL / REPLY_TO — skip admin notify"
+    );
+    return { success: false, error: "No admin notify address" };
+  }
 
   const cur = currency === "FREE" ? "HKD" : currency || "HKD";
   const totalLabel =

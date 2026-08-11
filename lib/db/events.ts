@@ -65,6 +65,13 @@ function normalizeEvent(raw: any): EventConfig {
       meta.hideSeatCounts === true || raw.hideSeatCounts === true
         ? true
         : undefined,
+    adminNotifyEmail:
+      typeof meta.adminNotifyEmail === "string" && meta.adminNotifyEmail.trim()
+        ? String(meta.adminNotifyEmail).trim()
+        : typeof raw.adminNotifyEmail === "string" &&
+            raw.adminNotifyEmail.trim()
+          ? String(raw.adminNotifyEmail).trim()
+          : undefined,
     ticketTypes: (raw.ticketTypes || raw.ticket_types || []).map((t: any) => ({
       ...t,
       enabled: t.enabled !== false,

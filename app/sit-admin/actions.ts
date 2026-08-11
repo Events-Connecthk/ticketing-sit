@@ -98,6 +98,10 @@ function mapRowToEventConfig(data: any): EventConfig {
       return days.length ? days : undefined;
     })(),
     hideSeatCounts: meta.hideSeatCounts === true ? true : undefined,
+    adminNotifyEmail:
+      typeof meta.adminNotifyEmail === "string" && meta.adminNotifyEmail.trim()
+        ? String(meta.adminNotifyEmail).trim()
+        : undefined,
     ticketTypes: (data.ticket_types || data.ticketTypes || []).map((t: any) => ({
       ...t,
       enabled: t.enabled !== false,
@@ -330,6 +334,17 @@ export async function adminSaveEventDetailed(
       meta.hideSeatCounts = true;
     } else {
       delete meta.hideSeatCounts;
+    }
+
+    if (
+      cleanEvent.adminNotifyEmail &&
+      String(cleanEvent.adminNotifyEmail).trim()
+    ) {
+      meta.adminNotifyEmail = String(cleanEvent.adminNotifyEmail)
+        .trim()
+        .slice(0, 500);
+    } else {
+      delete meta.adminNotifyEmail;
     }
 
     // FR 6.1 audit log for capacity changes
@@ -781,6 +796,7 @@ export async function adminChangeTicketType(input: {
         fromTypeName: oldTypeName,
         toTypeName: newType.name,
         note: input.note,
+        notifyEmails: event.adminNotifyEmail,
       });
     } catch (e) {
       console.error("[Admin] change notify failed:", e);
@@ -875,6 +891,7 @@ export async function adminDeleteTicketUnit(input: {
           buyerPhone: purchase.phone,
           fromTypeName,
           note: input.note || "Last ticket on order removed; purchase deleted.",
+          notifyEmails: event?.adminNotifyEmail,
         });
       } catch (e) {
         console.error("[Admin] delete notify failed:", e);
@@ -921,6 +938,7 @@ export async function adminDeleteTicketUnit(input: {
         buyerPhone: purchase.phone,
         fromTypeName,
         note: input.note,
+        notifyEmails: event?.adminNotifyEmail,
       });
     } catch (e) {
       console.error("[Admin] delete notify failed:", e);

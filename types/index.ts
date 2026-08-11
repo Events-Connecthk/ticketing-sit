@@ -116,6 +116,12 @@ export interface EventConfig {
    * Capacity still enforced; only the display is hidden.
    */
   hideSeatCounts?: boolean;
+  /**
+   * Per-event admin notification emails (comma-separated).
+   * Used for new orders and ticket change/delete alerts for this event.
+   * Falls back to env ADMIN_NOTIFY_EMAIL / REPLY_TO if empty.
+   */
+  adminNotifyEmail?: string;
   // Optional metadata for future extensibility
   metadata?: Record<string, unknown>;
 }
