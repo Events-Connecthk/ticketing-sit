@@ -72,6 +72,11 @@ function normalizeEvent(raw: any): EventConfig {
             raw.adminNotifyEmail.trim()
           ? String(raw.adminNotifyEmail).trim()
           : undefined,
+    termsEnabled: meta.termsEnabled === true ? true : undefined,
+    termsUrl:
+      typeof meta.termsUrl === "string" && meta.termsUrl.trim()
+        ? String(meta.termsUrl).trim()
+        : undefined,
     ticketTypes: (raw.ticketTypes || raw.ticket_types || []).map((t: any) => ({
       ...t,
       enabled: t.enabled !== false,

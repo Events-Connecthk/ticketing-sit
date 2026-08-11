@@ -122,9 +122,22 @@ export interface EventConfig {
    * Falls back to env ADMIN_NOTIFY_EMAIL / REPLY_TO if empty.
    */
   adminNotifyEmail?: string;
+  /**
+   * Require buyer to accept Terms & Conditions before checkout / registration.
+   * Stored in metadata.termsEnabled.
+   */
+  termsEnabled?: boolean;
+  /**
+   * Public URL/path to T&C PDF. Empty = use platform default
+   * (/legal/default-terms.pdf).
+   */
+  termsUrl?: string;
   // Optional metadata for future extensibility
   metadata?: Record<string, unknown>;
 }
+
+/** Default T&C PDF when event enables terms but has no custom upload. */
+export const DEFAULT_TERMS_PDF_PATH = "/legal/default-terms.pdf";
 
 export interface BuyerFormField {
   id: string;

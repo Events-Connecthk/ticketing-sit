@@ -102,6 +102,11 @@ function mapRowToEventConfig(data: any): EventConfig {
       typeof meta.adminNotifyEmail === "string" && meta.adminNotifyEmail.trim()
         ? String(meta.adminNotifyEmail).trim()
         : undefined,
+    termsEnabled: meta.termsEnabled === true ? true : undefined,
+    termsUrl:
+      typeof meta.termsUrl === "string" && meta.termsUrl.trim()
+        ? String(meta.termsUrl).trim()
+        : undefined,
     ticketTypes: (data.ticket_types || data.ticketTypes || []).map((t: any) => ({
       ...t,
       enabled: t.enabled !== false,
@@ -345,6 +350,18 @@ export async function adminSaveEventDetailed(
         .slice(0, 500);
     } else {
       delete meta.adminNotifyEmail;
+    }
+
+    if (cleanEvent.termsEnabled) {
+      meta.termsEnabled = true;
+      if (cleanEvent.termsUrl && String(cleanEvent.termsUrl).trim()) {
+        meta.termsUrl = String(cleanEvent.termsUrl).trim().slice(0, 2000);
+      } else {
+        delete meta.termsUrl; // use platform default PDF
+      }
+    } else {
+      delete meta.termsEnabled;
+      delete meta.termsUrl;
     }
 
     // FR 6.1 audit log for capacity changes

@@ -10,6 +10,7 @@ import {
   DiscountCode,
   DonationRecord,
   SeatDayCapacity,
+  DEFAULT_TERMS_PDF_PATH,
 } from "@/types";
 import { getAllEvents, isSupabaseConfigured } from "@/lib/db/events";
 import {
@@ -150,6 +151,10 @@ export default function AdminDashboard() {
     hideSeatCounts: false,
     /** Per-event admin order notification emails (comma-separated) */
     adminNotifyEmail: "",
+    /** Require T&C acceptance on public form */
+    termsEnabled: false,
+    /** Custom T&C PDF path/URL; empty = platform default */
+    termsUrl: "",
     /** Empty = use default white-gold theme */
     primaryColor: "",
     secondaryColor: "",
@@ -1162,6 +1167,8 @@ export default function AdminDashboard() {
       donationDefaultAmount: 50,
       hideSeatCounts: false,
       adminNotifyEmail: "",
+      termsEnabled: false,
+      termsUrl: "",
       primaryColor: "",
       secondaryColor: "",
       backgroundColor: "",
@@ -1244,6 +1251,8 @@ export default function AdminDashboard() {
       ),
       hideSeatCounts: Boolean(ev.hideSeatCounts),
       adminNotifyEmail: ev.adminNotifyEmail || "",
+      termsEnabled: Boolean(ev.termsEnabled),
+      termsUrl: ev.termsUrl || "",
       primaryColor: theme.primaryColor,
       secondaryColor: theme.secondaryColor,
       backgroundColor: theme.backgroundColor,
@@ -1324,6 +1333,8 @@ export default function AdminDashboard() {
       ),
       hideSeatCounts: Boolean(ev.hideSeatCounts),
       adminNotifyEmail: ev.adminNotifyEmail || "",
+      termsEnabled: Boolean(ev.termsEnabled),
+      termsUrl: ev.termsUrl || "",
       primaryColor: theme.primaryColor,
       secondaryColor: theme.secondaryColor,
       backgroundColor: theme.backgroundColor,
@@ -1604,6 +1615,10 @@ export default function AdminDashboard() {
         : undefined,
       hideSeatCounts: Boolean(eventForm.hideSeatCounts),
       adminNotifyEmail: eventForm.adminNotifyEmail?.trim() || undefined,
+      termsEnabled: Boolean(eventForm.termsEnabled),
+      termsUrl: eventForm.termsEnabled
+        ? eventForm.termsUrl?.trim() || undefined
+        : undefined,
       seatDays:
         seatDaysForm.length > 0
           ? seatDaysForm
@@ -4740,6 +4755,97 @@ export default function AdminDashboard() {
                     Comma-separated for multiple. Leave empty to use the global
                     ADMIN_NOTIFY_EMAIL / REPLY_TO setting.
                   </p>
+                </div>
+
+                {/* Terms & Conditions */}
+                <div className="md:col-span-2 rounded-xl border border-zinc-200 bg-zinc-50/60 p-4 space-y-3">
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      id="termsEnabled"
+                      checked={Boolean(eventForm.termsEnabled)}
+                      onChange={(e) =>
+                        setEventForm({
+                          ...eventForm,
+                          termsEnabled: e.target.checked,
+                        })
+                      }
+                    />
+                    <label htmlFor="termsEnabled" className="text-sm font-medium">
+                      Require Terms &amp; Conditions acceptance at checkout
+                    </label>
+                  </div>
+                  {eventForm.termsEnabled && (
+                    <div className="pl-6 space-y-2">
+                      <p className="text-xs text-zinc-600">
+                        Buyers must tick a checkbox and can open the PDF. If you
+                        do not upload a file, the default policy PDF is used (
+                        Returns / Privacy / Shipping).
+                      </p>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <label className="cursor-pointer inline-flex items-center gap-2 rounded-lg border bg-white px-3 py-1.5 text-sm hover:bg-zinc-50">
+                          Upload T&amp;C PDF
+                          <input
+                            type="file"
+                            accept="application/pdf,.pdf"
+                            className="hidden"
+                            onChange={async (e) => {
+                              const file = e.target.files?.[0];
+                              e.target.value = "";
+                              if (!file) return;
+                              try {
+                                const result = await uploadAdminAsset(file);
+                                if (result.success && result.path) {
+                                  setEventForm((prev) => ({
+                                    ...prev,
+                                    termsUrl: result.path!,
+                                    termsEnabled: true,
+                                  }));
+                                  toast.success("T&C PDF uploaded");
+                                } else {
+                                  toast.error(
+                                    result.error || "Upload failed"
+                                  );
+                                }
+                              } catch (err) {
+                                console.error(err);
+                                toast.error("Upload failed");
+                              }
+                            }}
+                          />
+                        </label>
+                        <a
+                          href={
+                            eventForm.termsUrl?.trim() || DEFAULT_TERMS_PDF_PATH
+                          }
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-xs text-blue-700 underline"
+                        >
+                          Preview current T&amp;C
+                        </a>
+                        {eventForm.termsUrl?.trim() && (
+                          <button
+                            type="button"
+                            className="text-xs text-zinc-600 border rounded-lg px-2 py-1 hover:bg-white"
+                            onClick={() =>
+                              setEventForm({
+                                ...eventForm,
+                                termsUrl: "",
+                              })
+                            }
+                          >
+                            Use default PDF
+                          </button>
+                        )}
+                      </div>
+                      <p className="text-[10px] text-zinc-500 break-all">
+                        Active file:{" "}
+                        {eventForm.termsUrl?.trim() ||
+                          `${DEFAULT_TERMS_PDF_PATH} (default)`}
+                      </p>
+                    </div>
+                  )}
                 </div>
 
                 {/* Shared seating by day (accumulated inventory) */}

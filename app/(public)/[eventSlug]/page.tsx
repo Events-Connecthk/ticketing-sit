@@ -4,7 +4,14 @@ import React, { useState } from "react";
 import { useRouter } from "next/navigation";
 import { TicketSelector } from "@/components/ticketing";
 import { loadEventBySlug, getEffectivePrice } from "@/lib/config/events";
-import { EventConfig, TicketSelection, BuyerInfo, OrderCart, BuyerFormField } from "@/types";
+import {
+  EventConfig,
+  TicketSelection,
+  BuyerInfo,
+  OrderCart,
+  BuyerFormField,
+  DEFAULT_TERMS_PDF_PATH,
+} from "@/types";
 import { Calendar, MapPin, Users } from "lucide-react";
 import { getEventInventory } from "@/app/sit-admin/actions";
 import { getRemainingCombined } from "@/lib/tickets/inventory";
@@ -87,6 +94,8 @@ export default function EventPage({ params }: EventPageProps) {
   const [wantToDonate, setWantToDonate] = useState(false);
   /** Editable amount (default from admin) */
   const [donationAmount, setDonationAmount] = useState<number>(0);
+  /** T&C acceptance when event.termsEnabled */
+  const [termsAccepted, setTermsAccepted] = useState(false);
 
   if (!eventSlug || eventLoading) {
     return <div className="min-h-[60vh] flex items-center justify-center">Loading event...</div>;
@@ -178,6 +187,11 @@ export default function EventPage({ params }: EventPageProps) {
     };
   };
 
+  const termsPdfUrl =
+    event.termsEnabled
+      ? event.termsUrl?.trim() || DEFAULT_TERMS_PDF_PATH
+      : null;
+
   const handleBuyerSubmit = (data: BuyerInfo) => {
     setBuyer(data);
     if (hasTicketTypes && totalTickets === 0) {
@@ -187,6 +201,10 @@ export default function EventPage({ params }: EventPageProps) {
     // Donation is optional: only validate amount if they opted in
     if (wantToDonate && event.donationEnabled && effectiveDonation <= 0) {
       alert("Enter a donation amount greater than 0, or uncheck donation.");
+      return;
+    }
+    if (event.termsEnabled && !termsAccepted) {
+      alert("Please accept the Terms & Conditions to continue.");
       return;
     }
     finishOrder(data, effectiveDonation);
@@ -553,6 +571,35 @@ export default function EventPage({ params }: EventPageProps) {
                         )}
                       </div>
                     ))}
+
+                    {/* Terms & Conditions (admin-enabled) */}
+                    {event.termsEnabled && termsPdfUrl && (
+                      <div className="pt-2 border-t">
+                        <label className="flex items-start gap-3 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            className="mt-1 h-4 w-4"
+                            checked={termsAccepted}
+                            onChange={(e) => setTermsAccepted(e.target.checked)}
+                            required
+                          />
+                          <span className="text-sm">
+                            I have read and agree to the{" "}
+                            <a
+                              href={termsPdfUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-blue-700 underline font-medium"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              Terms &amp; Conditions
+                            </a>
+                            {" "}
+                            (returns, privacy, and shipping policy).
+                          </span>
+                        </label>
+                      </div>
+                    )}
 
                     {/* Promo / Discount Code (event level) */}
                     {event.discountCodes && event.discountCodes.length > 0 && (
