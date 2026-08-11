@@ -1,5 +1,4 @@
 import Link from "next/link";
-import { ArrowRight } from "lucide-react";
 
 /**
  * Landing page for the professional event ticketing platform.
@@ -18,7 +17,7 @@ export default function Home() {
             href="/events"
             className="btn-gold inline-flex items-center justify-center gap-2 rounded-full px-8 py-3 font-medium"
           >
-            Browse Events <ArrowRight className="h-4 w-4" />
+            Browse Events
           </Link>
         </div>
 

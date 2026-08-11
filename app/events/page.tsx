@@ -83,7 +83,7 @@ export default function EventsCatalogue() {
                 )}
 
                 <div className="mt-4 text-sm font-medium" style={{ color: '#C5A26E' }}>
-                  View tickets →
+                  View tickets
                 </div>
               </div>
             </Link>
