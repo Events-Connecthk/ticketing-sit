@@ -188,6 +188,101 @@ export interface AdminOrderNotifyParams {
   adminUrl?: string;
 }
 
+/** Admin changed or deleted a customer's ticket unit. */
+export async function sendAdminTicketChangeNotification(params: {
+  kind: "changed" | "deleted";
+  eventName: string;
+  eventSlug: string;
+  orderReference: string;
+  serial?: string;
+  buyerName: string;
+  buyerEmail: string;
+  buyerPhone: string;
+  fromTypeName?: string;
+  toTypeName?: string;
+  note?: string;
+}): Promise<EmailSendResult> {
+  const recipients = String(ADMIN_NOTIFY_EMAIL || "")
+    .split(/[,;]/)
+    .map((s) => s.trim())
+    .filter((s) => s.includes("@"));
+  if (recipients.length === 0) {
+    return { success: false, error: "No admin notify address" };
+  }
+
+  const {
+    kind,
+    eventName,
+    eventSlug,
+    orderReference,
+    serial,
+    buyerName,
+    buyerEmail,
+    buyerPhone,
+    fromTypeName,
+    toTypeName,
+    note,
+  } = params;
+
+  const subject =
+    kind === "deleted"
+      ? `[Connect Events] Ticket deleted — ${orderReference}`
+      : `[Connect Events] Ticket type changed — ${orderReference}`;
+
+  const changeLine =
+    kind === "deleted"
+      ? `<p style="margin: 4px 0;"><strong>Action:</strong> Ticket deleted${
+          fromTypeName ? ` (was: ${fromTypeName})` : ""
+        }</p>`
+      : `<p style="margin: 4px 0;"><strong>Action:</strong> Type changed from <strong>${
+          fromTypeName || "?"
+        }</strong> to <strong>${toTypeName || "?"}</strong></p>`;
+
+  const html = `
+    <div style="font-family: system-ui, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px;">
+      <h1 style="font-size: 18px; color: #111;">Admin ticket update</h1>
+      <p style="color: #444;">An organizer changed a customer's ticket in the admin panel.</p>
+      <div style="background: #f8f8f8; padding: 16px; border-radius: 8px; margin: 16px 0;">
+        ${changeLine}
+        <p style="margin: 4px 0;"><strong>Order:</strong> ${orderReference}</p>
+        ${serial ? `<p style="margin: 4px 0;"><strong>Serial:</strong> ${serial}</p>` : ""}
+        <p style="margin: 4px 0;"><strong>Event:</strong> ${eventName} (${eventSlug})</p>
+        <p style="margin: 4px 0;"><strong>Buyer:</strong> ${buyerName}</p>
+        <p style="margin: 4px 0;"><strong>Email:</strong> ${buyerEmail}</p>
+        <p style="margin: 4px 0;"><strong>Phone:</strong> ${buyerPhone || "—"}</p>
+        ${note ? `<p style="margin: 4px 0;"><strong>Note:</strong> ${note}</p>` : ""}
+      </div>
+      <p style="font-size: 12px; color: #888;">
+        If the type was changed, the buyer's next PDF download will show the new ticket type.
+      </p>
+    </div>
+  `;
+
+  const client = getResendClient();
+  if (!client) {
+    console.log("[Email SIMULATED] Admin ticket change:", subject, recipients);
+    return { success: true, messageId: "simulated-ticket-change" };
+  }
+  try {
+    const result = await client.emails.send({
+      from: `Connect Events <${FROM_EMAIL}>`,
+      to: recipients,
+      replyTo: REPLY_TO,
+      subject,
+      html,
+    });
+    if (result.error) {
+      return { success: false, error: result.error.message };
+    }
+    return { success: true, messageId: result.data?.id };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "Email failed",
+    };
+  }
+}
+
 /**
  * Notify organizers when someone buys or registers.
  * Uses ADMIN_NOTIFY_EMAIL (or ORDER_NOTIFY_EMAIL / REPLY_TO).

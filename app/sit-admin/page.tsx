@@ -21,6 +21,8 @@ import {
   adminGetAllDonations,
   adminSavePurchase,
   adminIssueManualTickets,
+  adminChangeTicketType,
+  adminDeleteTicketUnit,
   adminListCheckinStaff,
   adminCreateCheckinStaff,
   adminSetCheckinStaffEnabled,
@@ -145,6 +147,7 @@ export default function AdminDashboard() {
     /** Optional donation at checkout */
     donationEnabled: false,
     donationDefaultAmount: 50,
+    hideSeatCounts: false,
     /** Empty = use default white-gold theme */
     primaryColor: "",
     secondaryColor: "",
@@ -1155,6 +1158,7 @@ export default function AdminDashboard() {
       ticketTemplate: "",
       donationEnabled: false,
       donationDefaultAmount: 50,
+      hideSeatCounts: false,
       primaryColor: "",
       secondaryColor: "",
       backgroundColor: "",
@@ -1235,6 +1239,7 @@ export default function AdminDashboard() {
         0,
         Number(ev.donationDefaultAmount) || 50
       ),
+      hideSeatCounts: Boolean(ev.hideSeatCounts),
       primaryColor: theme.primaryColor,
       secondaryColor: theme.secondaryColor,
       backgroundColor: theme.backgroundColor,
@@ -1313,6 +1318,7 @@ export default function AdminDashboard() {
         0,
         Number(ev.donationDefaultAmount) || 50
       ),
+      hideSeatCounts: Boolean(ev.hideSeatCounts),
       primaryColor: theme.primaryColor,
       secondaryColor: theme.secondaryColor,
       backgroundColor: theme.backgroundColor,
@@ -1591,6 +1597,7 @@ export default function AdminDashboard() {
       donationDefaultAmount: eventForm.donationEnabled
         ? Math.max(0, Number(eventForm.donationDefaultAmount) || 0)
         : undefined,
+      hideSeatCounts: Boolean(eventForm.hideSeatCounts),
       seatDays:
         seatDaysForm.length > 0
           ? seatDaysForm
@@ -3187,10 +3194,13 @@ export default function AdminDashboard() {
                       {(() => {
                         const units = purchase.ticket_breakdown || [];
                         const hasSerials = units.some((u: any) => u.serial);
+                        const eventTypes =
+                          events.find((e) => e.slug === purchase.event_slug)
+                            ?.ticketTypes || [];
 
                         if (hasSerials) {
                           return (
-                            <ul className="space-y-1.5 font-mono text-[11px] leading-snug">
+                            <ul className="space-y-2 font-mono text-[11px] leading-snug">
                               {units.map((u: any, i: number) => {
                                 const used = u.redemptions?.length || 0;
                                 const max = getTicketTypeLimit(
@@ -3198,26 +3208,127 @@ export default function AdminDashboard() {
                                   u.ticketTypeId
                                 );
                                 const done = used >= max;
+                                const typeName =
+                                  getTicketType(
+                                    purchase.event_slug,
+                                    u.ticketTypeId
+                                  )?.name || u.ticketTypeId;
                                 return (
-                                  <li key={u.serial || i} className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-                                    <span className="text-zinc-700">{u.serial}</span>
-                                    <span
-                                      className={
-                                        done
-                                          ? "text-green-600 font-medium tabular-nums"
-                                          : used > 0
-                                            ? "text-amber-600 font-medium tabular-nums"
-                                            : "text-zinc-400 tabular-nums"
-                                      }
-                                    >
-                                      {used}/{max}
-                                      {done ? " ✓" : used === 0 ? " open" : ""}
-                                    </span>
-                                    {used > 0 && u.redemptions?.[used - 1] && (
-                                      <span className="text-[10px] text-zinc-400 font-sans">
-                                        last {formatDateTime(u.redemptions[used - 1])}
+                                  <li
+                                    key={u.serial || i}
+                                    className="border-b border-zinc-100 pb-1.5 last:border-0 space-y-1"
+                                  >
+                                    <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                                      <span className="text-zinc-700">
+                                        {u.serial}
                                       </span>
-                                    )}
+                                      <span className="font-sans text-zinc-600">
+                                        {typeName}
+                                      </span>
+                                      <span
+                                        className={
+                                          done
+                                            ? "text-green-600 font-medium tabular-nums"
+                                            : used > 0
+                                              ? "text-amber-600 font-medium tabular-nums"
+                                              : "text-zinc-400 tabular-nums"
+                                        }
+                                      >
+                                        {used}/{max}
+                                        {done ? " ✓" : used === 0 ? " open" : ""}
+                                      </span>
+                                    </div>
+                                    <div className="flex flex-wrap gap-1.5 font-sans">
+                                      <select
+                                        className="border rounded px-1.5 py-0.5 text-[10px] max-w-[9rem]"
+                                        value={u.ticketTypeId}
+                                        onChange={async (e) => {
+                                          const newId = e.target.value;
+                                          if (newId === u.ticketTypeId) return;
+                                          if (
+                                            !confirm(
+                                              `Change ticket ${u.serial} to ${
+                                                eventTypes.find(
+                                                  (t) => t.id === newId
+                                                )?.name || newId
+                                              }?`
+                                            )
+                                          ) {
+                                            e.target.value = u.ticketTypeId;
+                                            return;
+                                          }
+                                          const res = await adminChangeTicketType({
+                                            purchaseId: purchase.id!,
+                                            serial: u.serial,
+                                            newTicketTypeId: newId,
+                                          });
+                                          if (!res.success) {
+                                            toast.error(
+                                              res.error || "Could not change type"
+                                            );
+                                            e.target.value = u.ticketTypeId;
+                                            return;
+                                          }
+                                          toast.success(
+                                            "Ticket type updated (PDF will show new type)"
+                                          );
+                                          void loadPurchases();
+                                        }}
+                                      >
+                                        {eventTypes
+                                          .filter(
+                                            (t) =>
+                                              t.enabled !== false && !t.archived
+                                          )
+                                          .map((t) => (
+                                            <option key={t.id} value={t.id}>
+                                              {t.name}
+                                            </option>
+                                          ))}
+                                        {/* keep current if disabled/archived */}
+                                        {!eventTypes.some(
+                                          (t) =>
+                                            t.id === u.ticketTypeId &&
+                                            t.enabled !== false &&
+                                            !t.archived
+                                        ) && (
+                                          <option value={u.ticketTypeId}>
+                                            {typeName}
+                                          </option>
+                                        )}
+                                      </select>
+                                      <button
+                                        type="button"
+                                        className="text-[10px] text-red-600 border border-red-200 rounded px-1.5 py-0.5 hover:bg-red-50"
+                                        onClick={async () => {
+                                          if (
+                                            !confirm(
+                                              `Delete ticket ${u.serial} for ${purchase.name}? This cannot be undone.`
+                                            )
+                                          ) {
+                                            return;
+                                          }
+                                          const res = await adminDeleteTicketUnit({
+                                            purchaseId: purchase.id!,
+                                            serial: u.serial,
+                                          });
+                                          if (!res.success) {
+                                            toast.error(
+                                              res.error || "Could not delete"
+                                            );
+                                            return;
+                                          }
+                                          toast.success(
+                                            res.purchaseDeleted
+                                              ? "Ticket deleted (order removed)"
+                                              : "Ticket deleted"
+                                          );
+                                          void loadPurchases();
+                                        }}
+                                      >
+                                        Delete
+                                      </button>
+                                    </div>
                                   </li>
                                 );
                               })}
@@ -3225,15 +3336,109 @@ export default function AdminDashboard() {
                           );
                         }
 
-                        // Legacy order (no per-ticket serials)
+                        // Legacy order (no per-ticket serials) - still allow type change / delete by index
+                        if (units.length > 0) {
+                          return (
+                            <ul className="space-y-2 text-[11px]">
+                              {units.map((u: any, i: number) => {
+                                const typeName =
+                                  getTicketType(
+                                    purchase.event_slug,
+                                    u.ticketTypeId
+                                  )?.name || u.ticketTypeId;
+                                const q = Math.max(1, Number(u.quantity) || 1);
+                                return (
+                                  <li key={i} className="space-y-1">
+                                    <div className="text-zinc-600">
+                                      {typeName}
+                                      {q > 1 ? ` ×${q}` : ""}
+                                    </div>
+                                    <div className="flex flex-wrap gap-1.5">
+                                      <select
+                                        className="border rounded px-1.5 py-0.5 text-[10px] max-w-[9rem]"
+                                        value={u.ticketTypeId}
+                                        onChange={async (e) => {
+                                          const newId = e.target.value;
+                                          if (newId === u.ticketTypeId) return;
+                                          if (
+                                            !confirm(
+                                              `Change this line to ${
+                                                eventTypes.find(
+                                                  (t) => t.id === newId
+                                                )?.name || newId
+                                              }?`
+                                            )
+                                          ) {
+                                            e.target.value = u.ticketTypeId;
+                                            return;
+                                          }
+                                          const res = await adminChangeTicketType({
+                                            purchaseId: purchase.id!,
+                                            unitIndex: i,
+                                            newTicketTypeId: newId,
+                                          });
+                                          if (!res.success) {
+                                            toast.error(
+                                              res.error || "Could not change type"
+                                            );
+                                            e.target.value = u.ticketTypeId;
+                                            return;
+                                          }
+                                          toast.success("Ticket type updated");
+                                          void loadPurchases();
+                                        }}
+                                      >
+                                        {eventTypes
+                                          .filter(
+                                            (t) =>
+                                              t.enabled !== false && !t.archived
+                                          )
+                                          .map((t) => (
+                                            <option key={t.id} value={t.id}>
+                                              {t.name}
+                                            </option>
+                                          ))}
+                                      </select>
+                                      <button
+                                        type="button"
+                                        className="text-[10px] text-red-600 border border-red-200 rounded px-1.5 py-0.5 hover:bg-red-50"
+                                        onClick={async () => {
+                                          if (
+                                            !confirm(
+                                              `Delete this ticket line for ${purchase.name}?`
+                                            )
+                                          ) {
+                                            return;
+                                          }
+                                          const res = await adminDeleteTicketUnit({
+                                            purchaseId: purchase.id!,
+                                            unitIndex: i,
+                                          });
+                                          if (!res.success) {
+                                            toast.error(
+                                              res.error || "Could not delete"
+                                            );
+                                            return;
+                                          }
+                                          toast.success("Ticket deleted");
+                                          void loadPurchases();
+                                        }}
+                                      >
+                                        Delete
+                                      </button>
+                                    </div>
+                                  </li>
+                                );
+                              })}
+                            </ul>
+                          );
+                        }
+
                         const used = getCurrentRedemptionCount(purchase);
                         const max = getMaxRedemptionsForPurchase(purchase);
                         return (
                           <span className="text-zinc-500">
                             Order-level only: {used}/{max}
-                            <span className="block text-[10px] text-zinc-400 mt-0.5">
-                              (no serials - re-purchase after serial fix for per-ticket tracking)
-                            </span>
                           </span>
                         );
                       })()}
@@ -3309,7 +3514,7 @@ export default function AdminDashboard() {
             </table>
           </div>
           <p className="mt-4 text-xs text-zinc-500">
-            Data from memory or Supabase. Use Download if a buyer did not receive their email - then send the PDF manually.
+            Data from Supabase. Per-ticket: change type or Delete (admin is emailed). Next buyer PDF download uses the updated type. Use Download to resend PDFs manually.
           </p>
           <p className="mt-1 text-[10px] text-zinc-400">
             Note: The internal database <code>id</code> (BIGSERIAL) keeps increasing even after deletes. 
@@ -4489,6 +4694,23 @@ export default function AdminDashboard() {
                     onChange={(e) => setEventForm({ ...eventForm, paymentEnabled: e.target.checked })}
                   />
                   <label htmlFor="paymentEnabled" className="text-sm">Require payment (uncheck for free registration-only events)</label>
+                </div>
+
+                <div className="flex items-center gap-2 pt-1 md:col-span-2">
+                  <input
+                    type="checkbox"
+                    id="hideSeatCounts"
+                    checked={Boolean(eventForm.hideSeatCounts)}
+                    onChange={(e) =>
+                      setEventForm({
+                        ...eventForm,
+                        hideSeatCounts: e.target.checked,
+                      })
+                    }
+                  />
+                  <label htmlFor="hideSeatCounts" className="text-sm">
+                    Hide remaining seat counts from buyers (still enforces stock limits)
+                  </label>
                 </div>
 
                 {/* Shared seating by day (accumulated inventory) */}

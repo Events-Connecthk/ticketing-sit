@@ -97,6 +97,7 @@ function mapRowToEventConfig(data: any): EventConfig {
         .filter((s: { date: string }) => /^\d{4}-\d{2}-\d{2}$/.test(s.date));
       return days.length ? days : undefined;
     })(),
+    hideSeatCounts: meta.hideSeatCounts === true ? true : undefined,
     ticketTypes: (data.ticket_types || data.ticketTypes || []).map((t: any) => ({
       ...t,
       enabled: t.enabled !== false,
@@ -323,6 +324,12 @@ export async function adminSaveEventDetailed(
       if (!(meta.seatDays as unknown[]).length) delete meta.seatDays;
     } else {
       delete meta.seatDays;
+    }
+
+    if (cleanEvent.hideSeatCounts) {
+      meta.hideSeatCounts = true;
+    } else {
+      delete meta.hideSeatCounts;
     }
 
     // FR 6.1 audit log for capacity changes
@@ -637,6 +644,299 @@ export async function adminSavePurchase(input: Partial<PurchaseRecord> & { id?: 
   } catch (err) {
     console.error("[Admin Actions] adminSavePurchase error:", err);
     return null;
+  }
+}
+
+/**
+ * Change one ticket unit's type on a purchase (by serial, or by index for legacy).
+ * PDF re-download uses updated ticket_breakdown.
+ */
+export async function adminChangeTicketType(input: {
+  purchaseId: string | number;
+  /** Prefer serial when present */
+  serial?: string;
+  /** Fallback if no serials */
+  unitIndex?: number;
+  newTicketTypeId: string;
+  note?: string;
+}): Promise<{ success: boolean; error?: string; purchase?: PurchaseRecord }> {
+  try {
+    await requireAdmin();
+    const supabaseAdmin = getSupabaseAdmin();
+    if (!supabaseAdmin) {
+      return { success: false, error: "Database not configured." };
+    }
+
+    const { data: purchase, error: fetchErr } = await supabaseAdmin
+      .from("purchases")
+      .select("*")
+      .eq("id", input.purchaseId)
+      .single();
+    if (fetchErr || !purchase) {
+      return { success: false, error: "Purchase not found." };
+    }
+
+    const { loadEventBySlug } = await import("@/lib/config/events");
+    const event = await loadEventBySlug(purchase.event_slug);
+    if (!event) return { success: false, error: "Event not found." };
+
+    const newType = (event.ticketTypes || []).find(
+      (t) => t.id === input.newTicketTypeId
+    );
+    if (!newType) {
+      return { success: false, error: "Unknown ticket type." };
+    }
+    if (newType.enabled === false || newType.archived) {
+      return { success: false, error: "That ticket type is not available." };
+    }
+
+    const units: any[] = Array.isArray(purchase.ticket_breakdown)
+      ? [...purchase.ticket_breakdown]
+      : [];
+    if (units.length === 0) {
+      return { success: false, error: "No tickets on this purchase." };
+    }
+
+    let idx = -1;
+    if (input.serial) {
+      idx = units.findIndex((u) => u.serial === input.serial);
+    } else if (input.unitIndex != null) {
+      idx = Number(input.unitIndex);
+    }
+    if (idx < 0 || idx >= units.length) {
+      return { success: false, error: "Ticket unit not found." };
+    }
+
+    const oldTypeId = units[idx].ticketTypeId;
+    if (oldTypeId === input.newTicketTypeId) {
+      return { success: false, error: "Already that ticket type." };
+    }
+    const oldTypeName =
+      event.ticketTypes.find((t) => t.id === oldTypeId)?.name || oldTypeId;
+
+    // Capacity check: remove old unit from consideration by temporarily
+    // validating as if we issue 1 of new type without the old unit
+    const { assertCanIssueTickets } = await import("@/lib/tickets/capacity");
+    const { data: allPurchases } = await supabaseAdmin
+      .from("purchases")
+      .select(
+        "id, ticket_breakdown, number_of_tickets, payment_method, order_reference"
+      )
+      .eq("event_slug", purchase.event_slug);
+
+    // Simulate: count without this unit, then add new type
+    const simulated = (allPurchases || []).map((p: any) => {
+      if (String(p.id) !== String(purchase.id)) return p;
+      const bd = (p.ticket_breakdown || []).filter(
+        (_: any, i: number) => i !== idx
+      );
+      return { ...p, ticket_breakdown: bd };
+    });
+    const capErr = assertCanIssueTickets(
+      event,
+      [{ ticketTypeId: input.newTicketTypeId, quantity: 1 }],
+      simulated as any
+    );
+    if (capErr) {
+      return { success: false, error: capErr };
+    }
+
+    units[idx] = { ...units[idx], ticketTypeId: input.newTicketTypeId };
+    const ticketCount = units.reduce(
+      (s, u) => s + (u.serial ? 1 : Math.max(1, Number(u.quantity) || 1)),
+      0
+    );
+
+    const { data: updated, error: upErr } = await supabaseAdmin
+      .from("purchases")
+      .update({
+        ticket_breakdown: units,
+        number_of_tickets: ticketCount,
+      })
+      .eq("id", purchase.id)
+      .select()
+      .single();
+
+    if (upErr || !updated) {
+      return {
+        success: false,
+        error: upErr?.message || "Failed to update purchase.",
+      };
+    }
+
+    try {
+      const { sendAdminTicketChangeNotification } = await import(
+        "@/lib/integrations/email"
+      );
+      await sendAdminTicketChangeNotification({
+        kind: "changed",
+        eventName: event.name,
+        eventSlug: event.slug,
+        orderReference:
+          purchase.order_reference || purchase.payment_reference || String(purchase.id),
+        serial: units[idx].serial,
+        buyerName: purchase.name,
+        buyerEmail: purchase.email,
+        buyerPhone: purchase.phone,
+        fromTypeName: oldTypeName,
+        toTypeName: newType.name,
+        note: input.note,
+      });
+    } catch (e) {
+      console.error("[Admin] change notify failed:", e);
+    }
+
+    return { success: true, purchase: updated as PurchaseRecord };
+  } catch (err) {
+    console.error("[Admin] adminChangeTicketType:", err);
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "Change failed",
+    };
+  }
+}
+
+/**
+ * Delete one ticket unit from a purchase. If none left, delete the purchase row.
+ */
+export async function adminDeleteTicketUnit(input: {
+  purchaseId: string | number;
+  serial?: string;
+  unitIndex?: number;
+  note?: string;
+}): Promise<{
+  success: boolean;
+  error?: string;
+  purchaseDeleted?: boolean;
+  purchase?: PurchaseRecord | null;
+}> {
+  try {
+    await requireAdmin();
+    const supabaseAdmin = getSupabaseAdmin();
+    if (!supabaseAdmin) {
+      return { success: false, error: "Database not configured." };
+    }
+
+    const { data: purchase, error: fetchErr } = await supabaseAdmin
+      .from("purchases")
+      .select("*")
+      .eq("id", input.purchaseId)
+      .single();
+    if (fetchErr || !purchase) {
+      return { success: false, error: "Purchase not found." };
+    }
+
+    const { loadEventBySlug } = await import("@/lib/config/events");
+    const event = await loadEventBySlug(purchase.event_slug);
+
+    const units: any[] = Array.isArray(purchase.ticket_breakdown)
+      ? [...purchase.ticket_breakdown]
+      : [];
+    let idx = -1;
+    if (input.serial) {
+      idx = units.findIndex((u) => u.serial === input.serial);
+    } else if (input.unitIndex != null) {
+      idx = Number(input.unitIndex);
+    }
+    if (idx < 0 || idx >= units.length) {
+      return { success: false, error: "Ticket unit not found." };
+    }
+
+    const removed = units[idx];
+    const fromTypeName =
+      event?.ticketTypes?.find((t) => t.id === removed.ticketTypeId)?.name ||
+      removed.ticketTypeId;
+
+    units.splice(idx, 1);
+
+    if (units.length === 0) {
+      const { error: delErr } = await supabaseAdmin
+        .from("purchases")
+        .delete()
+        .eq("id", purchase.id);
+      if (delErr) {
+        return { success: false, error: delErr.message };
+      }
+      try {
+        const { sendAdminTicketChangeNotification } = await import(
+          "@/lib/integrations/email"
+        );
+        await sendAdminTicketChangeNotification({
+          kind: "deleted",
+          eventName: event?.name || purchase.event_slug,
+          eventSlug: purchase.event_slug,
+          orderReference:
+            purchase.order_reference ||
+            purchase.payment_reference ||
+            String(purchase.id),
+          serial: removed.serial,
+          buyerName: purchase.name,
+          buyerEmail: purchase.email,
+          buyerPhone: purchase.phone,
+          fromTypeName,
+          note: input.note || "Last ticket on order removed; purchase deleted.",
+        });
+      } catch (e) {
+        console.error("[Admin] delete notify failed:", e);
+      }
+      return { success: true, purchaseDeleted: true, purchase: null };
+    }
+
+    const ticketCount = units.reduce(
+      (s, u) => s + (u.serial ? 1 : Math.max(1, Number(u.quantity) || 1)),
+      0
+    );
+    const { data: updated, error: upErr } = await supabaseAdmin
+      .from("purchases")
+      .update({
+        ticket_breakdown: units,
+        number_of_tickets: ticketCount,
+      })
+      .eq("id", purchase.id)
+      .select()
+      .single();
+
+    if (upErr || !updated) {
+      return {
+        success: false,
+        error: upErr?.message || "Failed to update purchase.",
+      };
+    }
+
+    try {
+      const { sendAdminTicketChangeNotification } = await import(
+        "@/lib/integrations/email"
+      );
+      await sendAdminTicketChangeNotification({
+        kind: "deleted",
+        eventName: event?.name || purchase.event_slug,
+        eventSlug: purchase.event_slug,
+        orderReference:
+          purchase.order_reference ||
+          purchase.payment_reference ||
+          String(purchase.id),
+        serial: removed.serial,
+        buyerName: purchase.name,
+        buyerEmail: purchase.email,
+        buyerPhone: purchase.phone,
+        fromTypeName,
+        note: input.note,
+      });
+    } catch (e) {
+      console.error("[Admin] delete notify failed:", e);
+    }
+
+    return {
+      success: true,
+      purchaseDeleted: false,
+      purchase: updated as PurchaseRecord,
+    };
+  } catch (err) {
+    console.error("[Admin] adminDeleteTicketUnit:", err);
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "Delete failed",
+    };
   }
 }
 

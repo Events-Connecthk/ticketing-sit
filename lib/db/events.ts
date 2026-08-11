@@ -61,6 +61,10 @@ function normalizeEvent(raw: any): EventConfig {
           ? 0
           : undefined,
     seatDays: seatDays.length ? seatDays : undefined,
+    hideSeatCounts:
+      meta.hideSeatCounts === true || raw.hideSeatCounts === true
+        ? true
+        : undefined,
     ticketTypes: (raw.ticketTypes || raw.ticket_types || []).map((t: any) => ({
       ...t,
       enabled: t.enabled !== false,

@@ -359,6 +359,7 @@ export default function EventPage({ params }: EventPageProps) {
                     soldByType={soldByType}
                     soldByDay={soldByDay}
                     seatDays={event.seatDays}
+                    hideSeatCounts={Boolean(event.hideSeatCounts)}
                   />
                 )}
 

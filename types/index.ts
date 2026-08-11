@@ -111,6 +111,11 @@ export interface EventConfig {
    * A multi-day ticket (validFrom–validTo spanning days) deducts 1 seat from each day it covers.
    */
   seatDays?: SeatDayCapacity[];
+  /**
+   * When true, public ticket page does not show remaining seat counts.
+   * Capacity still enforced; only the display is hidden.
+   */
+  hideSeatCounts?: boolean;
   // Optional metadata for future extensibility
   metadata?: Record<string, unknown>;
 }

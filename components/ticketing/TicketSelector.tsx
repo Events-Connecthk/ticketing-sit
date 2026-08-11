@@ -23,6 +23,8 @@ interface TicketSelectorProps {
   soldByDay?: Record<string, number>;
   /** Event-level seat day capacities */
   seatDays?: SeatDayCapacity[];
+  /** Hide remaining seat counts on cards (still enforces max qty) */
+  hideSeatCounts?: boolean;
 }
 
 /**
@@ -38,6 +40,7 @@ export function TicketSelector({
   soldByType = {},
   soldByDay = {},
   seatDays,
+  hideSeatCounts = false,
 }: TicketSelectorProps) {
   const getQuantity = (id: string) =>
     selections.find((s) => s.ticketTypeId === id)?.quantity ?? 0;
@@ -173,7 +176,7 @@ export function TicketSelector({
                     Out of stock
                   </span>
                 )}
-                {limited && !soldOut && (
+                {limited && !soldOut && !hideSeatCounts && (
                   <span className="text-xs font-semibold uppercase tracking-wide text-amber-800 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded">
                     Limited available
                     {displayRemaining != null ? ` (${displayRemaining} left)` : ""}
@@ -189,8 +192,8 @@ export function TicketSelector({
               <p className="mt-1 text-xs text-amber-700">
                 Max {ticket.maxPerOrder ?? 6} per order
               </p>
-              {/* Live shared-pool availability (other types in cart count too) */}
-              {maxAvailable != null && (
+              {/* Live shared-pool availability (hidden when admin disables seat counts) */}
+              {maxAvailable != null && !hideSeatCounts && (
                 <p
                   className={`mt-1.5 text-sm font-semibold tabular-nums ${
                     soldOut
@@ -211,6 +214,11 @@ export function TicketSelector({
                       · {qty} in cart
                     </span>
                   ) : null}
+                </p>
+              )}
+              {soldOut && hideSeatCounts && (
+                <p className="mt-1.5 text-sm font-semibold text-red-700">
+                  Sold out
                 </p>
               )}
             </div>
