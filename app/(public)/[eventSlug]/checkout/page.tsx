@@ -358,7 +358,7 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
       setNeedsManualConfirm(true);
       setError(
         result.error ||
-          "Payment is still pending (common with FPS). If you finished in the bank app, tap Check payment again. FPS usually must be completed within about 1 minute."
+          "Payment not confirmed yet. You can check again, or start a new payment and choose a method other than FPS if possible."
       );
     } catch (e) {
       console.error("[Checkout] Return finalize error:", e);
@@ -557,14 +557,12 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
 
             {/* Shown when webhook has not confirmed paid (cancel OR pay still processing) */}
             {!isFreeEvent && !hasReturnSession && (
-              <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50/90 p-4 text-sm text-amber-950 space-y-2">
-                <p className="font-medium">FPS payment tip (important)</p>
-                <p className="text-amber-900/90 text-xs leading-relaxed">
-                  If you choose <strong>FPS</strong>, finish in the bank app within
-                  about <strong>1 minute</strong>. Open or log into your banking app
-                  first, then complete FPS quickly. A long delay can time out even if
-                  the main KPay page still looks open. Cards/other methods follow
-                  KPay&apos;s normal checkout time.
+              <div className="mb-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-900 space-y-1.5">
+                <p className="font-semibold">Please avoid FPS for now</p>
+                <p className="text-red-800/90 text-xs leading-relaxed">
+                  FPS is unreliable at the moment and often times out. On the next
+                  screen, please choose <strong>another payment method</strong>{" "}
+                  (for example card or Alipay) if you can.
                 </p>
               </div>
             )}
@@ -573,13 +571,12 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
               <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-4 space-y-3">
                 <div>
                   <p className="font-medium text-amber-950">
-                    Checking payment status
+                    We could not confirm your payment yet
                   </p>
                   <p className="text-sm text-amber-900/80 mt-1">
-                    KPay has not confirmed Paid yet (common with FPS). Tickets are only
-                    issued after KPay reports paid. If you finished FPS in your bank app,
-                    wait a few seconds and check again. If you cancelled or FPS timed
-                    out (~1 minute), start payment again.
+                    This happens often with FPS. You can check again, or start over and
+                    pick a different payment method. No ticket is issued until payment
+                    is confirmed.
                   </p>
                 </div>
                 <div className="flex flex-col gap-2">
@@ -606,7 +603,7 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
                     disabled={isProcessing}
                     onClick={handleManualPaid}
                   >
-                    I paid - try get tickets
+                    I already paid
                   </button>
                   <button
                     type="button"
@@ -614,33 +611,23 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
                     disabled={isProcessing}
                     onClick={handleManualCancel}
                   >
-                    I cancelled / timed out - no ticket
+                    I did not finish paying
                   </button>
                 </div>
-                {returnDebug && (
-                  <p className="text-[10px] text-zinc-500 break-all font-mono">
-                    {returnDebug}
-                  </p>
-                )}
               </div>
             )}
 
             {error && !needsManualConfirm && (
               <div className="mb-4 rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-700 space-y-2">
                 <p>{error}</p>
-                {/cancell?ed|not completed|not issued|timed out|timeout/i.test(
-                  error
-                ) && (
-                  <p className="text-xs text-red-600/80">
-                    For FPS, complete bank transfer within about 1 minute. You can try
-                    paying again below.
-                  </p>
-                )}
+                <p className="text-xs text-red-600/80">
+                  If FPS failed, try again and choose another payment method.
+                </p>
               </div>
             )}
 
             {error && needsManualConfirm && (
-              <div className="mb-4 rounded-lg bg-amber-50 border border-amber-200 p-3 text-sm text-amber-950">
+              <div className="mb-4 rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-800">
                 <p>{error}</p>
               </div>
             )}
@@ -654,8 +641,8 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
                 ? isFreeEvent
                   ? "Registering..."
                   : hasReturnSession
-                    ? "Checking payment with KPay..."
-                    : "Redirecting to KPay..."
+                    ? "Checking payment..."
+                    : "Opening payment..."
                 : isFreeEvent
                   ? "Register for Free"
                   : `Pay ${currentCart.currency} ${formatMoney(currentCart.totalAmount)} with KPay`}
@@ -663,8 +650,8 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
 
             <p className="text-center text-xs text-zinc-500 mt-3">
               {isFreeEvent
-                ? "Free registration flow. No payment required."
-                : "You will be redirected to KPay. FPS: finish in ~1 minute in your bank app."}
+                ? "Free registration. No payment required."
+                : "You will open a secure payment page. Prefer methods other than FPS if available."}
             </p>
           </div>
         </div>

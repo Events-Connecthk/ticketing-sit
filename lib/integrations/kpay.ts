@@ -1174,8 +1174,7 @@ export async function confirmKpayPayment(
       success: false,
       outcome: "unknown",
       error:
-        "Payment not confirmed by KPay yet. FPS can take a short time. Wait and tap Check again, or contact support with your session id: " +
-        paymentId,
+        "We have not confirmed your payment yet. Please wait a moment and try Check payment again. If you used FPS, prefer another payment method and try again.",
     };
   }
 
@@ -1201,10 +1200,8 @@ export async function confirmKpayPayment(
     success: false,
     outcome: "unknown",
     error:
-      "Payment is still pending with KPay (common with FPS). " +
-      "If you completed FPS in the bank app, wait a moment and check again — tickets issue when KPay confirms Paid. " +
-      "FPS often must be finished within about 1 minute. Session: " +
-      paymentId,
+      "Payment not confirmed yet. If you paid, tap Check payment again. " +
+      "FPS often fails or times out — please use another payment method (e.g. card or Alipay) if you can.",
   };
 }
 
