@@ -296,12 +296,15 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
         console.warn("[Checkout] Session debug failed", e);
       }
 
-      // Poll several times — do not treat return URL alone as paid
+      // Poll longer for FPS (KPay: FPS step ~1 min; bank confirm can lag).
+      // Each finalize also polls KPay internally.
       let result = await finalizeAfterPayment(paymentReference, usedCart, {
         returnResult: "unknown",
       });
-      for (let i = 0; i < 4 && !result.success; i++) {
-        await new Promise((r) => setTimeout(r, 2000));
+      for (let i = 0; i < 6 && !result.success; i++) {
+        const outcome = String(result.metadata?.outcome || "");
+        if (outcome === "cancelled") break;
+        await new Promise((r) => setTimeout(r, 2500));
         result = await finalizeAfterPayment(paymentReference, usedCart, {
           returnResult: "unknown",
         });
@@ -329,11 +332,11 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
 
       const outcome = String(result.metadata?.outcome || "");
       const errText = String(result.error || "");
+      // Only hard-cancel when KPay said failed/cancelled — not when still pending (FPS)
       const looksCancelled =
-        outcome === "cancelled" ||
-        /cancell?ed|failed\. No ticket|not issued/i.test(errText);
+        outcome === "cancelled" &&
+        !/pending|still pending|FPS|wait a moment|check again/i.test(errText);
 
-      // Clear cancel: no dual-button confusion
       if (looksCancelled) {
         finalizedSessionsRef.current.add(`cancel:${paymentReference}`);
         try {
@@ -350,12 +353,12 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
         return;
       }
 
-      // Still unknown (order pending / no webhook) — keep safety buttons
+      // Still pending / unknown — keep session, offer check-again (FPS lag)
       finalizedSessionsRef.current.delete(paymentReference);
       setNeedsManualConfirm(true);
       setError(
         result.error ||
-          "We could not tell yet if payment completed. If you paid, tap “I paid”. If you left without paying, tap “I cancelled”."
+          "Payment is still pending (common with FPS). If you finished in the bank app, tap Check payment again. FPS usually must be completed within about 1 minute."
       );
     } catch (e) {
       console.error("[Checkout] Return finalize error:", e);
@@ -553,16 +556,30 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
             </div>
 
             {/* Shown when webhook has not confirmed paid (cancel OR pay still processing) */}
+            {!isFreeEvent && !hasReturnSession && (
+              <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50/90 p-4 text-sm text-amber-950 space-y-2">
+                <p className="font-medium">FPS payment tip (important)</p>
+                <p className="text-amber-900/90 text-xs leading-relaxed">
+                  If you choose <strong>FPS</strong>, finish in the bank app within
+                  about <strong>1 minute</strong>. Open or log into your banking app
+                  first, then complete FPS quickly. A long delay can time out even if
+                  the main KPay page still looks open. Cards/other methods follow
+                  KPay&apos;s normal checkout time.
+                </p>
+              </div>
+            )}
+
             {needsManualConfirm && hasReturnSession && (
               <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-4 space-y-3">
                 <div>
                   <p className="font-medium text-amber-950">
-                    Did you finish payment?
+                    Checking payment status
                   </p>
                   <p className="text-sm text-amber-900/80 mt-1">
-                    KPay sent you back without a clear paid/cancel flag (same return URL
-                    for both). We checked the order status but it is still pending. Pick
-                    what you did - no ticket is issued unless you confirm payment.
+                    KPay has not confirmed Paid yet (common with FPS). Tickets are only
+                    issued after KPay reports paid. If you finished FPS in your bank app,
+                    wait a few seconds and check again. If you cancelled or FPS timed
+                    out (~1 minute), start payment again.
                   </p>
                 </div>
                 <div className="flex flex-col gap-2">
@@ -570,9 +587,26 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
                     type="button"
                     className="rounded-lg bg-emerald-600 text-white px-4 py-3 font-medium disabled:opacity-60"
                     disabled={isProcessing}
+                    onClick={() => {
+                      const session =
+                        searchParams.get("session") ||
+                        searchParams.get("outTradeNo") ||
+                        searchParams.get("out_trade_no") ||
+                        "";
+                      if (session && cart) {
+                        void handlePaymentReturnPoll(session, cart);
+                      }
+                    }}
+                  >
+                    Check payment again
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded-lg bg-emerald-800 text-white px-4 py-3 font-medium disabled:opacity-60"
+                    disabled={isProcessing}
                     onClick={handleManualPaid}
                   >
-                    I paid - get my tickets
+                    I paid - try get tickets
                   </button>
                   <button
                     type="button"
@@ -580,7 +614,7 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
                     disabled={isProcessing}
                     onClick={handleManualCancel}
                   >
-                    I cancelled - no ticket
+                    I cancelled / timed out - no ticket
                   </button>
                 </div>
                 {returnDebug && (
@@ -594,11 +628,20 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
             {error && !needsManualConfirm && (
               <div className="mb-4 rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-700 space-y-2">
                 <p>{error}</p>
-                {/cancell?ed|not completed|not issued/i.test(error) && (
+                {/cancell?ed|not completed|not issued|timed out|timeout/i.test(
+                  error
+                ) && (
                   <p className="text-xs text-red-600/80">
-                    You can pay again with the button below when ready.
+                    For FPS, complete bank transfer within about 1 minute. You can try
+                    paying again below.
                   </p>
                 )}
+              </div>
+            )}
+
+            {error && needsManualConfirm && (
+              <div className="mb-4 rounded-lg bg-amber-50 border border-amber-200 p-3 text-sm text-amber-950">
+                <p>{error}</p>
               </div>
             )}
 
@@ -611,8 +654,8 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
                 ? isFreeEvent
                   ? "Registering..."
                   : hasReturnSession
-                    ? "Checking payment..."
-                    : "Processing payment..."
+                    ? "Checking payment with KPay..."
+                    : "Redirecting to KPay..."
                 : isFreeEvent
                   ? "Register for Free"
                   : `Pay ${currentCart.currency} ${formatMoney(currentCart.totalAmount)} with KPay`}
@@ -621,7 +664,7 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
             <p className="text-center text-xs text-zinc-500 mt-3">
               {isFreeEvent
                 ? "Free registration flow. No payment required."
-                : "You will be redirected to KPay to complete payment securely."}
+                : "You will be redirected to KPay. FPS: finish in ~1 minute in your bank app."}
             </p>
           </div>
         </div>

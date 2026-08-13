@@ -1097,17 +1097,40 @@ export async function confirmKpayPayment(
     managedOrderNoFromPaymentUrl(pending?.paymentUrl) ||
     managedOrderNoResolved;
 
+  // FPS can lag; poll longer than card flows. KPay: FPS step may timeout ~1 min.
+  // Env override: KPAY_STATUS_POLL_ATTEMPTS (default 15), KPAY_STATUS_POLL_MS (default 2000)
+  const pollAttempts = Math.max(
+    3,
+    Math.min(40, Number(process.env.KPAY_STATUS_POLL_ATTEMPTS) || 15)
+  );
+  const pollMs = Math.max(
+    500,
+    Math.min(5000, Number(process.env.KPAY_STATUS_POLL_MS) || 2000)
+  );
+
   let st: "paid" | "failed" | "unknown" = "unknown";
-  for (let i = 0; i < 3; i++) {
+  for (let i = 0; i < pollAttempts; i++) {
     st = await lookupOrderPayStatus(paymentId, managedOrderNo);
     console.log("[KPay] Order status poll", {
       paymentId,
       managedOrderNo: managedOrderNo || null,
       attempt: i + 1,
+      of: pollAttempts,
       st,
     });
     if (st === "paid" || st === "failed") break;
-    await sleep(1000);
+    // Also re-check webhook/pending mid-poll (late FPS notify)
+    if (i > 0 && i % 3 === 0) {
+      pending = (await getPendingPayment(paymentId)) || pending;
+      if (pending?.status === "paid" || (await isWebhookPaid(paymentId))) {
+        return {
+          success: true,
+          paymentReference: paymentId,
+          outcome: "paid",
+        };
+      }
+    }
+    if (i < pollAttempts - 1) await sleep(pollMs);
   }
 
   if (st === "paid") {
@@ -1151,7 +1174,8 @@ export async function confirmKpayPayment(
       success: false,
       outcome: "unknown",
       error:
-        "Payment not confirmed by KPay yet. Wait a moment and refresh, or contact support with your session id.",
+        "Payment not confirmed by KPay yet. FPS can take a short time. Wait and tap Check again, or contact support with your session id: " +
+        paymentId,
     };
   }
 
@@ -1165,19 +1189,22 @@ export async function confirmKpayPayment(
     };
   }
 
-  // No paid webhook + no paid order result → treat as not completed (cancel/abandon).
-  // Success path relies on webhook/order paid above; do not auto-issue tickets here.
-  if (pending) await markPendingFailed(paymentId);
-  console.log("[KPay] Cancel/incomplete return - no ticket issued", {
+  // Still Pending (state 1): do NOT mark failed — order may pay via late FPS/webhook.
+  // Only true failed/expired states mark failed above.
+  console.log("[KPay] Still pending after polls - no ticket yet (not marking failed)", {
     paymentId,
     managedOrderNo: managedOrderNo || null,
     orderStatus: st,
+    pollAttempts,
   });
   return {
     success: false,
-    outcome: "cancelled",
+    outcome: "unknown",
     error:
-      "Payment was not completed. No ticket was issued - you can try again.",
+      "Payment is still pending with KPay (common with FPS). " +
+      "If you completed FPS in the bank app, wait a moment and check again — tickets issue when KPay confirms Paid. " +
+      "FPS often must be finished within about 1 minute. Session: " +
+      paymentId,
   };
 }
 
