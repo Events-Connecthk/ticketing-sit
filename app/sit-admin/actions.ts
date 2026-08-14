@@ -981,10 +981,14 @@ export type ManualIssueInput = {
   buyer: { name: string; phone: string; email: string };
   /** cash | bank_transfer | fps | alipay_offline | wechat_offline | free | other */
   paymentMethod: string;
+  /** Required when paymentMethod is other */
+  otherSpecify?: string;
   /** Optional proof note (FPS ref, receipt no., etc.) */
   note?: string;
-  /** Leave undefined to use catalog price × qty */
+  /** Leave undefined to use catalog price × qty (tickets only) */
   amountOverride?: number;
+  /** Optional donation — stored in donations table, not purchase.amount */
+  donationAmount?: number;
   currency?: string;
 };
 
@@ -1000,6 +1004,7 @@ export async function adminIssueManualTickets(
   paymentReference?: string;
   error?: string;
   amount?: number;
+  donationAmount?: number;
   ticketCount?: number;
 }> {
   try {
@@ -1009,12 +1014,13 @@ export async function adminIssueManualTickets(
     const name = String(input.buyer?.name || "").trim();
     const phone = String(input.buyer?.phone || "").trim();
     const email = String(input.buyer?.email || "").trim();
-    const paymentMethod = String(input.paymentMethod || "cash")
+    let paymentMethod = String(input.paymentMethod || "cash")
       .trim()
       .toLowerCase()
       .replace(/\s+/g, "_")
       .slice(0, 40);
-    const note = String(input.note || "").trim().slice(0, 120);
+    const otherSpecify = String(input.otherSpecify || "").trim().slice(0, 80);
+    let note = String(input.note || "").trim().slice(0, 160);
 
     if (!eventSlug) {
       return { success: false, error: "Select an event." };
@@ -1028,6 +1034,26 @@ export async function adminIssueManualTickets(
     if (!phone) {
       return { success: false, error: "Buyer phone is required." };
     }
+    if (paymentMethod === "other") {
+      if (!otherSpecify) {
+        return {
+          success: false,
+          error: "Please specify the payment method (required for Other).",
+        };
+      }
+      // Keep method as other:detail for reporting; also put in note
+      const detail = otherSpecify.replace(/[^a-zA-Z0-9 _.-]/g, "").slice(0, 40);
+      paymentMethod = `other:${detail || "unspecified"}`.slice(0, 40);
+      note = note
+        ? `Specify: ${otherSpecify} | ${note}`
+        : `Specify: ${otherSpecify}`;
+      note = note.slice(0, 160);
+    }
+
+    const donationAmount = Math.max(
+      0,
+      Number(input.donationAmount) || 0
+    );
 
     const tickets = (input.tickets || [])
       .map((t) => ({
@@ -1104,15 +1130,21 @@ export async function adminIssueManualTickets(
       };
     }
 
-    let totalAmount =
+    let ticketAmount =
       input.amountOverride != null && !Number.isNaN(Number(input.amountOverride))
         ? Math.max(0, Number(input.amountOverride))
         : catalogTotal;
 
-    // Free / complimentary force zero amount
-    if (paymentMethod === "free" || paymentMethod === "complimentary") {
-      totalAmount = 0;
+    // Free / complimentary force zero ticket amount (donation can still apply)
+    if (
+      paymentMethod === "free" ||
+      paymentMethod === "complimentary" ||
+      paymentMethod.startsWith("free")
+    ) {
+      ticketAmount = 0;
     }
+
+    const payTotal = ticketAmount + donationAmount;
 
     const paymentReference = [
       "MAN",
@@ -1123,12 +1155,15 @@ export async function adminIssueManualTickets(
       .filter(Boolean)
       .join("-");
 
+    // ticketAmount alone on purchase; donationAmount → donations table via order service
     const cart = {
       eventSlug,
       tickets,
       buyer: { name, phone, email },
-      totalAmount,
-      currency: totalAmount === 0 ? "FREE" : currency,
+      ticketAmount,
+      donationAmount: donationAmount > 0 ? donationAmount : undefined,
+      totalAmount: payTotal,
+      currency: payTotal === 0 ? "FREE" : currency,
     };
 
     const { processSuccessfulPurchase } = await import(
@@ -1153,7 +1188,8 @@ export async function adminIssueManualTickets(
       success: true,
       orderReference: result.orderReference,
       paymentReference,
-      amount: totalAmount,
+      amount: ticketAmount,
+      donationAmount: donationAmount > 0 ? donationAmount : undefined,
       ticketCount,
     };
   } catch (err: any) {

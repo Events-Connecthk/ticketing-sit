@@ -115,6 +115,8 @@ export default function AdminDashboard() {
   const [issueBuyerPhone, setIssueBuyerPhone] = useState("");
   const [issueBuyerEmail, setIssueBuyerEmail] = useState("");
   const [issuePaymentMethod, setIssuePaymentMethod] = useState("cash");
+  const [issueOtherSpecify, setIssueOtherSpecify] = useState("");
+  const [issueDonation, setIssueDonation] = useState("");
   const [issueNote, setIssueNote] = useState("");
   const [issueAmountOverride, setIssueAmountOverride] = useState("");
   const [issueSubmitting, setIssueSubmitting] = useState(false);
@@ -122,6 +124,7 @@ export default function AdminDashboard() {
     orderReference: string;
     paymentReference?: string;
     amount: number;
+    donationAmount?: number;
     ticketCount: number;
     eventSlug: string;
   } | null>(null);
@@ -1066,6 +1069,8 @@ export default function AdminDashboard() {
     setIssueBuyerPhone("");
     setIssueBuyerEmail("");
     setIssuePaymentMethod("cash");
+    setIssueOtherSpecify("");
+    setIssueDonation("");
     setIssueNote("");
     setIssueAmountOverride("");
     setIssueResult(null);
@@ -1087,6 +1092,10 @@ export default function AdminDashboard() {
       toast.error("Set quantity for at least one ticket type");
       return;
     }
+    if (issuePaymentMethod === "other" && !issueOtherSpecify.trim()) {
+      toast.error("Please specify the payment method");
+      return;
+    }
 
     setIssueSubmitting(true);
     setIssueResult(null);
@@ -1102,6 +1111,15 @@ export default function AdminDashboard() {
         toast.error("Amount override must be a valid number ≥ 0");
         return;
       }
+      const donationAmount =
+        issueDonation.trim() === "" ? undefined : Number(issueDonation);
+      if (
+        donationAmount !== undefined &&
+        (Number.isNaN(donationAmount) || donationAmount < 0)
+      ) {
+        toast.error("Donation must be a valid number ≥ 0");
+        return;
+      }
 
       const res = await adminIssueManualTickets({
         eventSlug: issueEventSlug,
@@ -1112,8 +1130,13 @@ export default function AdminDashboard() {
           email: issueBuyerEmail.trim(),
         },
         paymentMethod: issuePaymentMethod,
+        otherSpecify:
+          issuePaymentMethod === "other"
+            ? issueOtherSpecify.trim()
+            : undefined,
         note: issueNote.trim() || undefined,
         amountOverride,
+        donationAmount,
       });
 
       if (!res.success) {
@@ -1126,6 +1149,7 @@ export default function AdminDashboard() {
         orderReference: res.orderReference || "",
         paymentReference: res.paymentReference,
         amount: res.amount ?? 0,
+        donationAmount: res.donationAmount,
         ticketCount: res.ticketCount ?? 0,
         eventSlug: issueEventSlug,
       });
@@ -1133,6 +1157,8 @@ export default function AdminDashboard() {
       setIssueQtys({});
       setIssueNote("");
       setIssueAmountOverride("");
+      setIssueDonation("");
+      setIssueOtherSpecify("");
       loadPurchases();
     } catch (err) {
       console.error(err);
@@ -4206,10 +4232,19 @@ export default function AdminDashboard() {
                 <div>
                   <span className="text-emerald-700">Tickets: </span>
                   {issueResult.ticketCount} ·{" "}
-                  <span className="text-emerald-700">Amount: </span>
+                  <span className="text-emerald-700">Ticket amount: </span>
                   {issueResult.amount === 0
                     ? "Free / complimentary"
                     : `HKD ${issueResult.amount.toLocaleString()}`}
+                  {issueResult.donationAmount != null &&
+                    issueResult.donationAmount > 0 && (
+                      <>
+                        {" "}
+                        · <span className="text-emerald-700">Donation: </span>
+                        HKD {issueResult.donationAmount.toLocaleString()}{" "}
+                        (Donations tab)
+                      </>
+                    )}
                 </div>
               </dl>
               <div className="mt-3 flex flex-wrap gap-2">
@@ -4368,7 +4403,10 @@ export default function AdminDashboard() {
                 <label className="text-xs font-medium text-zinc-500">Payment method</label>
                 <select
                   value={issuePaymentMethod}
-                  onChange={(e) => setIssuePaymentMethod(e.target.value)}
+                  onChange={(e) => {
+                    setIssuePaymentMethod(e.target.value);
+                    if (e.target.value !== "other") setIssueOtherSpecify("");
+                  }}
                   className="mt-1 w-full border rounded-lg px-3 py-2.5 text-sm bg-white"
                 >
                   <option value="cash">Cash</option>
@@ -4380,9 +4418,24 @@ export default function AdminDashboard() {
                   <option value="free">Free / complimentary</option>
                 </select>
               </div>
+              {issuePaymentMethod === "other" && (
+                <div>
+                  <label className="text-xs font-medium text-zinc-500">
+                    Please specify <span className="text-red-600">*</span>
+                  </label>
+                  <input
+                    value={issueOtherSpecify}
+                    onChange={(e) => setIssueOtherSpecify(e.target.value)}
+                    required
+                    placeholder="e.g. cheque, PayMe, company transfer"
+                    maxLength={80}
+                    className="mt-1 w-full border rounded-lg px-3 py-2 text-sm"
+                  />
+                </div>
+              )}
               <div>
                 <label className="text-xs font-medium text-zinc-500">
-                  Amount override (optional)
+                  Ticket amount override (optional)
                 </label>
                 <input
                   type="number"
@@ -4399,7 +4452,24 @@ export default function AdminDashboard() {
                   className="mt-1 w-full border rounded-lg px-3 py-2 text-sm disabled:bg-zinc-100"
                 />
                 <p className="mt-1 text-[11px] text-zinc-400">
-                  Leave blank to use catalog total. Free method forces 0.
+                  Tickets only (Purchases tab). Free method forces 0.
+                </p>
+              </div>
+              <div>
+                <label className="text-xs font-medium text-zinc-500">
+                  Donation amount (optional)
+                </label>
+                <input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={issueDonation}
+                  onChange={(e) => setIssueDonation(e.target.value)}
+                  placeholder="0"
+                  className="mt-1 w-full border rounded-lg px-3 py-2 text-sm"
+                />
+                <p className="mt-1 text-[11px] text-zinc-400">
+                  Saved in <strong>Donations</strong> tab only, not in purchase amount.
                 </p>
               </div>
               <div className="sm:col-span-2">
