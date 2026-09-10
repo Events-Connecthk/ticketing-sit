@@ -102,6 +102,8 @@ function mapRowToEventConfig(data: any): EventConfig {
       typeof meta.adminNotifyEmail === "string" && meta.adminNotifyEmail.trim()
         ? String(meta.adminNotifyEmail).trim()
         : undefined,
+    discountStackMode:
+      meta.discountStackMode === "stack" ? "stack" : "single",
     termsEnabled: meta.termsEnabled === true ? true : undefined,
     termsUrl:
       typeof meta.termsUrl === "string" && meta.termsUrl.trim()
@@ -362,6 +364,12 @@ export async function adminSaveEventDetailed(
     } else {
       delete meta.termsEnabled;
       delete meta.termsUrl;
+    }
+
+    if (cleanEvent.discountStackMode === "stack") {
+      meta.discountStackMode = "stack";
+    } else {
+      delete meta.discountStackMode; // default single
     }
 
     // FR 6.1 audit log for capacity changes
@@ -1202,6 +1210,87 @@ export async function adminIssueManualTickets(
       };
     }
     return { success: false, error: msg || "Unexpected error issuing tickets." };
+  }
+}
+
+/**
+ * Public: validate a promo code for an event (date window + maxUses from purchases).
+ */
+export async function validateEventDiscountCode(
+  eventSlug: string,
+  code: string
+): Promise<{
+  ok: boolean;
+  percent?: number;
+  code?: string;
+  reason?: string;
+  uses?: number;
+  maxUses?: number | null;
+}> {
+  const slug = String(eventSlug || "").trim().toLowerCase();
+  if (!slug || !code?.trim()) {
+    return { ok: false, reason: "Enter a discount code." };
+  }
+  try {
+    const { loadEventBySlug } = await import("@/lib/config/events");
+    const event = await loadEventBySlug(slug);
+    if (!event) return { ok: false, reason: "Event not found." };
+
+    let purchases: Array<{
+      applied_discount_code?: string;
+      event_slug: string;
+    }> = [];
+    const supabaseAdmin = getSupabaseAdmin();
+    if (supabaseAdmin) {
+      const { data } = await supabaseAdmin
+        .from("purchases")
+        .select("applied_discount_code, event_slug")
+        .eq("event_slug", slug);
+      purchases = data || [];
+    } else {
+      const { getAllPurchases } = await import("@/lib/db/purchases");
+      purchases = await getAllPurchases({ eventSlug: slug });
+    }
+
+    const { canApplyDiscountCode } = await import(
+      "@/lib/tickets/discount-codes"
+    );
+    const result = canApplyDiscountCode(
+      event.discountCodes,
+      code,
+      purchases,
+      slug
+    );
+    if (!result.ok) return { ok: false, reason: result.reason };
+    return {
+      ok: true,
+      percent: result.code.percent,
+      code: result.code.code,
+      uses: result.uses,
+      maxUses: result.code.maxUses ?? null,
+    };
+  } catch (err) {
+    console.error("[validateEventDiscountCode]", err);
+    return { ok: false, reason: "Could not validate code. Try again." };
+  }
+}
+
+/**
+ * Admin: usage counts for discount codes on an event.
+ */
+export async function adminGetDiscountCodeUsage(
+  eventSlug: string
+): Promise<Record<string, number>> {
+  try {
+    await requireAdmin();
+    const slug = String(eventSlug || "").trim().toLowerCase();
+    if (!slug) return {};
+    const rows = await adminGetAllPurchases({ eventSlug: slug });
+    const { usageByCode } = await import("@/lib/tickets/discount-codes");
+    return usageByCode(rows, slug);
+  } catch (err) {
+    console.error("[adminGetDiscountCodeUsage]", err);
+    return {};
   }
 }
 

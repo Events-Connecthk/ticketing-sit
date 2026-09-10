@@ -72,7 +72,21 @@ export interface DiscountCode {
   validFrom?: string;
   /** YYYY-MM-DD — code closes end of this day (HK). Empty = no expiry */
   validUntil?: string;
+  /** Optional label (e.g. influencer name / campaign) */
+  label?: string;
+  /** Batch id when bulk-generated */
+  batchId?: string;
+  /** false = hidden at checkout (archived). Default true */
+  enabled?: boolean;
+  /**
+   * If false (default), this code cannot be combined with others (current checkout
+   * still applies only one code; reserved for future stacking).
+   */
+  stackable?: boolean;
 }
+
+/** Event-level stacking policy (Phase D stub). Default: single code only. */
+export type DiscountStackMode = "single" | "stack";
 
 /** Per-calendar-day seat pool (shared across ticket types covering that day). */
 export interface SeatDayCapacity {
@@ -97,6 +111,12 @@ export interface EventConfig {
   buyerFormFields?: BuyerFormField[];
   // Independent discount/promo codes (usable at checkout, not tied to specific ticket types)
   discountCodes?: DiscountCode[];
+  /**
+   * How multiple codes interact at checkout.
+   * single (default) = one code only; stack = allow stackable codes together (future).
+   * Stored in metadata.discountStackMode.
+   */
+  discountStackMode?: DiscountStackMode;
   // Whether this event requires payment (false = free registration only)
   paymentEnabled?: boolean;
   // Custom ticket template PDF path (e.g. /ticket-templates/my-event.pdf)

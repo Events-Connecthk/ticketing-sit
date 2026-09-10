@@ -86,35 +86,56 @@ export async function processSuccessfulPurchase(
   }
 
   try {
+    const { getAllPurchases } = await import("@/lib/db/purchases");
+    let purchases: Awaited<ReturnType<typeof getAllPurchases>> = [];
+    try {
+      purchases = await getAllPurchases({ eventSlug: cart.eventSlug });
+    } catch {
+      purchases = [];
+    }
+    // Prefer service-role path if purchases empty under RLS
+    if (!purchases.length) {
+      try {
+        const { getSupabaseAdmin } = await import("@/lib/supabase/server");
+        const admin = getSupabaseAdmin();
+        if (admin) {
+          const { data } = await admin
+            .from("purchases")
+            .select(
+              "ticket_breakdown, number_of_tickets, payment_method, order_reference, applied_discount_code, event_slug"
+            )
+            .eq("event_slug", cart.eventSlug);
+          purchases = (data || []) as typeof purchases;
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+
+    // Re-check promo code + maxUses at issue time (free + paid)
+    if (cart.appliedDiscountCode) {
+      const { canApplyDiscountCode } = await import(
+        "@/lib/tickets/discount-codes"
+      );
+      const check = canApplyDiscountCode(
+        event.discountCodes,
+        cart.appliedDiscountCode,
+        purchases,
+        cart.eventSlug
+      );
+      if (!check.ok) {
+        console.warn("[OrderService] Discount denied:", check.reason);
+        return {
+          success: false,
+          error: check.reason || "Discount code is no longer valid.",
+        };
+      }
+    }
+
     // FR 6.3–6.4: capacity is per event day; block issue if any covered day is full.
     // Re-check against DB at issue time so concurrent checkouts cannot oversell.
     if ((event.seatDays && event.seatDays.length > 0) || cart.tickets.length > 0) {
-      const { getAllPurchases } = await import("@/lib/db/purchases");
       const { assertCanIssueTickets } = await import("@/lib/tickets/capacity");
-      let purchases: Awaited<ReturnType<typeof getAllPurchases>> = [];
-      try {
-        purchases = await getAllPurchases({ eventSlug: cart.eventSlug });
-      } catch {
-        purchases = [];
-      }
-      // Prefer service-role path if purchases empty under RLS
-      if (!purchases.length) {
-        try {
-          const { getSupabaseAdmin } = await import("@/lib/supabase/server");
-          const admin = getSupabaseAdmin();
-          if (admin) {
-            const { data } = await admin
-              .from("purchases")
-              .select(
-                "ticket_breakdown, number_of_tickets, payment_method, order_reference"
-              )
-              .eq("event_slug", cart.eventSlug);
-            purchases = (data || []) as typeof purchases;
-          }
-        } catch {
-          /* ignore */
-        }
-      }
       const capErr = assertCanIssueTickets(event, cart.tickets, purchases);
       if (capErr) {
         console.warn("[OrderService] Capacity denied:", capErr);
@@ -332,6 +353,62 @@ export async function startCheckoutFlow(cart: OrderCart): Promise<{
   sessionId?: string;
   error?: string;
 }> {
+  // Re-validate promo code + maxUses at checkout start (client Apply can go stale)
+  if (cart.appliedDiscountCode) {
+    try {
+      const event = await loadEventBySlug(cart.eventSlug);
+      if (!event) {
+        return { success: false, error: "Invalid event" };
+      }
+      const { canApplyDiscountCode } = await import(
+        "@/lib/tickets/discount-codes"
+      );
+      let purchases: Array<{
+        applied_discount_code?: string;
+        event_slug: string;
+      }> = [];
+      try {
+        const { getAllPurchases } = await import("@/lib/db/purchases");
+        purchases = await getAllPurchases({ eventSlug: cart.eventSlug });
+      } catch {
+        purchases = [];
+      }
+      if (!purchases.length) {
+        try {
+          const { getSupabaseAdmin } = await import("@/lib/supabase/server");
+          const admin = getSupabaseAdmin();
+          if (admin) {
+            const { data } = await admin
+              .from("purchases")
+              .select("applied_discount_code, event_slug")
+              .eq("event_slug", cart.eventSlug);
+            purchases = data || [];
+          }
+        } catch {
+          /* ignore */
+        }
+      }
+      const check = canApplyDiscountCode(
+        event.discountCodes,
+        cart.appliedDiscountCode,
+        purchases,
+        cart.eventSlug
+      );
+      if (!check.ok) {
+        return {
+          success: false,
+          error: check.reason || "Discount code is no longer valid.",
+        };
+      }
+    } catch (err) {
+      console.error("[OrderService] Discount re-validate failed:", err);
+      return {
+        success: false,
+        error: "Could not validate discount code. Try again.",
+      };
+    }
+  }
+
   const result = await initiateKpayPayment(cart);
 
   if (!result.success) {

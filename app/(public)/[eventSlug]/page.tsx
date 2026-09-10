@@ -13,9 +13,11 @@ import {
   DEFAULT_TERMS_PDF_PATH,
 } from "@/types";
 import { Calendar, MapPin, Users } from "lucide-react";
-import { getEventInventory } from "@/app/sit-admin/actions";
+import {
+  getEventInventory,
+  validateEventDiscountCode,
+} from "@/app/sit-admin/actions";
 import { getRemainingCombined } from "@/lib/tickets/inventory";
-import { isDiscountCodeActive } from "@/lib/tickets/validity";
 import { getEventTheme } from "@/lib/tickets/event-theme";
 import { formatMoney, roundMoney } from "@/lib/money";
 
@@ -274,6 +276,10 @@ export default function EventPage({ params }: EventPageProps) {
         paymentMethod: "free",
         orderPrefix: "FREE",
       });
+      if (!result.success) {
+        alert(result.error || "Registration failed. Please try again.");
+        return;
+      }
       const ref = result.orderReference || payRef;
       router.push(`/${slug}/success?ref=${ref}&amount=0`);
     } catch (e) {
@@ -602,7 +608,8 @@ export default function EventPage({ params }: EventPageProps) {
                     )}
 
                     {/* Promo / Discount Code (event level) */}
-                    {event.discountCodes && event.discountCodes.length > 0 && (
+                    {event.discountCodes &&
+                      event.discountCodes.some((dc) => dc.enabled !== false) && (
                       <div className="pt-2 border-t">
                         <label className="block text-sm font-medium mb-1">Discount Code (optional)</label>
                         <div className="flex gap-2">
@@ -617,31 +624,32 @@ export default function EventPage({ params }: EventPageProps) {
                           />
                           <button
                             type="button"
-                            onClick={() => {
+                            onClick={async () => {
                               const code = discountCodeInput.trim().toUpperCase();
                               if (!code) return;
-                              const match = (event.discountCodes || []).find(
-                                (dc) => dc.code.toUpperCase() === code
-                              );
-                              if (!match) {
-                                setAppliedDiscount(null);
-                                setDiscountCodeError("Invalid discount code.");
-                                return;
-                              }
-                              const active = isDiscountCodeActive(match);
-                              if (!active.ok) {
+                              setDiscountCodeError("");
+                              try {
+                                const result = await validateEventDiscountCode(
+                                  event.slug,
+                                  code
+                                );
+                                if (!result.ok) {
+                                  setAppliedDiscount(null);
+                                  setDiscountCodeError(
+                                    result.reason || "Invalid discount code."
+                                  );
+                                  return;
+                                }
+                                setAppliedDiscount({
+                                  code: result.code || code,
+                                  percent: Number(result.percent) || 0,
+                                });
+                              } catch {
                                 setAppliedDiscount(null);
                                 setDiscountCodeError(
-                                  active.reason ||
-                                    "This discount isn’t available."
+                                  "Could not validate code. Try again."
                                 );
-                                return;
                               }
-                              setDiscountCodeError("");
-                              setAppliedDiscount({
-                                code: match.code,
-                                percent: match.percent,
-                              });
                             }}
                             className="px-4 py-2 border rounded-lg text-sm hover:bg-white"
                           >

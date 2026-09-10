@@ -77,6 +77,8 @@ function normalizeEvent(raw: any): EventConfig {
       typeof meta.termsUrl === "string" && meta.termsUrl.trim()
         ? String(meta.termsUrl).trim()
         : undefined,
+    discountStackMode:
+      meta.discountStackMode === "stack" ? "stack" : "single",
     ticketTypes: (raw.ticketTypes || raw.ticket_types || []).map((t: any) => ({
       ...t,
       enabled: t.enabled !== false,
