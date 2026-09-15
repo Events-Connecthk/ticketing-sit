@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import jsQR from "jsqr";
 import {
   PurchaseRecord,
@@ -80,7 +80,10 @@ export default function AdminDashboard() {
   const [donationsLoading, setDonationsLoading] = useState(false);
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState("");
+  /** Event slug selected in purchases filter ("" = all). UI shows event names. */
   const [eventFilter, setEventFilter] = useState("");
+  /** `${eventSlug}::${ticketTypeId}` or "" for all ticket types */
+  const [ticketTypeFilter, setTicketTypeFilter] = useState("");
   const [donationEventFilter, setDonationEventFilter] = useState("");
 
   // ===== NEW: Admin Tabs and Event Management =====
@@ -283,6 +286,40 @@ export default function AdminDashboard() {
       })
       .join(", ");
   }
+
+  /** Ticket type options for purchases filter (by event name when all events). */
+  const ticketFilterOptions = useMemo(() => {
+    const list: Array<{ value: string; label: string }> = [];
+    const evs = eventFilter
+      ? events.filter((e) => e.slug === eventFilter)
+      : events;
+    for (const ev of evs) {
+      for (const t of ev.ticketTypes || []) {
+        if (t.archived) continue;
+        list.push({
+          value: `${ev.slug}::${t.id}`,
+          label: eventFilter ? t.name : `${ev.name} — ${t.name}`,
+        });
+      }
+    }
+    return list;
+  }, [events, eventFilter]);
+
+  /** Purchases after ticket-type filter (event/search already applied server-side). */
+  const visiblePurchases = useMemo(() => {
+    if (!ticketTypeFilter) return purchases;
+    const sep = ticketTypeFilter.indexOf("::");
+    if (sep < 0) return purchases;
+    const slug = ticketTypeFilter.slice(0, sep);
+    const typeId = ticketTypeFilter.slice(sep + 2);
+    return purchases.filter((p) => {
+      if (slug && p.event_slug !== slug) return false;
+      const units = p.ticket_breakdown || [];
+      return units.some(
+        (u: { ticketTypeId?: string }) => String(u.ticketTypeId || "") === typeId
+      );
+    });
+  }, [purchases, ticketTypeFilter]);
 
   function publicEventUrl(slug: string): string {
     const base = (
@@ -931,9 +968,9 @@ export default function AdminDashboard() {
   }
 
   function exportToCSV() {
-    if (purchases.length === 0) return;
+    if (visiblePurchases.length === 0) return;
 
-    const rows = purchases.map((p) => ({
+    const rows = visiblePurchases.map((p) => ({
       bought_at: p.bought_at,
       name: p.name,
       phone: p.phone,
@@ -944,6 +981,8 @@ export default function AdminDashboard() {
       discount_code: p.applied_discount_code || "",
       discount_amount: p.discount_amount ?? "",
       event_slug: p.event_slug,
+      event_name: events.find((e) => e.slug === p.event_slug)?.name || "",
+      ticket_types: formatPurchaseTicketTypes(p),
       order_reference: p.order_reference,
       payment_reference: p.payment_reference,
       payment_method: p.payment_method,
@@ -959,7 +998,7 @@ export default function AdminDashboard() {
 
   function exportToCSVRaw() {
     // Fallback pure CSV
-    if (purchases.length === 0) return;
+    if (visiblePurchases.length === 0) return;
     const header = [
       "bought_at",
       "name",
@@ -971,13 +1010,15 @@ export default function AdminDashboard() {
       "discount_code",
       "discount_amount",
       "event_slug",
+      "event_name",
+      "ticket_types",
       "order_reference",
       "status",
       "redeemed_at",
     ];
     const csvRows = [
       header.join(","),
-      ...purchases.map((p) =>
+      ...visiblePurchases.map((p) =>
         [
           p.bought_at,
           `"${p.name.replace(/"/g, '""')}"`,
@@ -989,6 +1030,8 @@ export default function AdminDashboard() {
           p.applied_discount_code || "",
           p.discount_amount ?? "",
           p.event_slug,
+          `"${(events.find((e) => e.slug === p.event_slug)?.name || "").replace(/"/g, '""')}"`,
+          `"${formatPurchaseTicketTypes(p).replace(/"/g, '""')}"`,
           p.order_reference || "",
           p.redeemed_at ? "Redeemed" : "Valid",
           formatDateTime(p.redeemed_at) || "",
@@ -3206,7 +3249,7 @@ export default function AdminDashboard() {
 
           {/* Filters */}
           <div className="flex flex-col sm:flex-row gap-3 mb-6">
-            <div className="relative flex-1">
+            <div className="relative flex-1 min-w-0">
               <Search className="absolute left-3 top-3 h-4 w-4 text-zinc-400" />
               <input
                 value={search}
@@ -3215,13 +3258,62 @@ export default function AdminDashboard() {
                 className="w-full pl-10 rounded-xl border py-2.5 bg-white"
               />
             </div>
-            <input
+            <select
               value={eventFilter}
-              onChange={(e) => setEventFilter(e.target.value)}
-              placeholder="Filter by event slug"
-              className="rounded-xl border py-2.5 px-4 bg-white w-full sm:w-72"
-            />
+              onChange={(e) => {
+                const v = e.target.value;
+                setEventFilter(v);
+                if (
+                  ticketTypeFilter &&
+                  v &&
+                  !ticketTypeFilter.startsWith(`${v}::`)
+                ) {
+                  setTicketTypeFilter("");
+                }
+              }}
+              className="rounded-xl border py-2.5 px-3 bg-white w-full sm:w-64 text-sm"
+              aria-label="Filter by event"
+            >
+              <option value="">All events</option>
+              {events.map((ev) => (
+                <option key={ev.slug} value={ev.slug}>
+                  {ev.name}
+                </option>
+              ))}
+            </select>
+            <select
+              value={ticketTypeFilter}
+              onChange={(e) => setTicketTypeFilter(e.target.value)}
+              className="rounded-xl border py-2.5 px-3 bg-white w-full sm:w-72 text-sm"
+              aria-label="Filter by ticket type"
+            >
+              <option value="">All ticket types</option>
+              {ticketFilterOptions.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
           </div>
+
+          {!loading && (eventFilter || ticketTypeFilter || search) && (
+            <p className="text-xs text-zinc-500 mb-3">
+              Showing {visiblePurchases.length}
+              {visiblePurchases.length !== purchases.length
+                ? ` of ${purchases.length}`
+                : ""}{" "}
+              purchase{visiblePurchases.length === 1 ? "" : "s"}
+              {eventFilter
+                ? ` · ${events.find((e) => e.slug === eventFilter)?.name || eventFilter}`
+                : ""}
+              {ticketTypeFilter
+                ? ` · ${
+                    ticketFilterOptions.find((o) => o.value === ticketTypeFilter)
+                      ?.label || "ticket"
+                  }`
+                : ""}
+            </p>
+          )}
 
           <div className="overflow-x-auto rounded-2xl border bg-white -mx-1 sm:mx-0">
             <table className="w-full text-sm min-w-[720px] md:min-w-0">
@@ -3245,10 +3337,10 @@ export default function AdminDashboard() {
                 {loading && (
                   <tr><td colSpan={12} className="p-10 text-center text-zinc-400">Loading purchases...</td></tr>
                 )}
-                {!loading && purchases.length === 0 && (
+                {!loading && visiblePurchases.length === 0 && (
                   <tr><td colSpan={12} className="p-10 text-center text-zinc-400">No purchases found.</td></tr>
                 )}
-                {purchases.map((purchase, idx) => (
+                {visiblePurchases.map((purchase, idx) => (
                   <tr key={purchase.id ?? idx} className="hover:bg-zinc-50/50 align-top">
                     <td className="p-3 sm:p-4 text-xs text-zinc-500 whitespace-nowrap">
                       {formatHkDateTime(purchase.bought_at)}
@@ -3296,7 +3388,15 @@ export default function AdminDashboard() {
                       )}
                     </td>
                     <td className="p-3 sm:p-4">
-                      <span className="font-mono text-xs rounded bg-zinc-100 px-2 py-0.5">{purchase.event_slug}</span>
+                      <div className="leading-snug">
+                        <div className="font-medium text-zinc-800">
+                          {events.find((e) => e.slug === purchase.event_slug)
+                            ?.name || purchase.event_slug}
+                        </div>
+                        <div className="font-mono text-[10px] text-zinc-500">
+                          {purchase.event_slug}
+                        </div>
+                      </div>
                     </td>
                     <td className="p-3 sm:p-4 text-xs text-zinc-800 max-w-[12rem]">
                       <span className="leading-snug">{formatPurchaseTicketTypes(purchase)}</span>
