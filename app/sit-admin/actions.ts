@@ -1300,7 +1300,11 @@ export async function adminGetDiscountCodeUsage(
  */
 export async function getPurchaseByReference(ref: string): Promise<any> {
   if (!ref || ref === "N/A") return null;
-  const r = ref.trim();
+  const { normalizeScanRef, orderRefFromSerial } = await import(
+    "@/lib/tickets/scan-ref"
+  );
+  const r = normalizeScanRef(ref);
+  if (!r) return null;
 
   // Public scan page — soft rate limit only (not admin-gated)
   const rl = checkRateLimit(`public-lookup:${r.slice(0, 32)}`, {
@@ -1319,17 +1323,35 @@ export async function getPurchaseByReference(ref: string): Promise<any> {
   }
 
   try {
-    // 1) Fast path: order / payment reference
-    const { data: byOrder } = await supabaseAdmin
+    const { data: byOrd } = await supabaseAdmin
       .from("purchases")
       .select("*")
-      .or(`order_reference.eq.${r},payment_reference.eq.${r}`)
+      .eq("order_reference", r)
       .limit(1)
       .maybeSingle();
+    if (byOrd) return byOrd;
 
-    if (byOrder) return byOrder;
+    const { data: byPay } = await supabaseAdmin
+      .from("purchases")
+      .select("*")
+      .eq("payment_reference", r)
+      .limit(1)
+      .maybeSingle();
+    if (byPay) return byPay;
 
-    // 2) Ticket serial (KPY-…-001): load recent rows and match JSON serials
+    // Ticket serial → parent order (reliable; avoids 500-row scan miss)
+    const parent = orderRefFromSerial(r);
+    if (parent) {
+      const { data: byParent } = await supabaseAdmin
+        .from("purchases")
+        .select("*")
+        .eq("order_reference", parent)
+        .limit(1)
+        .maybeSingle();
+      if (byParent && purchaseMatchesRef(byParent, r)) return byParent;
+    }
+
+    // Last resort: recent rows (legacy / odd refs)
     const { data: recent, error } = await supabaseAdmin
       .from("purchases")
       .select("*")

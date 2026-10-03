@@ -36,6 +36,7 @@ import * as XLSX from "xlsx";
 import { Download, Search, RefreshCw, Plus, Edit2, Trash2, ToggleLeft, ToggleRight, Copy } from "lucide-react";
 import { toast } from "sonner";
 import { formatHkDateTime, formatHkTime } from "@/lib/time/hk";
+import { normalizeScanRef } from "@/lib/tickets/scan-ref";
 import { BannerCropModal } from "@/components/admin/BannerCropModal";
 import { generateTicketPdf } from "@/lib/pdf/generate-ticket";
 import {
@@ -637,7 +638,8 @@ export default function AdminDashboard() {
   }
 
   async function checkTicketStatus(ref: string) {
-    if (!ref.trim()) return;
+    const scanned = normalizeScanRef(ref);
+    if (!scanned) return;
     setScanFeedback("Checking...", "info", null);
 
     const { purchaseMatchesRef, findTicketUnit, listSerials } = await import(
@@ -646,16 +648,16 @@ export default function AdminDashboard() {
     const { isTicketValidOnDate, formatTicketDateWindow, hkTodayYmd } =
       await import("@/lib/tickets/validity");
     const all = await adminGetAllPurchases();
-    const found = all.find((p: any) => purchaseMatchesRef(p, ref.trim()));
+    const found = all.find((p: any) => purchaseMatchesRef(p, scanned));
 
     if (!found) {
       setScanFeedback("❌ Invalid ticket - not found for that reference.", "error", null);
       return;
     }
 
-    const unit = findTicketUnit(found, ref.trim());
+    const unit = findTicketUnit(found, scanned);
     const serials = listSerials(found);
-    const resultBase = { ...found, _scannedRef: ref.trim() };
+    const resultBase = { ...found, _scannedRef: scanned };
 
     if (unit) {
       const tt = getTicketType(found.event_slug, unit.ticketTypeId);
@@ -705,8 +707,8 @@ export default function AdminDashboard() {
   }
 
   async function redeemTicket(ref: string) {
-    if (!ref.trim()) return;
-    const scanned = ref.trim();
+    const scanned = normalizeScanRef(ref);
+    if (!scanned) return;
     const res = await adminPerformCheckIn(scanned, scanRemark || undefined);
     setScanFeedback(
       res.ok ? `✅ ${res.message}` : res.message.startsWith("⚠") ? res.message : `❌ ${res.message}`,
@@ -822,14 +824,7 @@ export default function AdminDashboard() {
 
     if (!code?.data) return;
 
-    let extractedRef = code.data.trim();
-    try {
-      const url = new URL(code.data, window.location.origin);
-      const refParam = url.searchParams.get("ref");
-      if (refParam) extractedRef = refParam.trim();
-    } catch {
-      // raw ref
-    }
+    const extractedRef = normalizeScanRef(code.data);
 
     if (!extractedRef) return;
     // Ignore same code in consecutive frames (but allow after Start Camera again)

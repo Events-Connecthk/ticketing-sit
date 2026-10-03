@@ -9,6 +9,10 @@ import {
   purchaseMatchesRef,
 } from "@/lib/tickets/serials";
 import {
+  normalizeScanRef,
+  orderRefFromSerial,
+} from "@/lib/tickets/scan-ref";
+import {
   formatTicketDateWindow,
   isTicketValidOnDate,
 } from "@/lib/tickets/validity";
@@ -112,18 +116,57 @@ async function ticketTypeLimit(
   );
 }
 
+async function findPurchaseForScan(
+  scanned: string
+): Promise<PurchaseRecord | null> {
+  const sb = getSupabaseAdmin();
+  if (sb) {
+    const { data: byOrd } = await sb
+      .from("purchases")
+      .select("*")
+      .eq("order_reference", scanned)
+      .limit(1)
+      .maybeSingle();
+    if (byOrd) return byOrd as PurchaseRecord;
+
+    const { data: byPay } = await sb
+      .from("purchases")
+      .select("*")
+      .eq("payment_reference", scanned)
+      .limit(1)
+      .maybeSingle();
+    if (byPay) return byPay as PurchaseRecord;
+
+    // Unit serial KPY-xxxxx-01 → parent order (avoids missing tickets past the row cap)
+    const parent = orderRefFromSerial(scanned);
+    if (parent) {
+      const { data: byParent } = await sb
+        .from("purchases")
+        .select("*")
+        .eq("order_reference", parent)
+        .limit(1)
+        .maybeSingle();
+      if (byParent && purchaseMatchesRef(byParent as PurchaseRecord, scanned)) {
+        return byParent as PurchaseRecord;
+      }
+    }
+  }
+
+  const all = await loadPurchasesForCheckin();
+  return all.find((p) => purchaseMatchesRef(p, scanned)) || null;
+}
+
 export async function performCheckIn(
   ref: string,
   actor: CheckInActor,
   remark?: string
 ): Promise<CheckInResult> {
-  const scanned = (ref || "").trim();
+  const scanned = normalizeScanRef(ref || "");
   if (!scanned) {
     return { ok: false, message: "Enter a ticket code.", tone: "error" };
   }
 
-  const all = await loadPurchasesForCheckin();
-  const found = all.find((p) => purchaseMatchesRef(p, scanned));
+  const found = await findPurchaseForScan(scanned);
   if (!found) {
     return {
       ok: false,

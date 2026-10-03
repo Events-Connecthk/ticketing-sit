@@ -170,7 +170,17 @@ export async function generateTicketPdf(
     // Actual redemption / check-in is done exclusively from /sit-admin → Ticket Scanner (admin password required).
     // For production, replace localhost with your actual domain.
     const refForQr = params.ticketSerial || params.orderReference || 'TICKET';
-    const scanUrl = `${typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000'}/scan?ref=${encodeURIComponent(refForQr)}`;
+    // Prefer public site URL so server-generated PDFs (email/webhook) are not localhost
+    const siteBase = (
+      (typeof window !== "undefined" && window.location?.origin) ||
+      process.env.NEXT_PUBLIC_SITE_URL ||
+      ""
+    )
+      .toString()
+      .replace(/\/$/, "");
+    const scanUrl = siteBase
+      ? `${siteBase}/scan?ref=${encodeURIComponent(refForQr)}`
+      : refForQr; // raw serial still scannable by admin/check-in
     const qrDataUrl = await QRCode.toDataURL(scanUrl, { width: 100 });
     const qrBytes = Uint8Array.from(atob(qrDataUrl.split(',')[1]), c => c.charCodeAt(0));
     const qrImage = await pdfDoc.embedPng(qrBytes);

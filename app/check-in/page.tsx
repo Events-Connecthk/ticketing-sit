@@ -12,6 +12,7 @@ import {
 } from "./actions";
 import { formatHkDateTime, formatHkTime } from "@/lib/time/hk";
 import type { AttendanceFlatRow } from "@/lib/tickets/checkin-service";
+import { normalizeScanRef } from "@/lib/tickets/scan-ref";
 import { RefreshCw } from "lucide-react";
 
 /**
@@ -108,7 +109,7 @@ export default function CheckInPage() {
   }
 
   async function doCheckIn(code: string) {
-    const ref = code.trim();
+    const ref = normalizeScanRef(code);
     if (!ref || busy || scanBusyRef.current) return;
     scanBusyRef.current = true;
     setBusy(true);
@@ -198,7 +199,7 @@ export default function CheckInPage() {
           const imageData = ctx.getImageData(0, 0, w, h);
           const code = jsQR(imageData.data, w, h);
           if (code?.data) {
-            const raw = code.data.trim();
+            const raw = normalizeScanRef(code.data);
             if (raw && raw !== lastQrRef.current && !scanBusyRef.current) {
               lastQrRef.current = raw;
               setScanRef(raw);
