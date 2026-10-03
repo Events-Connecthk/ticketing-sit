@@ -670,12 +670,22 @@ export default function AdminDashboard() {
       const tt = getTicketType(found.event_slug, unit.ticketTypeId);
       const max = tt?.redemptionLimit ?? 1;
       const count = unit.redemptions?.length || 0;
-      const dateCheck = isTicketValidOnDate(tt || {}, hkTodayYmd());
+      const todayHk = hkTodayYmd();
+      const dateCheck = isTicketValidOnDate(tt || {}, todayHk);
       const window = formatTicketDateWindow(tt || {});
+      const { hasRedemptionOnDay } = await import("@/lib/tickets/redemption");
 
       if (count >= max) {
         setScanFeedback(
           `❌ Invalid ticket - fully redeemed (${count}/${max}). Serial ${unit.serial}.`,
+          "error",
+          resultBase
+        );
+        return;
+      }
+      if (hasRedemptionOnDay(unit.redemptions, todayHk)) {
+        setScanFeedback(
+          `❌ Already checked in today (${todayHk} HK). Max 1 scan per day. Serial ${unit.serial}.`,
           "error",
           resultBase
         );
@@ -690,16 +700,26 @@ export default function AdminDashboard() {
         return;
       }
       setScanFeedback(
-        `✅ VALID ${unit.serial} (${count}/${max} used) · dates: ${window}`,
+        `✅ VALID ${unit.serial} (${count}/${max} used) · dates: ${window} · 1 scan/day`,
         "ok",
         resultBase
       );
     } else {
       const maxSlots = getTotalTicketSlots(found);
       const count = getCurrentRedemptionCount(found);
+      const todayHk = hkTodayYmd();
+      const { hasRedemptionOnDay } = await import("@/lib/tickets/redemption");
       if (count >= maxSlots) {
         setScanFeedback(
           `❌ Invalid ticket - order fully checked in (${count}/${maxSlots}).`,
+          "error",
+          resultBase
+        );
+        return;
+      }
+      if (hasRedemptionOnDay(found.redemptions, todayHk)) {
+        setScanFeedback(
+          `❌ Already checked in today (${todayHk} HK). Max 1 scan per day.`,
           "error",
           resultBase
         );
@@ -4180,7 +4200,9 @@ export default function AdminDashboard() {
             </div>
 
             <div className="mt-6 text-xs text-zinc-500">
-              Date rules use Hong Kong calendar day. Fully redeemed or wrong-date tickets show a red warning and will not check in.
+              Date rules use Hong Kong calendar day. Max 1 scan per ticket per day
+              (even for multi-day tickets). Fully redeemed or wrong-date tickets
+              show a red warning and will not check in.
             </div>
           </div>
 
@@ -5903,7 +5925,7 @@ export default function AdminDashboard() {
                   <p className="text-[10px] text-zinc-500 mt-3 leading-relaxed">
                     <strong>Type ID</strong> must be unique per event.{" "}
                     <strong>Stock</strong> = total for sale (empty = unlimited).{" "}
-                    <strong>Scan redemptions</strong> = how many times door can scan one ticket.{" "}
+                    <strong>Scan redemptions</strong> = total scans across the ticket window (still max 1 scan per day).{" "}
                     <strong>Valid from/to</strong> = scanner only accepts on those days (HK). Leave empty = any day.
                   </p>
                 </div>

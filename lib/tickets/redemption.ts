@@ -48,6 +48,26 @@ export function lastRedemption(
   return redemptions[redemptions.length - 1] ?? null;
 }
 
+/** YYYY-MM-DD of a redemption timestamp in Asia/Hong_Kong. */
+export function redemptionHkYmd(
+  entry: RedemptionEntry | null | undefined
+): string | null {
+  const at = redemptionAt(entry);
+  if (!at) return null;
+  const d = new Date(at);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toLocaleDateString("en-CA", { timeZone: "Asia/Hong_Kong" });
+}
+
+/** True if this ticket already has a check-in on the given HK calendar day. */
+export function hasRedemptionOnDay(
+  redemptions: RedemptionEntry[] | null | undefined,
+  onYmd: string
+): boolean {
+  if (!Array.isArray(redemptions) || !onYmd) return false;
+  return redemptions.some((r) => redemptionHkYmd(r) === onYmd);
+}
+
 export function makeCheckInRecord(opts: {
   byId?: string;
   byName?: string;

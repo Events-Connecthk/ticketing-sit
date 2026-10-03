@@ -19,6 +19,7 @@ import {
 import { hkTodayYmd } from "@/lib/time/hk";
 import { loadEventBySlug } from "@/lib/config/events";
 import {
+  hasRedemptionOnDay,
   makeCheckInRecord,
   redemptionCount,
   type CheckInRecord,
@@ -224,13 +225,27 @@ export async function performCheckIn(
     const count = redemptionCount(unit.redemptions as any);
     const ev = await loadEventBySlug(found.event_slug);
     const tt = ev?.ticketTypes?.find((t) => t.id === unit!.ticketTypeId);
-    const dateCheck = isTicketValidOnDate(tt || {}, hkTodayYmd());
+    const todayHk = hkTodayYmd();
+    const dateCheck = isTicketValidOnDate(tt || {}, todayHk);
     const window = formatTicketDateWindow(tt || {});
 
     if (count >= max) {
       return {
         ok: false,
         message: `Already fully checked in (${count}/${max}). Serial ${unit.serial}.`,
+        tone: "error",
+        purchase: found,
+        serial: unit.serial,
+        phone: found.phone,
+        used: count,
+        max,
+      };
+    }
+    // Multi-day tickets: still max 1 scan per Hong Kong calendar day
+    if (hasRedemptionOnDay(unit.redemptions as any, todayHk)) {
+      return {
+        ok: false,
+        message: `Already checked in today (${todayHk} HK). Max 1 scan per day for this ticket. Serial ${unit.serial}.`,
         tone: "error",
         purchase: found,
         serial: unit.serial,
@@ -300,6 +315,7 @@ export async function performCheckIn(
     max = Math.max(max, lim);
   }
   const currentCount = redemptionCount(found.redemptions as any);
+  const todayHkLegacy = hkTodayYmd();
   if (currentCount >= max) {
     return {
       ok: false,
@@ -307,6 +323,17 @@ export async function performCheckIn(
       tone: "error",
       purchase: found,
       phone: found.phone,
+    };
+  }
+  if (hasRedemptionOnDay(found.redemptions as any, todayHkLegacy)) {
+    return {
+      ok: false,
+      message: `Already checked in today (${todayHkLegacy} HK). Max 1 scan per day.`,
+      tone: "error",
+      purchase: found,
+      phone: found.phone,
+      used: currentCount,
+      max,
     };
   }
 

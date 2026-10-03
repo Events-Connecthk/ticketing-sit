@@ -32,7 +32,8 @@ export interface TicketType {
    */
   archived?: boolean;
   discounts?: DiscountRule[]; // customizable discounts
-  redemptionLimit?: number; // how many times this ticket can be redeemed (e.g. 1 = single day, 3 = 3-day access)
+  /** Total check-ins allowed across the ticket window. Still max 1 scan per HK calendar day. */
+  redemptionLimit?: number;
   /**
    * Explicit event-day coverage (YYYY-MM-DD list). Preferred over validFrom/validTo
    * for multi-day seat capacity. Must be a non-empty subset of event.seatDays when
