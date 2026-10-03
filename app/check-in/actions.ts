@@ -18,31 +18,41 @@ import {
   type CheckinEventOption,
 } from "@/lib/tickets/checkin-service";
 
-export type { CheckinEventOption };
-
 // ——— Staff app (check-in only) ———
 
 export async function checkinLogin(
   username: string,
   password: string
 ): Promise<{ ok: boolean; error?: string; displayName?: string }> {
-  const rl = checkRateLimit("checkin-login", {
-    limit: 12,
-    windowMs: 15 * 60 * 1000,
-  });
-  if (!rl.ok) {
-    return { ok: false, error: "Too many attempts. Try again later." };
+  try {
+    const rl = checkRateLimit("checkin-login", {
+      limit: 12,
+      windowMs: 15 * 60 * 1000,
+    });
+    if (!rl.ok) {
+      return { ok: false, error: "Too many attempts. Try again later." };
+    }
+    const staff = await authenticateCheckinStaff(username, password);
+    if (!staff) {
+      return { ok: false, error: "Invalid username or password." };
+    }
+    await createCheckinSession({
+      id: staff.id,
+      username: staff.username,
+      displayName: staff.display_name || staff.username || "Staff",
+    });
+    return {
+      ok: true,
+      displayName: staff.display_name || staff.username || "Staff",
+    };
+  } catch (err) {
+    console.error("[checkinLogin]", err);
+    const msg = err instanceof Error ? err.message : "Sign-in failed";
+    return {
+      ok: false,
+      error: `Sign-in failed (${msg}). Refresh the page and try again.`,
+    };
   }
-  const staff = await authenticateCheckinStaff(username, password);
-  if (!staff) {
-    return { ok: false, error: "Invalid username or password." };
-  }
-  await createCheckinSession({
-    id: staff.id,
-    username: staff.username,
-    displayName: staff.display_name,
-  });
-  return { ok: true, displayName: staff.display_name };
 }
 
 export async function checkinLogout(): Promise<void> {
@@ -123,8 +133,10 @@ export async function checkinListRecent(
 export async function checkinListEvents(): Promise<CheckinEventOption[]> {
   try {
     await requireCheckinStaff();
-    return await listCheckinEventOptions();
-  } catch {
+    const list = await listCheckinEventOptions();
+    return Array.isArray(list) ? list : [];
+  } catch (err) {
+    console.error("[checkinListEvents]", err);
     return [];
   }
 }

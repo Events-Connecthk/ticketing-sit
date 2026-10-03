@@ -28,15 +28,15 @@ const nextConfig: NextConfig = {
             key: "Permissions-Policy",
             value: "camera=(self), microphone=(), geolocation=()",
           },
-          // CSP: allow KPay hosted checkout + Supabase + Resend-less client
+          // CSP: KPay + Supabase + Meta Pixel (PageView analytics)
           {
             key: "Content-Security-Policy",
             value: [
               "default-src 'self'",
-              "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+              "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://connect.facebook.net",
               "style-src 'self' 'unsafe-inline'",
-              "img-src 'self' data: blob: https://*.kpay-group.com https://*.supabase.co",
-              "connect-src 'self' https://*.supabase.co https://*.kpay-group.com https://api.resend.com",
+              "img-src 'self' data: blob: https://*.kpay-group.com https://*.supabase.co https://www.facebook.com https://*.facebook.com",
+              "connect-src 'self' https://*.supabase.co https://*.kpay-group.com https://api.resend.com https://www.facebook.com https://connect.facebook.net https://*.facebook.com",
               "frame-src 'self' https://*.kpay-group.com",
               "font-src 'self' data:",
               "frame-ancestors 'none'",

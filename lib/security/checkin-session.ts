@@ -49,15 +49,19 @@ export async function createCheckinSession(staff: {
   displayName: string;
 }): Promise<void> {
   const exp = Date.now() + MAX_AGE_SEC * 1000;
+  const username = String(staff.username || "").trim() || "staff";
+  const displayName =
+    String(staff.displayName || "").trim() || username || "Staff";
   const payload = [
     "v1",
-    staff.id,
-    b64url(staff.username),
-    b64url(staff.displayName),
+    String(staff.id || ""),
+    b64url(username),
+    b64url(displayName),
     String(exp),
   ].join(".");
   const token = `${payload}.${sign(payload)}`;
   const jar = await cookies();
+  // Must run inside a Server Action; secure cookies require HTTPS in prod
   jar.set(CHECKIN_COOKIE, token, {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",

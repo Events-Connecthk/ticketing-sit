@@ -10,10 +10,12 @@ import {
   checkinLogout,
   checkinPerformRedeem,
   checkinSessionStatus,
-  type CheckinEventOption,
 } from "./actions";
 import { formatHkDateTime, formatHkTime } from "@/lib/time/hk";
-import type { AttendanceFlatRow } from "@/lib/tickets/checkin-service";
+import type {
+  AttendanceFlatRow,
+  CheckinEventOption,
+} from "@/lib/tickets/checkin-service";
 import { normalizeScanRef } from "@/lib/tickets/scan-ref";
 import { RefreshCw } from "lucide-react";
 
@@ -95,22 +97,35 @@ export default function CheckInPage() {
   }, [authed, eventSlug]);
 
   async function bootstrapEventsAndData() {
-    const list = await checkinListEvents();
-    setEvents(list);
-    const enabled = list.filter((e) => e.enabled);
-    const choices = enabled.length ? enabled : list;
-    let saved = "";
     try {
-      saved = localStorage.getItem(EVENT_STORAGE_KEY) || "";
-    } catch {
-      saved = "";
+      const list = await checkinListEvents();
+      setEvents(list || []);
+      const enabled = (list || []).filter((e) => e.enabled);
+      const choices = enabled.length ? enabled : list || [];
+      let saved = "";
+      try {
+        saved = localStorage.getItem(EVENT_STORAGE_KEY) || "";
+      } catch {
+        saved = "";
+      }
+      const pick =
+        (saved && choices.find((e) => e.slug === saved)?.slug) ||
+        choices[0]?.slug ||
+        "";
+      setEventSlug(pick);
+      if (pick) await refreshData(pick);
+      if (!pick) {
+        setMessage("Signed in, but no events were found. Ask admin to create an event.");
+        setTone("warn");
+      }
+    } catch (err) {
+      console.error("[check-in] bootstrapEventsAndData", err);
+      setEvents([]);
+      setMessage(
+        "Signed in, but could not load events. Refresh the page or try again."
+      );
+      setTone("warn");
     }
-    const pick =
-      (saved && choices.find((e) => e.slug === saved)?.slug) ||
-      choices[0]?.slug ||
-      "";
-    setEventSlug(pick);
-    if (pick) await refreshData(pick);
   }
 
   async function refreshData(slug = eventSlugRef.current) {
@@ -119,28 +134,39 @@ export default function CheckInPage() {
       setRecent([]);
       return;
     }
-    const [st, rec] = await Promise.all([
-      checkinGetStats(slug),
-      checkinListRecent(slug),
-    ]);
-    setStats(st);
-    setRecent(rec);
+    try {
+      const [st, rec] = await Promise.all([
+        checkinGetStats(slug),
+        checkinListRecent(slug),
+      ]);
+      setStats(st);
+      setRecent(rec);
+    } catch (err) {
+      console.error("[check-in] refreshData", err);
+    }
   }
 
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault();
+    if (loggingIn) return;
     setLoggingIn(true);
     setLoginError("");
     try {
-      const res = await checkinLogin(username, password);
-      if (!res.ok) {
-        setLoginError(res.error || "Login failed");
+      const res = await checkinLogin(username.trim(), password);
+      if (!res?.ok) {
+        setLoginError(res?.error || "Login failed");
         return;
       }
+      // Enter app immediately — do not block sign-in on event list loading
       setAuthed(true);
       setDisplayName(res.displayName || username);
       setPassword("");
-      await bootstrapEventsAndData();
+      void bootstrapEventsAndData();
+    } catch (err) {
+      console.error("[check-in] handleLogin", err);
+      setLoginError(
+        "Sign-in failed. Hard-refresh the page (Ctrl+Shift+R) and try again."
+      );
     } finally {
       setLoggingIn(false);
     }
