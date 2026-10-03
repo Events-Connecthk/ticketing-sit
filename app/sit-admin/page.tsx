@@ -198,10 +198,17 @@ export default function AdminDashboard() {
   // ===== Ticket Scanner (admin-only redemption) =====
   const [scanRef, setScanRef] = useState("");
   const [scanRemark, setScanRemark] = useState("");
+  const [scanEventSlug, setScanEventSlug] = useState("");
+  const [scanStats, setScanStats] = useState({
+    checkedInTickets: 0,
+    totalTickets: 0,
+  });
   const [scanResult, setScanResult] = useState<any>(null);
   const [scanMessage, setScanMessage] = useState("");
   /** ok | error | warn | info - controls result banner colour */
   const [scanTone, setScanTone] = useState<"ok" | "error" | "warn" | "info">("info");
+  const scanEventSlugRef = React.useRef(scanEventSlug);
+  scanEventSlugRef.current = scanEventSlug;
 
   // Check-in staff accounts (admin manages; staff use /check-in)
   const [checkinStaffList, setCheckinStaffList] = useState<
@@ -706,10 +713,60 @@ export default function AdminDashboard() {
     }
   }
 
+  async function refreshScanStats(slug = scanEventSlugRef.current) {
+    if (!slug) {
+      setScanStats({ checkedInTickets: 0, totalTickets: 0 });
+      return;
+    }
+    try {
+      const all = purchases.length
+        ? purchases
+        : await adminGetAllPurchases();
+      const rows = all.filter((p: any) => p.event_slug === slug);
+      let checkedInTickets = 0;
+      let totalTickets = 0;
+      for (const p of rows) {
+        const units = p.ticket_breakdown || [];
+        const hasSerials = units.some((u: any) => u.serial);
+        if (hasSerials) {
+          for (const u of units as any[]) {
+            totalTickets += 1;
+            if ((u.redemptions?.length || 0) > 0) checkedInTickets += 1;
+          }
+        } else {
+          const n = Math.max(1, Number(p.number_of_tickets) || 1);
+          totalTickets += n;
+          if (p.redeemed_at || (p.redemptions?.length || 0) > 0) {
+            checkedInTickets += Math.min(
+              n,
+              Math.max(1, p.redemptions?.length || 1)
+            );
+          }
+        }
+      }
+      setScanStats({ checkedInTickets, totalTickets });
+    } catch {
+      setScanStats({ checkedInTickets: 0, totalTickets: 0 });
+    }
+  }
+
   async function redeemTicket(ref: string) {
     const scanned = normalizeScanRef(ref);
     if (!scanned) return;
-    const res = await adminPerformCheckIn(scanned, scanRemark || undefined);
+    const expected = scanEventSlugRef.current.trim();
+    if (!expected) {
+      setScanFeedback(
+        "Select an event before checking in.",
+        "warn",
+        null
+      );
+      return;
+    }
+    const res = await adminPerformCheckIn(
+      scanned,
+      scanRemark || undefined,
+      expected
+    );
     setScanFeedback(
       res.ok ? `✅ ${res.message}` : res.message.startsWith("⚠") ? res.message : `❌ ${res.message}`,
       res.tone,
@@ -720,6 +777,7 @@ export default function AdminDashboard() {
     if (res.ok) {
       setScanRemark("");
       await loadPurchases();
+      await refreshScanStats(expected);
     }
   }
 
@@ -905,6 +963,20 @@ export default function AdminDashboard() {
       setDashEventSlug(events[0].slug);
     }
   }, [events, dashEventSlug]);
+
+  // Default scanner event + refresh per-event counts
+  useEffect(() => {
+    if (!scanEventSlug && events.length > 0) {
+      setScanEventSlug(events[0].slug);
+    }
+  }, [events, scanEventSlug]);
+
+  useEffect(() => {
+    if (isAuthenticated && activeTab === "scanner" && scanEventSlug) {
+      void refreshScanStats(scanEventSlug);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAuthenticated, activeTab, scanEventSlug, purchases]);
 
   // Restore session cookie after refresh (httpOnly cookie set by server)
   useEffect(() => {
@@ -3892,6 +3964,53 @@ export default function AdminDashboard() {
           <div className="bg-white rounded-2xl border p-4 sm:p-8">
             <div className="mb-4">
               <label className="block text-sm font-medium mb-1">
+                Event you are checking in
+              </label>
+              <select
+                value={scanEventSlug}
+                onChange={(e) => {
+                  setScanEventSlug(e.target.value);
+                  setScanResult(null);
+                  setScanMessage("");
+                  lastHandledQrRef.current = "";
+                }}
+                className="w-full border rounded-lg px-3 py-2 text-sm bg-white mb-3"
+              >
+                {events.length === 0 && <option value="">No events</option>}
+                {events.map((ev) => (
+                  <option key={ev.slug} value={ev.slug}>
+                    {ev.name}
+                    {ev.enabled === false ? " (disabled)" : ""}
+                  </option>
+                ))}
+              </select>
+              <div className="grid grid-cols-2 gap-3 mb-4">
+                <div className="rounded-xl border bg-emerald-50/50 p-3">
+                  <div className="text-[10px] uppercase tracking-wide text-zinc-500">
+                    Checked in
+                  </div>
+                  <div className="text-2xl font-semibold tabular-nums text-emerald-700">
+                    {scanEventSlug ? scanStats.checkedInTickets : "—"}
+                  </div>
+                  <div className="text-[10px] text-zinc-400">this event</div>
+                </div>
+                <div className="rounded-xl border bg-zinc-50 p-3">
+                  <div className="text-[10px] uppercase tracking-wide text-zinc-500">
+                    Total tickets
+                  </div>
+                  <div className="text-2xl font-semibold tabular-nums text-zinc-800">
+                    {scanEventSlug ? scanStats.totalTickets : "—"}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => refreshScanStats()}
+                    className="text-[10px] text-zinc-500 hover:text-black mt-1"
+                  >
+                    Refresh
+                  </button>
+                </div>
+              </div>
+              <label className="block text-sm font-medium mb-1">
                 Ticket ID or Order Ref (from PDF QR - prefer KPY-…-001)
               </label>
               <div className="flex flex-col sm:flex-row gap-2">
@@ -3919,7 +4038,7 @@ export default function AdminDashboard() {
                 </button>
                 <button
                   onClick={() => redeemTicket(scanRef)}
-                  disabled={!scanRef}
+                  disabled={!scanRef || !scanEventSlug}
                   className="btn-gold px-6 py-2 rounded-lg font-medium disabled:opacity-50"
                 >
                   Mark Redeemed
@@ -4029,7 +4148,8 @@ export default function AdminDashboard() {
                 {!isScanningCamera ? (
                   <button
                     onClick={startCameraScanner}
-                    className="flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 text-white text-sm hover:bg-emerald-700 shrink-0"
+                    disabled={!scanEventSlug}
+                    className="flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 text-white text-sm hover:bg-emerald-700 shrink-0 disabled:opacity-50"
                   >
                     Start Camera
                   </button>

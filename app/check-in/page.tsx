@@ -4,16 +4,20 @@ import React, { useEffect, useRef, useState } from "react";
 import jsQR from "jsqr";
 import {
   checkinGetStats,
+  checkinListEvents,
   checkinListRecent,
   checkinLogin,
   checkinLogout,
   checkinPerformRedeem,
   checkinSessionStatus,
+  type CheckinEventOption,
 } from "./actions";
 import { formatHkDateTime, formatHkTime } from "@/lib/time/hk";
 import type { AttendanceFlatRow } from "@/lib/tickets/checkin-service";
 import { normalizeScanRef } from "@/lib/tickets/scan-ref";
 import { RefreshCw } from "lucide-react";
+
+const EVENT_STORAGE_KEY = "checkin-selected-event-slug";
 
 /**
  * Door staff only - no admin dashboard access.
@@ -26,6 +30,9 @@ export default function CheckInPage() {
   const [password, setPassword] = useState("");
   const [loginError, setLoginError] = useState("");
   const [loggingIn, setLoggingIn] = useState(false);
+
+  const [events, setEvents] = useState<CheckinEventOption[]>([]);
+  const [eventSlug, setEventSlug] = useState("");
 
   const [scanRef, setScanRef] = useState("");
   const [remark, setRemark] = useState("");
@@ -52,6 +59,8 @@ export default function CheckInPage() {
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastQrRef = useRef("");
   const scanBusyRef = useRef(false);
+  const eventSlugRef = useRef(eventSlug);
+  eventSlugRef.current = eventSlug;
 
   useEffect(() => {
     let cancelled = false;
@@ -61,7 +70,7 @@ export default function CheckInPage() {
       if (s.ok) {
         setAuthed(true);
         setDisplayName(s.displayName || s.username || "Staff");
-        await refreshData();
+        await bootstrapEventsAndData();
       }
     })();
     return () => {
@@ -71,10 +80,48 @@ export default function CheckInPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function refreshData() {
+  useEffect(() => {
+    if (!authed || !eventSlug) {
+      setStats({ checkedInTickets: 0, totalTickets: 0 });
+      setRecent([]);
+      return;
+    }
+    try {
+      localStorage.setItem(EVENT_STORAGE_KEY, eventSlug);
+    } catch {
+      /* ignore */
+    }
+    void refreshData(eventSlug);
+  }, [authed, eventSlug]);
+
+  async function bootstrapEventsAndData() {
+    const list = await checkinListEvents();
+    setEvents(list);
+    const enabled = list.filter((e) => e.enabled);
+    const choices = enabled.length ? enabled : list;
+    let saved = "";
+    try {
+      saved = localStorage.getItem(EVENT_STORAGE_KEY) || "";
+    } catch {
+      saved = "";
+    }
+    const pick =
+      (saved && choices.find((e) => e.slug === saved)?.slug) ||
+      choices[0]?.slug ||
+      "";
+    setEventSlug(pick);
+    if (pick) await refreshData(pick);
+  }
+
+  async function refreshData(slug = eventSlugRef.current) {
+    if (!slug) {
+      setStats({ checkedInTickets: 0, totalTickets: 0 });
+      setRecent([]);
+      return;
+    }
     const [st, rec] = await Promise.all([
-      checkinGetStats(),
-      checkinListRecent(),
+      checkinGetStats(slug),
+      checkinListRecent(slug),
     ]);
     setStats(st);
     setRecent(rec);
@@ -93,7 +140,7 @@ export default function CheckInPage() {
       setAuthed(true);
       setDisplayName(res.displayName || username);
       setPassword("");
-      await refreshData();
+      await bootstrapEventsAndData();
     } finally {
       setLoggingIn(false);
     }
@@ -106,17 +153,28 @@ export default function CheckInPage() {
     setDisplayName("");
     setLastResult(null);
     setMessage("");
+    setStats({ checkedInTickets: 0, totalTickets: 0 });
+    setRecent([]);
   }
 
   async function doCheckIn(code: string) {
     const ref = normalizeScanRef(code);
     if (!ref || busy || scanBusyRef.current) return;
+    if (!eventSlugRef.current) {
+      setTone("warn");
+      setMessage("Select an event before checking in.");
+      return;
+    }
     scanBusyRef.current = true;
     setBusy(true);
     setMessage("Checking in…");
     setTone("info");
     try {
-      const res = await checkinPerformRedeem(ref, remark);
+      const res = await checkinPerformRedeem(
+        ref,
+        remark,
+        eventSlugRef.current
+      );
       setTone(res.tone);
       setMessage(res.message);
       if (res.ok) {
@@ -285,6 +343,37 @@ export default function CheckInPage() {
       </div>
 
       <div className="max-w-3xl mx-auto px-4 py-6 space-y-6">
+        {/* Event filter — counts and check-ins are per selected event */}
+        <div className="rounded-2xl border bg-white p-4 sm:p-5 shadow-sm space-y-2">
+          <label className="block text-sm font-semibold text-zinc-900">
+            Event you are checking in
+          </label>
+          <select
+            value={eventSlug}
+            onChange={(e) => {
+              setEventSlug(e.target.value);
+              setLastResult(null);
+              setMessage("");
+              lastQrRef.current = "";
+            }}
+            className="w-full border rounded-xl px-3 py-2.5 text-sm bg-white"
+          >
+            {events.length === 0 && (
+              <option value="">No events found</option>
+            )}
+            {events.map((ev) => (
+              <option key={ev.slug} value={ev.slug}>
+                {ev.name}
+                {!ev.enabled ? " (disabled)" : ""}
+              </option>
+            ))}
+          </select>
+          <p className="text-[11px] text-zinc-500">
+            Counts below are for this event only. Tickets from other events are
+            blocked.
+          </p>
+        </div>
+
         {/* Stats */}
         <div className="grid grid-cols-2 gap-3">
           <div className="rounded-2xl border bg-white p-4 shadow-sm">
@@ -292,10 +381,12 @@ export default function CheckInPage() {
               Checked in
             </div>
             <div className="text-3xl font-semibold tabular-nums text-emerald-700 mt-1">
-              {stats.checkedInTickets}
+              {eventSlug ? stats.checkedInTickets : "—"}
             </div>
             <div className="text-[11px] text-zinc-400 mt-1">
-              tickets with at least one check-in
+              {eventSlug
+                ? "tickets with at least one check-in (this event)"
+                : "select an event"}
             </div>
           </div>
           <div className="rounded-2xl border bg-white p-4 shadow-sm">
@@ -303,12 +394,13 @@ export default function CheckInPage() {
               Total tickets
             </div>
             <div className="text-3xl font-semibold tabular-nums text-zinc-800 mt-1">
-              {stats.totalTickets}
+              {eventSlug ? stats.totalTickets : "—"}
             </div>
             <button
               type="button"
               onClick={() => refreshData()}
-              className="mt-2 text-xs text-zinc-500 inline-flex items-center gap-1 hover:text-black"
+              disabled={!eventSlug}
+              className="mt-2 text-xs text-zinc-500 inline-flex items-center gap-1 hover:text-black disabled:opacity-40"
             >
               <RefreshCw className="h-3 w-3" /> Refresh count
             </button>
@@ -333,7 +425,7 @@ export default function CheckInPage() {
             />
             <button
               type="button"
-              disabled={busy || !scanRef.trim()}
+              disabled={busy || !scanRef.trim() || !eventSlug}
               onClick={() => doCheckIn(scanRef)}
               className="rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-emerald-500 disabled:opacity-50"
             >
@@ -359,7 +451,8 @@ export default function CheckInPage() {
               <button
                 type="button"
                 onClick={startCamera}
-                className="rounded-lg border px-3 py-2 text-sm hover:bg-zinc-50"
+                disabled={!eventSlug}
+                className="rounded-lg border px-3 py-2 text-sm hover:bg-zinc-50 disabled:opacity-40"
               >
                 Start camera
               </button>
@@ -449,7 +542,16 @@ export default function CheckInPage() {
 
         {/* Recent */}
         <div className="rounded-2xl border bg-white p-4 sm:p-6 shadow-sm">
-          <h2 className="font-semibold mb-3">Recent check-ins</h2>
+          <h2 className="font-semibold mb-3">
+            Recent check-ins
+            {eventSlug ? (
+              <span className="ml-2 text-xs font-normal text-zinc-500">
+                (
+                {events.find((e) => e.slug === eventSlug)?.name || eventSlug}
+                )
+              </span>
+            ) : null}
+          </h2>
           <div className="overflow-x-auto">
             <table className="w-full text-xs sm:text-sm">
               <thead>

@@ -159,7 +159,8 @@ async function findPurchaseForScan(
 export async function performCheckIn(
   ref: string,
   actor: CheckInActor,
-  remark?: string
+  remark?: string,
+  expectedEventSlug?: string
 ): Promise<CheckInResult> {
   const scanned = normalizeScanRef(ref || "");
   if (!scanned) {
@@ -172,6 +173,17 @@ export async function performCheckIn(
       ok: false,
       message: "Invalid ticket - not found.",
       tone: "error",
+    };
+  }
+
+  const expected = (expectedEventSlug || "").trim().toLowerCase();
+  if (expected && (found.event_slug || "").toLowerCase() !== expected) {
+    return {
+      ok: false,
+      message: `Wrong event. This ticket is for "${found.event_slug}", but you are checking in "${expected}".`,
+      tone: "error",
+      purchase: found,
+      phone: found.phone,
     };
   }
 
@@ -383,22 +395,64 @@ export async function countCheckedIn(eventSlug?: string): Promise<{
   return { checkedInTickets, totalTickets };
 }
 
-export async function listRecentCheckIns(limit = 40): Promise<
-  AttendanceFlatRow[]
-> {
+export type CheckinEventOption = {
+  slug: string;
+  name: string;
+  enabled: boolean;
+};
+
+/** Events available for the check-in event picker (staff + admin). */
+export async function listCheckinEventOptions(): Promise<CheckinEventOption[]> {
+  try {
+    const sb = getSupabaseAdmin();
+    if (sb) {
+      const { data, error } = await sb
+        .from("events")
+        .select("slug, name, enabled")
+        .order("name", { ascending: true });
+      if (!error && data) {
+        return data.map((e: any) => ({
+          slug: String(e.slug),
+          name: String(e.name || e.slug),
+          enabled: e.enabled !== false,
+        }));
+      }
+    }
+    const { getAllEvents } = await import("@/lib/db/events");
+    const events = await getAllEvents();
+    return (events || [])
+      .map((e) => ({
+        slug: e.slug,
+        name: e.name || e.slug,
+        enabled: e.enabled !== false,
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  } catch (err) {
+    console.error("[CheckIn] listCheckinEventOptions:", err);
+    return [];
+  }
+}
+
+export async function listRecentCheckIns(
+  limit = 40,
+  eventSlug?: string
+): Promise<AttendanceFlatRow[]> {
   const all = await loadPurchasesForCheckin();
+  const filtered = eventSlug
+    ? all.filter((p) => p.event_slug === eventSlug)
+    : all;
   const rows: AttendanceFlatRow[] = [];
   const typeNameCache = new Map<string, string>();
 
-  async function typeLabel(eventSlug: string, typeId: string) {
-    const k = `${eventSlug}:${typeId}`;
+  async function typeLabel(eventSlugInner: string, typeId: string) {
+    const k = `${eventSlugInner}:${typeId}`;
     if (typeNameCache.has(k)) return typeNameCache.get(k)!;
-    const n = await ticketTypeName(eventSlug, typeId);
+    const n = await ticketTypeName(eventSlugInner, typeId);
     typeNameCache.set(k, n);
     return n;
   }
 
-  for (const p of all) {
+  for (const p of filtered) {
     const units = p.ticket_breakdown || [];
     const hasSerials = units.some((u: any) => u.serial);
     if (hasSerials) {

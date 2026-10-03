@@ -10,11 +10,15 @@ import {
 import { checkRateLimit } from "@/lib/security/rate-limit";
 import {
   countCheckedIn,
+  listCheckinEventOptions,
   listRecentCheckIns,
   performCheckIn,
   type CheckInResult,
   type AttendanceFlatRow,
+  type CheckinEventOption,
 } from "@/lib/tickets/checkin-service";
+
+export type { CheckinEventOption };
 
 // ——— Staff app (check-in only) ———
 
@@ -61,14 +65,24 @@ export async function checkinSessionStatus(): Promise<{
 
 export async function checkinPerformRedeem(
   ref: string,
-  remark?: string
+  remark?: string,
+  eventSlug?: string
 ): Promise<CheckInResult> {
   try {
     const staff = await requireCheckinStaff();
+    const expected = (eventSlug || "").trim();
+    if (!expected) {
+      return {
+        ok: false,
+        message: "Select an event before checking in.",
+        tone: "warn",
+      };
+    }
     return await performCheckIn(
       ref,
       { byId: staff.staffId, byName: staff.displayName },
-      remark
+      remark,
+      expected
     );
   } catch {
     return {
@@ -85,16 +99,31 @@ export async function checkinGetStats(eventSlug?: string): Promise<{
 }> {
   try {
     await requireCheckinStaff();
-    return await countCheckedIn(eventSlug || undefined);
+    if (!eventSlug) {
+      return { checkedInTickets: 0, totalTickets: 0 };
+    }
+    return await countCheckedIn(eventSlug);
   } catch {
     return { checkedInTickets: 0, totalTickets: 0 };
   }
 }
 
-export async function checkinListRecent(): Promise<AttendanceFlatRow[]> {
+export async function checkinListRecent(
+  eventSlug?: string
+): Promise<AttendanceFlatRow[]> {
   try {
     await requireCheckinStaff();
-    return await listRecentCheckIns(50);
+    if (!eventSlug) return [];
+    return await listRecentCheckIns(50, eventSlug);
+  } catch {
+    return [];
+  }
+}
+
+export async function checkinListEvents(): Promise<CheckinEventOption[]> {
+  try {
+    await requireCheckinStaff();
+    return await listCheckinEventOptions();
   } catch {
     return [];
   }

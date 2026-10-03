@@ -1466,14 +1466,16 @@ export async function adminResetCheckinStaffPassword(
 
 export async function adminPerformCheckIn(
   ref: string,
-  remark?: string
+  remark?: string,
+  eventSlug?: string
 ): Promise<CheckInResult> {
   try {
     await requireAdmin();
     return await performCheckIn(
       ref,
       { byId: "admin", byName: "Admin" },
-      remark
+      remark,
+      eventSlug || undefined
     );
   } catch {
     return {
