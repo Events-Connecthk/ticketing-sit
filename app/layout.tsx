@@ -23,8 +23,9 @@ export const metadata: Metadata = {
   title: "Connect Events",
   description: "Connect Events. Browse events and purchase tickets with ease.",
   icons: {
+    // app/icon.png + app/apple-icon.png also auto-wired by Next;
+    // public PNGs kept as explicit fallbacks (no favicon.ico — Turbopack ICO decode is strict)
     icon: [
-      { url: "/favicon.ico", sizes: "any" },
       { url: "/favicon-32.png", type: "image/png", sizes: "32x32" },
       { url: "/icon-192.png", type: "image/png", sizes: "192x192" },
     ],
