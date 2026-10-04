@@ -4,7 +4,6 @@ import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import { loadAllEvents } from "@/lib/config/events";
 import { EventConfig } from "@/types";
-import { isSupabaseConfigured } from "@/lib/db/events";
 import { Calendar, MapPin } from "lucide-react";
 
 /**
@@ -15,7 +14,6 @@ import { Calendar, MapPin } from "lucide-react";
 export default function EventsCatalogue() {
   const [events, setEvents] = useState<EventConfig[]>([]);
   const [loading, setLoading] = useState(true);
-  const [usingSupabase] = useState(isSupabaseConfigured());
 
   useEffect(() => {
     loadAllEvents().then((all) => {
@@ -32,7 +30,6 @@ export default function EventsCatalogue() {
           <h1 className="text-4xl font-semibold tracking-tight text-[#2C2520]">Events</h1>
           <p className="mt-2" style={{ color: '#6B5E50' }}>
             Browse and purchase tickets for upcoming events.
-            <span className="ml-2 text-xs">({usingSupabase ? "Supabase" : "Memory - not persisted"})</span>
           </p>
         </div>
 
@@ -43,10 +40,9 @@ export default function EventsCatalogue() {
         {!loading && events.length === 0 && (
           <div className="rounded-2xl border card p-8 text-center" style={{ borderColor: '#EDE4D3' }}>
             <p style={{ color: '#6B5E50' }}>No events are currently available.</p>
-            <p className="text-xs mt-1" style={{ color: '#6B5E50' }}>
-              {usingSupabase ? "Events are stored in Supabase." : "Currently using in-memory storage (set Supabase keys + restart to persist)."}
+            <p className="mt-2 text-xs" style={{ color: '#6B5E50' }}>
+              Contact the event organizer to add events.
             </p>
-            <p className="mt-2 text-xs">Contact the event organizer to add events.</p>
           </div>
         )}
 
@@ -96,7 +92,7 @@ export default function EventsCatalogue() {
             className="text-sm underline"
             style={{ color: '#6B5E50' }}
           >
-            ← Back to home
+            Back to home
           </Link>
         </div>
       </div>
